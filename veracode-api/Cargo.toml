@@ -1,0 +1,81 @@
+[package]
+name = "veracode-platform"
+version = "0.1.0-alpha.1"
+edition = "2024"
+authors = ["Fred Nollows <frednollows@gmail.com>"]
+description = "A comprehensive Rust client library for the Veracode platform (Applications, Identity, Pipeline Scan, Sandbox)"
+documentation = "https://docs.rs/veracode-platform"
+repository = "https://github.com/tastyfrankfurt/veracode-platform"
+homepage = "https://github.com/tastyfrankfurt/veracode-platform"
+license = "Apache-2.0"
+keywords = ["veracode", "security", "platform", "static-analysis", "vulnerability"]
+categories = ["api-bindings", "web-programming::http-client", "development-tools"]
+readme = "README.md"
+exclude = [
+    "examples/samples/*",
+    "*.log",
+    ".env*"
+]
+
+[lib]
+name = "veracode_platform"
+path = "src/lib.rs"
+
+[dependencies]
+# HTTP client and serialization
+reqwest = { version = "0.12", features = ["json", "multipart"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# Crypto for HMAC authentication
+hmac = "0.12"
+sha2 = "0.10"
+hex = "0.4"
+
+# Utilities
+rand = "0.9"
+url = "2.4"
+urlencoding = "2.1"
+chrono = { version = "0.4", features = ["serde"] }
+thiserror = "2.0"
+
+# XML parsing for legacy API responses
+quick-xml = "0.38"
+
+# Async runtime
+tokio = { version = "1.0", features = ["full"] }
+
+[dev-dependencies]
+tokio-test = "0.4"
+
+[features]
+default = ["applications", "identity", "pipeline", "sandbox", "policy"]
+applications = []
+identity = []
+pipeline = []
+sandbox = []
+policy = []
+
+[[example]]
+name = "basic_usage"
+required-features = ["applications"]
+
+[[example]]
+name = "application_lifecycle"
+required-features = ["applications"]
+
+[[example]]
+name = "identity_lifecycle"
+required-features = ["identity"]
+
+[[example]]
+name = "pipeline_scan_lifecycle"
+required-features = ["pipeline"]
+
+[[example]]
+name = "sandbox_lifecycle"
+required-features = ["sandbox"]
+
+[[example]]
+name = "policy_lifecycle"
+required-features = ["policy"]
