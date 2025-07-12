@@ -1,0 +1,52 @@
+[package]
+name = "verascan"
+version = "0.1.0-alpha.1"
+edition = "2024"
+authors = ["Fred Nollows <frednollows@gmail.com>"]
+description = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
+documentation = "https://docs.rs/veracode-platform"
+repository = "https://github.com/tastyfrankfurt/veracode-platform"
+license = "Apache-2.0"
+keywords = ["veracode", "security", "platform", "static-analysis", "vulnerability"]
+categories = ["scanning", "web-programming::http-client", "development-tools"]
+readme = "README.md"
+
+[dependencies]
+# Veracode Platform client library
+veracode-platform = { path = "../veracode-api" }
+
+# CLI and utilities
+clap = { workspace = true, features = ["derive"] }
+tokio = { workspace = true, features = ["full"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+
+# File operations
+glob = "0.3"
+
+# File type detection
+infer = "0.19"
+
+# Cryptographic hashing
+sha2 = "0.10"
+
+# Regular expressions for HTML parsing
+regex = "1.10"
+
+# Date/time handling for GitLab export
+chrono = { version = "0.4", features = ["serde"] }
+
+# UUID generation for GitLab vulnerability IDs
+uuid = { version = "1.0", features = ["v4"] }
+
+# HTTP client for GitLab API integration
+reqwest = { version = "0.12", features = ["json"] }
+
+# URL encoding for GitLab search queries
+urlencoding = "2.1"
+
+# Error handling
+thiserror = "2.0"
+
+[dev-dependencies]
+tempfile = "3.20"

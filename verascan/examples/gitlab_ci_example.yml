@@ -1,0 +1,60 @@
+# GitLab CI Example for Verascan with GitLab Issues Integration
+# Save this as .gitlab-ci.yml in your repository root
+
+stages:
+  - security-scan
+
+veracode-pipeline-scan:
+  stage: security-scan
+  image: rust:latest
+  
+  # Install dependencies
+  before_script:
+    - apt-get update && apt-get install -y wget unzip
+    - cargo --version
+    
+  script:
+    # Build the Verascan application (or download pre-built binary)
+    - git clone https://github.com/your-org/verascan.git
+    - cd verascan
+    - cargo build --release
+    
+    # Run pipeline scan with GitLab issues integration
+    - ./target/release/verascan
+        --filepath "${CI_PROJECT_DIR}"
+        --filefilter "*.jar,*.war,*.zip,*.ear"
+        --recursive
+        --pipeline-scan
+        --project-name "${CI_PROJECT_NAME}"
+        --project-url "${CI_PROJECT_URL}"
+        --create-gitlab-issues
+        --export-findings "veracode-results.json"
+        --export-format "both"
+        --show-findings
+        --min-severity "medium"
+        --debug
+  
+  # Environment variables for GitLab integration
+  variables:
+    # PRIVATE_TOKEN is automatically available as CI_TOKEN in GitLab CI
+    # CI_PROJECT_ID, CI_PIPELINE_ID, CI_PROJECT_URL, CI_COMMIT_SHA are automatic
+    GITLAB_URL: "https://gitlab.com/api/v4/projects/"
+  
+  # Store scan results as artifacts
+  artifacts:
+    reports:
+      # GitLab SAST report format for security dashboard
+      sast: veracode-results.json
+    paths:
+      - veracode-results.json
+      - veracode-results.csv
+    expire_in: 30 days
+    when: always
+  
+  # Only run on main branch and merge requests
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_ID
+  
+  # Allow scan to fail without failing the pipeline
+  allow_failure: true
