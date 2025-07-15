@@ -4,8 +4,7 @@ use veracode_platform::{VeracodeConfig, VeracodeRegion};
 use std::path::PathBuf;
 use std::fs;
 
-pub fn execute_policy_download(args: &Args) -> Result<(), i32> {
-    let policy_name = args.request_policy.as_ref().unwrap();
+pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32> {
     
     println!("🔍 Policy Download requested for: {}", policy_name);
     

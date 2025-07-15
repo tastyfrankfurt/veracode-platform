@@ -138,22 +138,22 @@ impl FileFinder {
                                     matched_files.push(file_path);
                                 },
                                 Err(ValidationError::UnsupportedFileType(msg)) => {
-                                    println!("⚠️  Unsupported file type: {}", file_path.display());
                                     if config.debug {
+                                        println!("⚠️  Unsupported file type: {}", file_path.display());
                                         println!("   Reason: {}", msg);
                                     }
                                     // Don't add to matched_files - filter it out
                                 },
                                 Err(ValidationError::InvalidFileHeader(msg)) => {
-                                    println!("❌ Invalid file: {}", file_path.display());
                                     if config.debug {
+                                        println!("❌ Invalid file: {}", file_path.display());
                                         println!("   Reason: {}", msg);
                                     }
                                     // Don't add to matched_files - filter it out
                                 },
                                 Err(ValidationError::IoError(msg)) => {
-                                    println!("❌ IO Error reading file: {}", file_path.display());
                                     if config.debug {
+                                        println!("❌ IO Error reading file: {}", file_path.display());
                                         println!("   Reason: {}", msg);
                                     }
                                     // Don't add to matched_files - filter it out
@@ -221,22 +221,22 @@ impl FileFinder {
                                     matched_files.push(file_path);
                                 },
                                 Err(ValidationError::UnsupportedFileType(msg)) => {
-                                    println!("⚠️  Unsupported file type: {}", file_path.display());
                                     if config.debug {
+                                        println!("⚠️  Unsupported file type: {}", file_path.display());
                                         println!("   Reason: {}", msg);
                                     }
                                     // Don't add to matched_files - filter it out
                                 },
                                 Err(ValidationError::InvalidFileHeader(msg)) => {
-                                    println!("❌ Invalid file: {}", file_path.display());
                                     if config.debug {
+                                        println!("❌ Invalid file: {}", file_path.display());
                                         println!("   Reason: {}", msg);
                                     }
                                     // Don't add to matched_files - filter it out
                                 },
                                 Err(ValidationError::IoError(msg)) => {
-                                    println!("❌ IO Error reading file: {}", file_path.display());
                                     if config.debug {
+                                        println!("❌ IO Error reading file: {}", file_path.display());
                                         println!("   Reason: {}", msg);
                                     }
                                     // Don't add to matched_files - filter it out

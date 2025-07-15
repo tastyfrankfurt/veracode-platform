@@ -95,6 +95,7 @@ async fn test_application_operations(client: &VeracodeClient) -> Result<(), Box<
                 test_app_name,
                 BusinessCriticality::Low, // Use low criticality for testing
                 Some("Rust API validation test application".to_string()),
+                None, // No teams specified
             ).await?;
             
             println!("   ✅ Application created: {} (GUID: {})", 

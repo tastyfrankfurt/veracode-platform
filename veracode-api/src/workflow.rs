@@ -220,6 +220,7 @@ impl VeracodeWorkflow {
                     &config.app_name,
                     config.business_criticality,
                     config.app_description.clone(),
+                    None, // No teams specified
                 ).await {
                     Ok(app) => {
                         println!("   ✅ Application '{}' created successfully (GUID: {})", config.app_name, app.guid);
@@ -635,7 +636,34 @@ impl VeracodeWorkflow {
         sandbox_id: Option<&str>,
         version: Option<&str>,
     ) -> WorkflowResult<Build> {
-        println!("🔍 Checking if build exists...");
+        self.ensure_build_exists_with_policy(app_id, sandbox_id, version, 1).await
+    }
+
+    /// Ensure a build exists for the application/sandbox with configurable deletion policy
+    ///
+    /// This method checks if a build already exists and handles it according to the deletion policy:
+    /// - Policy 0: Never delete builds, fail if build exists
+    /// - Policy 1: Delete only "safe" builds (incomplete, failed, cancelled states)
+    /// - Policy 2: Delete any build except "Results Ready"
+    ///
+    /// # Arguments
+    ///
+    /// * `app_id` - Application ID (numeric)
+    /// * `sandbox_id` - Optional sandbox ID (numeric)
+    /// * `version` - Optional build version
+    /// * `deletion_policy` - Build deletion policy level (0, 1, or 2)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the build information or an error.
+    pub async fn ensure_build_exists_with_policy(
+        &self,
+        app_id: &str,
+        sandbox_id: Option<&str>,
+        version: Option<&str>,
+        deletion_policy: u8,
+    ) -> WorkflowResult<Build> {
+        println!("🔍 Checking if build exists (deletion policy: {})...", deletion_policy);
         
         let build_api = self.client.build_api();
         
@@ -648,11 +676,62 @@ impl VeracodeWorkflow {
 
         match build_api.get_build_info(get_request).await {
             Ok(build) => {
-                println!("   ✅ Build already exists: {}", build.build_id);
+                println!("   📋 Build already exists: {}", build.build_id);
                 if let Some(build_version) = &build.version {
-                    println!("      Version: {}", build_version);
+                    println!("      Existing Version: {}", build_version);
                 }
-                Ok(build)
+
+                // Parse build status from attributes
+                let build_status_str = build.attributes.get("status")
+                    .or_else(|| build.attributes.get("analysis_status"))
+                    .or_else(|| build.attributes.get("scan_status"))
+                    .map(|s| s.as_str())
+                    .unwrap_or("Unknown");
+                
+                let build_status = crate::build::BuildStatus::from_str(build_status_str);
+                println!("      Build Status: {}", build_status);
+
+                // Check deletion policy
+                if deletion_policy == 0 {
+                    return Err(WorkflowError::Workflow(format!(
+                        "Build {} already exists and deletion policy is set to 'Never delete' (0). Cannot proceed with upload.",
+                        build.build_id
+                    )));
+                }
+
+                // Special handling for "Results Ready" builds - create new build to preserve results
+                if build_status == crate::build::BuildStatus::ResultsReady {
+                    println!("   📋 Build has 'Results Ready' status - creating new build to preserve existing results");
+                    self.create_build_for_upload(app_id, sandbox_id, version).await
+                }
+                // Check if build is safe to delete according to policy
+                else if build_status.is_safe_to_delete(deletion_policy) {
+                    println!("   🗑️  Build is safe to delete according to policy {}. Deleting...", deletion_policy);
+                    
+                    // Delete the existing build
+                    let delete_request = crate::build::DeleteBuildRequest {
+                        app_id: app_id.to_string(),
+                        sandbox_id: sandbox_id.map(|s| s.to_string()),
+                    };
+                    
+                    match build_api.delete_build(delete_request).await {
+                        Ok(_) => {
+                            println!("   ✅ Existing build deleted successfully");
+                        }
+                        Err(e) => {
+                            return Err(WorkflowError::Build(e));
+                        }
+                    }
+                    
+                    // Create new build
+                    println!("   ➕ Creating new build...");
+                    self.create_build_for_upload(app_id, sandbox_id, version).await
+                } else {
+                    return Err(WorkflowError::Workflow(format!(
+                        "Build {} has status '{}' which is not safe to delete with policy {} (0=Never, 1=Safe only, 2=Except Results Ready). Cannot proceed with upload.",
+                        build.build_id, build_status, deletion_policy
+                    )));
+                }
             }
             Err(crate::build::BuildError::BuildNotFound) => {
                 println!("   ➕ No build found, creating new build...");
@@ -700,7 +779,7 @@ impl VeracodeWorkflow {
         let create_request = crate::build::CreateBuildRequest {
             app_id: app_id.to_string(),
             version: Some(build_version.clone()),
-            lifecycle_stage: Some("Development".to_string()),
+            lifecycle_stage: Some(crate::build::default_lifecycle_stage().to_string()),
             launch_date: None,
             sandbox_id: sandbox_id.map(|s| s.to_string()),
         };

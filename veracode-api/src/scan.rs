@@ -295,7 +295,7 @@ impl ScanApi {
             return Err(ScanError::FileNotFound(request.file_path));
         }
 
-        let endpoint = "api/5.0/uploadfile.do";
+        let endpoint = "/api/5.0/uploadfile.do";
         
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
@@ -584,7 +584,7 @@ impl ScanApi {
     ///
     /// A `Result` containing the build ID or an error.
     pub async fn begin_prescan(&self, request: BeginPreScanRequest) -> Result<String, ScanError> {
-        let endpoint = "api/5.0/beginprescan.do";
+        let endpoint = "/api/5.0/beginprescan.do";
         
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
@@ -651,7 +651,7 @@ impl ScanApi {
         sandbox_id: Option<&str>,
         build_id: Option<&str>,
     ) -> Result<PreScanResults, ScanError> {
-        let endpoint = "api/5.0/getprescanresults.do";
+        let endpoint = "/api/5.0/getprescanresults.do";
         
         let mut params = Vec::new();
         params.push(("app_id", app_id));
@@ -698,7 +698,7 @@ impl ScanApi {
     ///
     /// A `Result` containing the build ID or an error.
     pub async fn begin_scan(&self, request: BeginScanRequest) -> Result<String, ScanError> {
-        let endpoint = "api/5.0/beginscan.do";
+        let endpoint = "/api/5.0/beginscan.do";
         
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
@@ -769,7 +769,7 @@ impl ScanApi {
         sandbox_id: Option<&str>,
         build_id: Option<&str>,
     ) -> Result<Vec<UploadedFile>, ScanError> {
-        let endpoint = "api/5.0/getfilelist.do";
+        let endpoint = "/api/5.0/getfilelist.do";
         
         let mut params = Vec::new();
         params.push(("app_id", app_id));
@@ -825,7 +825,7 @@ impl ScanApi {
         file_id: &str,
         sandbox_id: Option<&str>,
     ) -> Result<(), ScanError> {
-        let endpoint = "api/5.0/removefile.do";
+        let endpoint = "/api/5.0/removefile.do";
         
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
@@ -876,7 +876,7 @@ impl ScanApi {
         build_id: &str,
         sandbox_id: Option<&str>,
     ) -> Result<(), ScanError> {
-        let endpoint = "api/5.0/deletebuild.do";
+        let endpoint = "/api/5.0/deletebuild.do";
         
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
@@ -954,7 +954,7 @@ impl ScanApi {
         build_id: Option<&str>,
         sandbox_id: Option<&str>,
     ) -> Result<ScanInfo, ScanError> {
-        let endpoint = "api/5.0/getbuildinfo.do";
+        let endpoint = "/api/5.0/getbuildinfo.do";
         
         let mut params = Vec::new();
         params.push(("app_id", app_id));
@@ -1048,6 +1048,7 @@ impl ScanApi {
     }
     
     fn parse_build_id_response(&self, xml: &str) -> Result<String, ScanError> {
+        
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         
@@ -1085,28 +1086,42 @@ impl ScanApi {
     }
     
     fn parse_prescan_results(&self, xml: &str, app_id: &str, sandbox_id: Option<&str>) -> Result<PreScanResults, ScanError> {
+        
+        // Check if response contains an error element (prescan not ready yet)
+        if xml.contains("<error>") && xml.contains("Prescan results not available") {
+            // Return a special status indicating prescan is still in progress
+            return Ok(PreScanResults {
+                build_id: String::new(),
+                app_id: app_id.to_string(),
+                sandbox_id: sandbox_id.map(|s| s.to_string()),
+                status: "Pre-Scan Submitted".to_string(), // Indicates still in progress
+                modules: Vec::new(),
+                messages: Vec::new(),
+            });
+        }
+        
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         
         let mut buf = Vec::new();
         let mut build_id = None;
-        let mut status = "Unknown".to_string();
         let mut modules = Vec::new();
         let messages = Vec::new();
+        let mut has_prescan_results = false;
+        let mut has_fatal_errors = false;
         
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
-                        b"buildinfo" => {
+                        b"prescanresults" => {
+                            has_prescan_results = true;
+                            // Extract build_id from prescanresults attributes if present
                             for attr in e.attributes() {
                                 if let Ok(attr) = attr {
                                     match attr.key.as_ref() {
                                         b"build_id" => {
                                             build_id = Some(String::from_utf8_lossy(&attr.value).to_string());
-                                        }
-                                        b"analysis_unit" => {
-                                            status = String::from_utf8_lossy(&attr.value).to_string();
                                         }
                                         _ => {}
                                     }
@@ -1132,6 +1147,11 @@ impl ScanApi {
                                         b"type" => module.module_type = String::from_utf8_lossy(&attr.value).to_string(),
                                         b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
                                         b"selected" => module.selected = attr.value.as_ref() == b"true",
+                                        b"has_fatal_errors" => {
+                                            if attr.value.as_ref() == b"true" {
+                                                has_fatal_errors = true;
+                                            }
+                                        }
                                         b"size" => {
                                             if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
                                                 module.size = size_str.parse().ok();
@@ -1156,6 +1176,20 @@ impl ScanApi {
             }
             buf.clear();
         }
+        
+        // Determine prescan status based on the parsed results
+        let status = if !has_prescan_results {
+            "Unknown".to_string()
+        } else if modules.is_empty() {
+            // No modules found - this could indicate prescan failed or is still processing
+            "Pre-Scan Failed".to_string()
+        } else if has_fatal_errors {
+            // Modules found but some have fatal errors
+            "Pre-Scan Failed".to_string()
+        } else {
+            // Modules found with no fatal errors - prescan succeeded
+            "Pre-Scan Success".to_string()
+        };
         
         Ok(PreScanResults {
             build_id: build_id.unwrap_or_else(|| "unknown".to_string()),
@@ -1220,6 +1254,7 @@ impl ScanApi {
     }
     
     fn parse_build_info(&self, xml: &str, app_id: &str, sandbox_id: Option<&str>) -> Result<ScanInfo, ScanError> {
+        
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         
@@ -1237,25 +1272,79 @@ impl ScanApi {
             total_lines_of_code: None,
         };
         
+        let mut inside_build = false;
+        
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == b"buildinfo" {
+                    match e.name().as_ref() {
+                        b"buildinfo" => {
+                            // Parse buildinfo attributes
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    match attr.key.as_ref() {
+                                        b"build_id" => scan_info.build_id = String::from_utf8_lossy(&attr.value).to_string(),
+                                        b"analysis_unit" => {
+                                            // Fallback status from buildinfo (older API format)
+                                            if scan_info.status == "Unknown" {
+                                                scan_info.status = String::from_utf8_lossy(&attr.value).to_string();
+                                            }
+                                        }
+                                        b"analysis_unit_id" => scan_info.analysis_unit_id = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                                        b"scan_progress_percentage" => {
+                                            if let Ok(progress_str) = String::from_utf8(attr.value.to_vec()) {
+                                                scan_info.scan_progress_percentage = progress_str.parse().ok();
+                                            }
+                                        }
+                                        b"total_lines_of_code" => {
+                                            if let Ok(lines_str) = String::from_utf8(attr.value.to_vec()) {
+                                                scan_info.total_lines_of_code = lines_str.parse().ok();
+                                            }
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        b"build" => {
+                            inside_build = true;
+                        }
+                        b"analysis_unit" => {
+                            // Parse analysis_unit attributes (primary status source)
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    match attr.key.as_ref() {
+                                        b"status" => {
+                                            // Primary status source from analysis_unit
+                                            scan_info.status = String::from_utf8_lossy(&attr.value).to_string();
+                                        }
+                                        b"analysis_type" => {
+                                            scan_info.scan_type = String::from_utf8_lossy(&attr.value).to_string();
+                                        }
+                                        _ => {}
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"build" {
+                        inside_build = false;
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing elements like <analysis_unit ... />
+                    if e.name().as_ref() == b"analysis_unit" && inside_build {
                         for attr in e.attributes() {
                             if let Ok(attr) = attr {
                                 match attr.key.as_ref() {
-                                    b"build_id" => scan_info.build_id = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"analysis_unit" => scan_info.status = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"analysis_unit_id" => scan_info.analysis_unit_id = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                                    b"scan_progress_percentage" => {
-                                        if let Ok(progress_str) = String::from_utf8(attr.value.to_vec()) {
-                                            scan_info.scan_progress_percentage = progress_str.parse().ok();
-                                        }
+                                    b"status" => {
+                                        scan_info.status = String::from_utf8_lossy(&attr.value).to_string();
                                     }
-                                    b"total_lines_of_code" => {
-                                        if let Ok(lines_str) = String::from_utf8(attr.value.to_vec()) {
-                                            scan_info.total_lines_of_code = lines_str.parse().ok();
-                                        }
+                                    b"analysis_type" => {
+                                        scan_info.scan_type = String::from_utf8_lossy(&attr.value).to_string();
                                     }
                                     _ => {}
                                 }

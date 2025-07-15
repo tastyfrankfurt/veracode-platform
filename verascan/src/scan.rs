@@ -1,8 +1,9 @@
-use crate::cli::Args;
-use crate::{PipelineSubmitter, PipelineScanConfig, check_pipeline_credentials, FindingsAggregator, GitLabExporter, GitLabExportConfig, GitLabIssuesClient, execute_baseline_compare, AggregatedFindings, execute_policy_file_assessment, execute_policy_name_assessment, PolicyAssessment};
+use crate::cli::{Args, Commands};
+use crate::{PipelineSubmitter, PipelineScanConfig, AssessmentSubmitter, AssessmentScanConfig, ScanType, check_pipeline_credentials, FindingsAggregator, GitLabExporter, GitLabExportConfig, GitLabIssuesClient, execute_baseline_compare, AggregatedFindings, execute_policy_file_assessment, execute_policy_name_assessment, PolicyAssessment};
 use crate::findings::FindingWithSource;
 use crate::baseline::BaselineFile;
 use veracode_platform::{VeracodeConfig, VeracodeRegion};
+use veracode_platform::identity::IdentityApi;
 use std::path::{Path, PathBuf};
 use std::fs;
 
@@ -99,42 +100,45 @@ pub fn validate_baseline_file_early(baseline_path: &str, args: &Args) -> Result<
 }
 
 pub fn execute_pipeline_scan(matched_files: &[PathBuf], args: &Args) -> Result<(), i32> {
-    println!("\n🚀 Pipeline Scan requested");
-    
-    // Validate baseline file early, before running scans
-    if let Some(ref baseline_path) = args.baseline_file {
-        validate_baseline_file_early(baseline_path, args)?;
+    if let Commands::Pipeline { baseline_file, export_findings, .. } = &args.command {
+        println!("\n🚀 Pipeline Scan requested");
+        
+        // Validate baseline file early, before running scans
+        if let Some(baseline_path) = baseline_file {
+            validate_baseline_file_early(baseline_path, args)?;
+        }
+        
+        // Validate export paths early, before running scans
+        validate_export_paths_early(export_findings, args)?;
+        
+        // Note: GitLab validation moved to async context in execute_scan_with_runtime
+        
+        let (api_id, api_key) = check_pipeline_credentials(args)
+            .map_err(|_| 1)?;
+
+        let region = parse_region(&args.region)?;
+        let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
+        
+        // Check environment variable for certificate validation
+        if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
+            veracode_config = veracode_config.with_certificate_validation_disabled();
+            println!("⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION");
+            println!("   This should only be used in development environments!");
+
+        }
+        let pipeline_config = create_pipeline_config(args, region);
+
+        let submitter = PipelineSubmitter::new(veracode_config, pipeline_config)
+            .map_err(|e| {
+                eprintln!("❌ Failed to create pipeline submitter: {}", e);
+                1
+            })?;
+
+        execute_scan_with_runtime(submitter, matched_files, args)
+    } else {
+        eprintln!("❌ execute_pipeline_scan called with non-pipeline command");
+        Err(1)
     }
-    
-    // Validate export paths early, before running scans
-    if let Some(ref export_path) = args.export_findings {
-        validate_export_paths_early(export_path, args)?;
-    }
-    
-    // Note: GitLab validation moved to async context in execute_scan_with_runtime
-    
-    let (api_id, api_key) = check_pipeline_credentials(args)
-        .map_err(|_| 1)?;
-
-    let region = parse_region(&args.region)?;
-    let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
-    
-    // Check environment variable for certificate validation
-    if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
-        veracode_config = veracode_config.with_certificate_validation_disabled();
-        println!("⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION");
-        println!("   This should only be used in development environments!");
-
-    }
-    let pipeline_config = create_pipeline_config(args, region);
-
-    let submitter = PipelineSubmitter::new(veracode_config, pipeline_config)
-        .map_err(|e| {
-            eprintln!("❌ Failed to create pipeline submitter: {}", e);
-            1
-        })?;
-
-    execute_scan_with_runtime(submitter, matched_files, args)
 }
 
 fn parse_region(region_str: &str) -> Result<VeracodeRegion, i32> {
@@ -191,7 +195,7 @@ fn resolve_git_project_url(debug: bool) -> Option<String> {
     let remote_url = parse_git_config_for_origin_url(&config_content)?;
     
     if debug {
-        println!("   📡 Found remote origin URL: {}", remote_url);
+        println!("   📡 Found remote origin URL: {}", redact_url_password(&remote_url));
     }
     
     // Convert git URL to web URL
@@ -251,20 +255,65 @@ fn parse_git_config_for_origin_url(config_content: &str) -> Option<String> {
     None
 }
 
+/// Strip username and password from HTTP/HTTPS URLs
+fn strip_credentials_from_http_url(url: &str) -> String {
+    // URLs with credentials have format: http://username:password@host/path
+    // We want to convert to: http://host/path
+    
+    if let Some(at_pos) = url.find('@') {
+        // Find the protocol part (http:// or https://)
+        if let Some(protocol_end) = url.find("://") {
+            let protocol = &url[..protocol_end + 3]; // Include ://
+            let after_at = &url[at_pos + 1..]; // Everything after @
+            return format!("{}{}", protocol, after_at);
+        }
+    }
+    
+    // No credentials found, return as is
+    url.to_string()
+}
+
+/// Redact password from URLs for safe logging
+fn redact_url_password(url: &str) -> String {
+    // URLs with credentials have format: http://username:password@host/path
+    // We want to convert to: http://username:[REDACTED]@host/path
+    
+    if let Some(at_pos) = url.find('@') {
+        // Find the protocol part (http:// or https://)
+        if let Some(protocol_end) = url.find("://") {
+            let protocol = &url[..protocol_end + 3]; // Include ://
+            let credentials_and_host = &url[protocol_end + 3..]; // Everything after protocol
+            
+            if let Some(colon_pos) = credentials_and_host.find(':') {
+                if colon_pos < at_pos - protocol_end - 3 { // Colon is in credentials part
+                    let username = &credentials_and_host[..colon_pos];
+                    let after_at = &credentials_and_host[at_pos - protocol_end - 3 + 1..]; // Everything after @
+                    return format!("{}{}:[REDACTED]@{}", protocol, username, after_at);
+                }
+            }
+        }
+    }
+    
+    // No credentials found, return as is
+    url.to_string()
+}
+
 /// Convert various git URL formats to web URLs
 fn convert_git_url_to_web_url(git_url: &str) -> Option<String> {
     let url = git_url.trim();
     
-    // Handle HTTPS URLs (already web URLs, just remove .git suffix)
+    // Handle HTTPS URLs (remove credentials and .git suffix)
     if url.starts_with("https://") {
-        let clean_url = url.strip_suffix(".git").unwrap_or(url);
-        return Some(clean_url.to_string());
+        let clean_url = strip_credentials_from_http_url(url);
+        let final_url = clean_url.strip_suffix(".git").unwrap_or(&clean_url);
+        return Some(final_url.to_string());
     }
     
-    // Handle HTTP URLs (remove .git suffix) 
+    // Handle HTTP URLs (remove credentials and .git suffix) 
     if url.starts_with("http://") {
-        let clean_url = url.strip_suffix(".git").unwrap_or(url);
-        return Some(clean_url.to_string());
+        let clean_url = strip_credentials_from_http_url(url);
+        let final_url = clean_url.strip_suffix(".git").unwrap_or(&clean_url);
+        return Some(final_url.to_string());
     }
     
     // Handle SSH URLs (git@host:owner/repo.git)
@@ -299,21 +348,26 @@ fn extract_ssh_url_parts(ssh_url: &str) -> Option<(String, String)> {
 }
 
 fn create_pipeline_config(args: &Args, region: VeracodeRegion) -> PipelineScanConfig {
-    // Auto-resolve project URL from git if not provided
-    let project_uri = args.project_url.clone()
-        .or_else(|| resolve_git_project_url(args.debug));
-    
-    PipelineScanConfig {
-        project_name: args.project_name.clone().unwrap_or_else(|| "Verascan Pipeline Scan".to_string()),
-        project_uri,
-        dev_stage: parse_dev_stage(&args.development_stage),
-        region,
-        timeout: Some(args.timeout),
-        include_low_severity: Some(true),
-        max_findings: None,
-        debug: args.debug,
-        app_profile_name: args.app_profile_name.clone(),
-        threads: args.threads,
+    if let Commands::Pipeline { project_url, project_name, development_stage, timeout, threads, .. } = &args.command {
+        // Auto-resolve project URL from git if not provided
+        let project_uri = project_url.clone()
+            .or_else(|| resolve_git_project_url(args.debug));
+        
+        PipelineScanConfig {
+            project_name: project_name.clone().unwrap_or_else(|| "Verascan Pipeline Scan".to_string()),
+            project_uri,
+            dev_stage: parse_dev_stage(development_stage),
+            region,
+            timeout: Some(*timeout),
+            include_low_severity: Some(true),
+            max_findings: None,
+            selected_modules: None, // Pipeline doesn't use modules
+            debug: args.debug,
+            app_profile_name: None, // Pipeline doesn't use app profile name
+            threads: *threads,
+        }
+    } else {
+        panic!("create_pipeline_config called with non-pipeline command");
     }
 }
 
@@ -325,10 +379,12 @@ fn execute_scan_with_runtime(submitter: PipelineSubmitter, matched_files: &[Path
         })?;
 
     rt.block_on(async {
-        // Validate GitLab connectivity early, before running scans (in async context)
-        if args.create_gitlab_issues {
-            println!("Requires 'Developer' role and 'api' scope Access token for GitLab integration");
-            validate_gitlab_connectivity_early(args).await?;
+        if let Commands::Pipeline { create_gitlab_issues, .. } = &args.command {
+            // Validate GitLab connectivity early, before running scans (in async context)
+            if *create_gitlab_issues {
+                println!("Requires 'Developer' role and 'api' scope Access token for GitLab integration");
+                validate_gitlab_connectivity_early(args).await?;
+            }
         }
         
         if matched_files.len() == 1 {
@@ -346,14 +402,14 @@ async fn execute_single_scan(submitter: &PipelineSubmitter, matched_files: &[Pat
             
             let results_vec = vec![results];
             
-            // Handle findings aggregation and export if requested
-            if args.export_findings.is_some() {
-                handle_findings_export(&results_vec, matched_files, args).await;
-            }
+            // Handle findings aggregation and export
+            handle_findings_export(&results_vec, matched_files, args).await;
             
             // Handle GitLab issues creation if requested (independent of export)
-            if args.create_gitlab_issues {
-                handle_gitlab_issues_creation_from_results_async(&results_vec, matched_files, args).await;
+            if let Commands::Pipeline { create_gitlab_issues, .. } = &args.command {
+                if *create_gitlab_issues {
+                    handle_gitlab_issues_creation_from_results_async(&results_vec, matched_files, args).await;
+                }
             }
             
             Ok(())
@@ -370,14 +426,14 @@ async fn execute_concurrent_scans(submitter: &PipelineSubmitter, matched_files: 
         Ok(results_vec) => {
             display_concurrent_results(&results_vec, submitter);
             
-            // Handle findings aggregation and export if requested
-            if args.export_findings.is_some() {
-                handle_findings_export(&results_vec, matched_files, args).await;
-            }
+            // Handle findings aggregation and export
+            handle_findings_export(&results_vec, matched_files, args).await;
             
             // Handle GitLab issues creation if requested (independent of export)
-            if args.create_gitlab_issues {
-                handle_gitlab_issues_creation_from_results_async(&results_vec, matched_files, args).await;
+            if let Commands::Pipeline { create_gitlab_issues, .. } = &args.command {
+                if *create_gitlab_issues {
+                    handle_gitlab_issues_creation_from_results_async(&results_vec, matched_files, args).await;
+                }
             }
             
             Ok(())
@@ -407,7 +463,8 @@ fn display_concurrent_results(results_vec: &[veracode_platform::pipeline::ScanRe
 }
 
 async fn handle_findings_export(results_vec: &[veracode_platform::pipeline::ScanResults], matched_files: &[PathBuf], args: &Args) {
-    if let Some(ref export_path) = args.export_findings {
+    if let Commands::Pipeline { export_findings, .. } = &args.command {
+        let export_path = export_findings;
         println!("\n📄 Aggregating findings for export...");
         
         // Create source file names from the matched files
@@ -420,11 +477,14 @@ async fn handle_findings_export(results_vec: &[veracode_platform::pipeline::Scan
         
         // Create findings aggregator
         let aggregator = FindingsAggregator::new(args.debug);
-        
+    
         // Parse severity filter if provided
-        let severity_filter = args.min_severity.as_ref()
-            .map(|s| crate::findings::FindingsAggregator::parse_severity_level(s));
-        
+        let severity_filter = if let Commands::Pipeline { min_severity, .. } = &args.command {
+            min_severity.as_ref().map(|s| crate::findings::FindingsAggregator::parse_severity_level(s))
+        } else {
+            None
+        };
+    
         // Aggregate all findings with optional severity filtering
         let aggregated = if let Some(min_severity) = severity_filter {
             if args.debug {
@@ -446,91 +506,97 @@ async fn handle_findings_export(results_vec: &[veracode_platform::pipeline::Scan
         let (policy_assessment, final_filtered) = handle_policy_assessment(&baseline_filtered, args).await;
         
         // Export filtered JSON based on pass-fail criteria
-        if let Some(ref output_path) = args.filtered_json_output_file {
-            export_pass_fail_violations(&final_filtered, &baseline_filtered, &aggregated, args, output_path, &policy_assessment).await;
+        if let Commands::Pipeline { filtered_json_output_file, .. } = &args.command {
+            if let Some(output_path) = filtered_json_output_file {
+                export_pass_fail_violations(&final_filtered, &baseline_filtered, &aggregated, args, output_path, &policy_assessment).await;
+            }
         }
         
         // Display detailed findings if requested
-        if args.show_findings {
-            aggregator.display_detailed_findings(&final_filtered, args.findings_limit);
+        if let Commands::Pipeline { show_findings, findings_limit, .. } = &args.command {
+            if *show_findings {
+                aggregator.display_detailed_findings(&final_filtered, *findings_limit);
+            }
         }
         
         // Export based on format
-        let export_format = args.export_format.to_lowercase();
-        match export_format.as_str() {
-            "json" => {
-                match ensure_extension(export_path, "json") {
-                    Ok(json_path) => {
-                        if let Err(e) = aggregator.export_to_baseline_format(&final_filtered, &json_path) {
-                            eprintln!("❌ Failed to export JSON in baseline format: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("❌ Invalid export path: {}", e);
+        if let Commands::Pipeline { export_format, .. } = &args.command {
+            let export_format_lower = export_format.to_lowercase();
+            match export_format_lower.as_str() {
+        "json" => {
+            match ensure_extension(export_path, "json") {
+                Ok(json_path) => {
+                    if let Err(e) = aggregator.export_to_baseline_format(&final_filtered, &json_path) {
+                        eprintln!("❌ Failed to export JSON in baseline format: {}", e);
                     }
+                },
+                Err(e) => {
+                    eprintln!("❌ Invalid export path: {}", e);
                 }
-            },
-            "csv" => {
-                match ensure_extension(export_path, "csv") {
-                    Ok(csv_path) => {
-                        if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path) {
-                            eprintln!("❌ Failed to export CSV: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("❌ Invalid export path: {}", e);
+            }
+        },
+        "csv" => {
+            match ensure_extension(export_path, "csv") {
+                Ok(csv_path) => {
+                    if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path) {
+                        eprintln!("❌ Failed to export CSV: {}", e);
                     }
+                },
+                Err(e) => {
+                    eprintln!("❌ Invalid export path: {}", e);
                 }
-            },
-            "gitlab" => {
-                match ensure_extension(export_path, "json") {
-                    Ok(gitlab_path) => {
-                        let gitlab_config = GitLabExportConfig::default();
-                        let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug);
-                        if let Err(e) = gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_path) {
-                            eprintln!("❌ Failed to export GitLab SAST report: {}", e);
-                        }
-                    },
-                    Err(e) => {
-                        eprintln!("❌ Invalid export path: {}", e);
+            }
+        },
+        "gitlab" => {
+            match ensure_extension(export_path, "json") {
+                Ok(gitlab_path) => {
+                    let gitlab_config = GitLabExportConfig::default();
+                    let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug);
+                    if let Err(e) = gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_path) {
+                        eprintln!("❌ Failed to export GitLab SAST report: {}", e);
                     }
+                },
+                Err(e) => {
+                    eprintln!("❌ Invalid export path: {}", e);
                 }
-            },
-            "all" => {
-                let json_result = ensure_extension(export_path, "json");
-                let csv_result = ensure_extension(export_path, "csv");
-                let gitlab_result = ensure_extension(export_path, "json");
-                
-                match (json_result, csv_result, gitlab_result) {
-                    (Ok(json_path), Ok(csv_path), Ok(gitlab_path)) => {
-                        // Export JSON
-                        if let Err(e) = aggregator.export_to_baseline_format(&final_filtered, &json_path) {
-                            eprintln!("❌ Failed to export JSON in baseline format: {}", e);
-                        }
-                        // Export CSV
-                        if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path) {
-                            eprintln!("❌ Failed to export CSV: {}", e);
-                        }
-                        // Export GitLab SAST report (use different filename to avoid conflict)
-                        let gitlab_sast_path = {
-                            let mut path = gitlab_path;
-                            let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
-                            path.set_file_name(format!("{}_gitlab_sast.json", file_stem));
-                            path
-                        };
-                        let gitlab_config = GitLabExportConfig::default();
-                        let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug);
-                        if let Err(e) = gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_sast_path) {
-                            eprintln!("❌ Failed to export GitLab SAST report: {}", e);
-                        }
-                    },
-                    (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
-                        eprintln!("❌ Invalid export path: {}", e);
+            }
+        },
+        "all" => {
+            let json_result = ensure_extension(export_path, "json");
+            let csv_result = ensure_extension(export_path, "csv");
+            let gitlab_result = ensure_extension(export_path, "json");
+            
+            match (json_result, csv_result, gitlab_result) {
+                (Ok(json_path), Ok(csv_path), Ok(gitlab_path)) => {
+                    // Export JSON
+                    if let Err(e) = aggregator.export_to_baseline_format(&final_filtered, &json_path) {
+                        eprintln!("❌ Failed to export JSON in baseline format: {}", e);
                     }
+                    // Export CSV
+                    if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path) {
+                        eprintln!("❌ Failed to export CSV: {}", e);
+                    }
+                    // Export GitLab SAST report (use different filename to avoid conflict)
+                    let gitlab_sast_path = {
+                        let mut path = gitlab_path;
+                        let file_stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("export");
+                        path.set_file_name(format!("{}_gitlab_sast.json", file_stem));
+                        path
+                    };
+                    let gitlab_config = GitLabExportConfig::default();
+                    let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug);
+                    if let Err(e) = gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_sast_path) {
+                        eprintln!("❌ Failed to export GitLab SAST report: {}", e);
+                    }
+                },
+                (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
+                    eprintln!("❌ Invalid export path: {}", e);
                 }
-            },
-            _ => {
-                eprintln!("❌ Unsupported export format: {}. Use 'json', 'csv', 'gitlab', or 'all'", export_format);
+            }
+        },
+                _ => {
+                    eprintln!("❌ Unsupported export format: {}. Use 'json', 'csv', 'gitlab', or 'all'", export_format_lower);
+                }
             }
         }
         
@@ -542,7 +608,7 @@ async fn handle_findings_export(results_vec: &[veracode_platform::pipeline::Scan
                 println!("   Violations: {}", assessment.summary.total_violations);
                 std::process::exit(1);
             } else {
-                println!("\n✅ Policy assessment PASSED");
+                println!("✅ Policy assessment PASSED");
                 println!("   Policy: {}", assessment.metadata.policy_info.name);
             }
         }
@@ -568,10 +634,11 @@ async fn validate_gitlab_connectivity_early(args: &Args) -> Result<(), i32> {
 }
 
 fn validate_export_paths_early(export_path: &str, args: &Args) -> Result<(), i32> {
-    println!("🔍 Validating export paths...");
-    
-    let export_format = args.export_format.to_lowercase();
-    match export_format.as_str() {
+    if let Commands::Pipeline { export_format, .. } = &args.command {
+        println!("🔍 Validating export paths...");
+        
+        let export_format_lower = export_format.to_lowercase();
+        match export_format_lower.as_str() {
         "json" => {
             ensure_extension(export_path, "json").map_err(|e| {
                 eprintln!("❌ Invalid JSON export path: {}", e);
@@ -604,14 +671,18 @@ fn validate_export_paths_early(export_path: &str, args: &Args) -> Result<(), i32
                 1
             })?;
         },
-        _ => {
-            eprintln!("❌ Unsupported export format: {}. Use 'json', 'csv', 'gitlab', or 'all'", export_format);
-            return Err(1);
+            _ => {
+                eprintln!("❌ Unsupported export format: {}. Use 'json', 'csv', 'gitlab', or 'all'", export_format_lower);
+                return Err(1);
+            }
         }
+        
+        println!("✅ Export paths validated successfully");
+        Ok(())
+    } else {
+        eprintln!("❌ validate_export_paths_early called with non-pipeline command");
+        Err(1)
     }
-    
-    println!("✅ Export paths validated successfully");
-    Ok(())
 }
 
 fn ensure_extension(path: &str, extension: &str) -> Result<PathBuf, String> {
@@ -648,6 +719,7 @@ fn ensure_extension(path: &str, extension: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::*;
     use tempfile::TempDir;
+    use std::collections::HashSet;
 
     #[test]
     fn test_ensure_extension_adds_extension() {
@@ -704,35 +776,34 @@ mod tests {
         let file_path_str = file_path.to_str().unwrap();
         
         let args = Args {
-            filepath: Some("/test".to_string()),
-            filefilter: "*.jar".to_string(),
-            recursive: true,
-            validate: true,
+            command: Commands::Pipeline {
+                filepath: "/test".to_string(),
+                filefilter: "*.jar".to_string(),
+                recursive: true,
+                validate: true,
+                project_name: Some("Test".to_string()),
+                project_url: None,
+                timeout: 30,
+                threads: 4,
+                export_findings: file_path_str.to_string(),
+                export_format: "json".to_string(),
+                show_findings: false,
+                findings_limit: 20,
+                min_severity: None,
+                project_dir: ".".to_string(),
+                create_gitlab_issues: false,
+                baseline_file: None,
+                policy_file: None,
+                policy_name: None,
+                filtered_json_output_file: None,
+                development_stage: "development".to_string(),
+                fail_on_severity: None,
+                fail_on_cwe: None,
+            },
             debug: false,
-            pipeline_scan: true,
+            region: "commercial".to_string(),
             api_id: None,
             api_key: None,
-            app_profile_name: None,
-            project_name: Some("Test".to_string()),
-            project_url: None,
-            region: "commercial".to_string(),
-            timeout: 30,
-            threads: 4,
-            export_findings: Some(file_path_str.to_string()),
-            export_format: "json".to_string(),
-            show_findings: false,
-            findings_limit: 20,
-            min_severity: None,
-            project_dir: ".".to_string(),
-            create_gitlab_issues: false,
-            request_policy: None,
-            baseline_file: None,
-            policy_file: None,
-            policy_name: None,
-            filtered_json_output_file: None,
-            development_stage: "development".to_string(),
-            fail_on_severity: None,
-            fail_on_cwe: None,
         };
         
         let result = validate_export_paths_early(file_path_str, &args);
@@ -742,35 +813,34 @@ mod tests {
     #[test]
     fn test_validate_export_paths_early_invalid_format() {
         let args = Args {
-            filepath: Some("/test".to_string()),
-            filefilter: "*.jar".to_string(),
-            recursive: true,
-            validate: true,
+            command: Commands::Pipeline {
+                filepath: "/test".to_string(),
+                filefilter: "*.jar".to_string(),
+                recursive: true,
+                validate: true,
+                project_name: Some("Test".to_string()),
+                project_url: None,
+                timeout: 30,
+                threads: 4,
+                export_findings: "test.txt".to_string(),
+                export_format: "invalid".to_string(),
+                show_findings: false,
+                findings_limit: 20,
+                min_severity: None,
+                project_dir: ".".to_string(),
+                create_gitlab_issues: false,
+                baseline_file: None,
+                policy_file: None,
+                policy_name: None,
+                filtered_json_output_file: None,
+                development_stage: "development".to_string(),
+                fail_on_severity: None,
+                fail_on_cwe: None,
+            },
             debug: false,
-            pipeline_scan: true,
+            region: "commercial".to_string(),
             api_id: None,
             api_key: None,
-            app_profile_name: None,
-            project_name: Some("Test".to_string()),
-            project_url: None,
-            region: "commercial".to_string(),
-            timeout: 30,
-            threads: 4,
-            export_findings: Some("test.txt".to_string()),
-            export_format: "invalid".to_string(),
-            show_findings: false,
-            findings_limit: 20,
-            min_severity: None,
-            project_dir: ".".to_string(),
-            create_gitlab_issues: false,
-            request_policy: None,
-            baseline_file: None,
-            policy_file: None,
-            policy_name: None,
-            filtered_json_output_file: None,
-            development_stage: "development".to_string(),
-            fail_on_severity: None,
-            fail_on_cwe: None,
         };
         
         let result = validate_export_paths_early("test.txt", &args);
@@ -786,7 +856,7 @@ mod tests {
         bare = false
         logallrefupdates = true
 [remote "origin"]
-        url = http://jupiter.hell.local:8929/apptesting/vulnerable-java-app.git
+        url = https://gitlab.com:443/apptesting/vulnerable-java-app.git
         fetch = +refs/heads/*:refs/remotes/origin/*
 [branch "main"]
         remote = origin
@@ -794,21 +864,33 @@ mod tests {
         "#;
         
         let result = parse_git_config_for_origin_url(config_content);
-        assert_eq!(result, Some("http://jupiter.hell.local:8929/apptesting/vulnerable-java-app.git".to_string()));
+        assert_eq!(result, Some("https://gitlab.com:443/apptesting/vulnerable-java-app.git".to_string()));
     }
 
     #[test]
     fn test_convert_git_url_to_web_url() {
         // Test HTTP URL
         assert_eq!(
-            convert_git_url_to_web_url("http://jupiter.hell.local:8929/apptesting/vulnerable-java-app.git"),
-            Some("http://jupiter.hell.local:8929/apptesting/vulnerable-java-app".to_string())
+            convert_git_url_to_web_url("https://gitlab.com:443/apptesting/vulnerable-java-app.git"),
+            Some("https://gitlab.com:443/apptesting/vulnerable-java-app".to_string())
         );
         
         // Test HTTPS URL
         assert_eq!(
             convert_git_url_to_web_url("https://github.com/user/repo.git"),
             Some("https://github.com/user/repo".to_string())
+        );
+        
+        // Test HTTP URL with credentials (exact example from user)
+        assert_eq!(
+            convert_git_url_to_web_url("https://gitlab-ci-token:[MASKED]@gitlab.com:443/apptesting/vulnerable-python-app.git"),
+            Some("https://gitlab.com:443/apptesting/vulnerable-python-app".to_string())
+        );
+        
+        // Test HTTPS URL with credentials
+        assert_eq!(
+            convert_git_url_to_web_url("https://username:password@gitlab.example.com/project/repo.git"),
+            Some("https://gitlab.example.com/project/repo".to_string())
         );
         
         // Test SSH URL
@@ -832,73 +914,159 @@ mod tests {
         let result = extract_ssh_url_parts("invalid-format");
         assert_eq!(result, None);
     }
+
+    #[test]
+    fn test_redact_url_password() {
+        // Test URL with credentials
+        let url_with_creds = "http://gitlab-ci-token:secret123@gitlab.com:8929/apptesting/vulnerable-python-app.git";
+        let redacted = redact_url_password(url_with_creds);
+        assert_eq!(redacted, "http://gitlab-ci-token:[REDACTED]@gitlab.com:8929/apptesting/vulnerable-python-app.git");
+        
+        // Test HTTPS URL with credentials
+        let https_url = "https://user:password@example.com/repo.git";
+        let redacted_https = redact_url_password(https_url);
+        assert_eq!(redacted_https, "https://user:[REDACTED]@example.com/repo.git");
+        
+        // Test URL without credentials (should remain unchanged)
+        let url_no_creds = "https://github.com/user/repo.git";
+        let redacted_no_creds = redact_url_password(url_no_creds);
+        assert_eq!(redacted_no_creds, "https://github.com/user/repo.git");
+        
+        // Test URL with @ but no credentials (should remain unchanged)
+        let url_with_at = "https://example.com/user@domain/repo.git";
+        let redacted_with_at = redact_url_password(url_with_at);
+        assert_eq!(redacted_with_at, "https://example.com/user@domain/repo.git");
+        
+        // Test edge case - URL with colon in path but no credentials
+        let url_colon_path = "https://example.com:8080/repo.git";
+        let redacted_colon_path = redact_url_password(url_colon_path);
+        assert_eq!(redacted_colon_path, "https://example.com:8080/repo.git");
+    }
+
+    #[test]
+    fn test_strip_credentials_from_http_url() {
+        // Test HTTP URL with credentials
+        assert_eq!(
+            strip_credentials_from_http_url("https://gitlab-ci-token:[MASKED]@gitlab.com:443/apptesting/vulnerable-python-app.git"),
+            "https://gitlab.com:443/apptesting/vulnerable-python-app.git"
+        );
+        
+        // Test HTTPS URL with credentials
+        assert_eq!(
+            strip_credentials_from_http_url("https://username:password@gitlab.example.com/project/repo.git"),
+            "https://gitlab.example.com/project/repo.git"
+        );
+        
+        // Test URL without credentials (should remain unchanged)
+        assert_eq!(
+            strip_credentials_from_http_url("https://github.com/user/repo.git"),
+            "https://github.com/user/repo.git"
+        );
+        
+        // Test HTTP URL without credentials
+        assert_eq!(
+            strip_credentials_from_http_url("https://gitlab.com:443/apptesting/vulnerable-python-app.git"),
+            "https://gitlab.com:443/apptesting/vulnerable-python-app.git"
+        );
+    }
+
+    #[test]
+    fn test_team_validation_logic() {
+        // Test the core logic of team validation without needing actual API calls
+        let existing_teams = vec!["Security Team".to_string(), "Development Team".to_string(), "QA Team".to_string()];
+        let existing_team_names: HashSet<String> = existing_teams.into_iter().collect();
+        
+        // Test valid teams
+        let requested_teams = vec!["Security Team".to_string(), "Development Team".to_string()];
+        let mut missing_teams = Vec::new();
+        for team_name in &requested_teams {
+            if !existing_team_names.contains(team_name) {
+                missing_teams.push(team_name.clone());
+            }
+        }
+        assert!(missing_teams.is_empty(), "All teams should exist");
+        
+        // Test missing teams
+        let requested_teams_with_missing = vec!["Security Team".to_string(), "NonExistent Team".to_string()];
+        let mut missing_teams = Vec::new();
+        for team_name in &requested_teams_with_missing {
+            if !existing_team_names.contains(team_name) {
+                missing_teams.push(team_name.clone());
+            }
+        }
+        assert_eq!(missing_teams, vec!["NonExistent Team"], "Should detect missing team");
+    }
 }
 
 /// Handle GitLab issues creation from scan results (independent of export) - async version
 async fn handle_gitlab_issues_creation_from_results_async(results_vec: &[veracode_platform::pipeline::ScanResults], matched_files: &[PathBuf], args: &Args) {
-    println!("\n🔗 Creating GitLab issues from scan findings...");
+    if let Commands::Pipeline { min_severity, .. } = &args.command {
+        println!("\n🔗 Creating GitLab issues from scan findings...");
+        
+        // Create source file names from the matched files
+        let source_files: Vec<String> = matched_files.iter()
+            .map(|path| path.file_name()
+                .and_then(|name| name.to_str())
+                .unwrap_or("unknown")
+                .to_string())
+            .collect();
+        
+        // Create findings aggregator
+        let aggregator = FindingsAggregator::new(args.debug);
+        
+        // Parse severity filter if provided
+        let severity_filter = min_severity.as_ref()
+            .map(|s| crate::findings::FindingsAggregator::parse_severity_level(s));
     
-    // Create source file names from the matched files
-    let source_files: Vec<String> = matched_files.iter()
-        .map(|path| path.file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("unknown")
-            .to_string())
-        .collect();
-    
-    // Create findings aggregator
-    let aggregator = FindingsAggregator::new(args.debug);
-    
-    // Parse severity filter if provided
-    let severity_filter = args.min_severity.as_ref()
-        .map(|s| crate::findings::FindingsAggregator::parse_severity_level(s));
-    
-    // Aggregate all findings with optional severity filtering
-    let aggregated = if let Some(min_severity) = severity_filter {
-        aggregator.aggregate_findings_with_filter(results_vec, &source_files, Some(min_severity))
-    } else {
-        aggregator.aggregate_findings(results_vec, &source_files)
-    };
-    
-    // Handle baseline operations and get filtered findings
-    let baseline_filtered = handle_baseline_operations(&aggregated, args);
-    
-    // Handle policy assessment and get violations (if policy is specified)
-    let (_policy_assessment, final_filtered) = handle_policy_assessment(&baseline_filtered, args).await;
-    
-    // Create GitLab issues asynchronously
-    handle_gitlab_issues_creation_async(&final_filtered, args).await;
+        // Aggregate all findings with optional severity filtering
+        let aggregated = if let Some(min_severity) = severity_filter {
+            aggregator.aggregate_findings_with_filter(results_vec, &source_files, Some(min_severity))
+        } else {
+            aggregator.aggregate_findings(results_vec, &source_files)
+        };
+        
+        // Handle baseline operations and get filtered findings
+        let baseline_filtered = handle_baseline_operations(&aggregated, args);
+        
+        // Handle policy assessment and get violations (if policy is specified)
+        let (_policy_assessment, final_filtered) = handle_policy_assessment(&baseline_filtered, args).await;
+        
+        // Create GitLab issues asynchronously
+        handle_gitlab_issues_creation_async(&final_filtered, args).await;
+    }
 }
 
 /// Handle GitLab issues creation from aggregated findings - async version
 async fn handle_gitlab_issues_creation_async(aggregated: &crate::findings::AggregatedFindings, args: &Args) {
-    match GitLabIssuesClient::from_env(args.debug) {
-        Ok(mut client) => {
-            // Set project directory (always available with default ".")
-            client = client.with_project_dir(&args.project_dir);
-            if args.debug {
-                println!("📁 Using project directory for file path resolution: {}", args.project_dir);
-            }
-            match client.create_issues_from_findings(aggregated).await {
-                Ok(issues) => {
-                    println!("✅ Successfully created {} GitLab issues", issues.len());
-                    if args.debug {
-                        for issue in issues {
-                            println!("   Issue #{}: {}", issue.iid, issue.web_url);
+    if let Commands::Pipeline { project_dir, .. } = &args.command {
+        match GitLabIssuesClient::from_env(args.debug) {
+            Ok(mut client) => {
+                // Set project directory (always available with default ".")
+                client = client.with_project_dir(project_dir);
+                if args.debug {
+                    println!("📁 Using project directory for file path resolution: {}", project_dir);
+                }
+                match client.create_issues_from_findings(aggregated).await {
+                    Ok(issues) => {
+                        println!("✅ Successfully created {} GitLab issues", issues.len());
+                        if args.debug {
+                            for issue in issues {
+                                println!("   Issue #{}: {}", issue.iid, issue.web_url);
+                            }
                         }
                     }
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to create GitLab issues: {}", e);
+                    Err(e) => {
+                        eprintln!("❌ Failed to create GitLab issues: {}", e);
+                    }
                 }
             }
-        }
-        Err(e) => {
-            eprintln!("❌ Failed to initialize GitLab client: {}", e);
-            eprintln!("   Make sure the following environment variables are set:");
-            eprintln!("   - PRIVATE_TOKEN or CI_TOKEN (GitLab API token)");
-            eprintln!("   - CI_PROJECT_ID (GitLab project ID)");
-            eprintln!("   Optional: CI_PIPELINE_ID, CI_PROJECT_URL, CI_COMMIT_SHA");
+            Err(e) => {
+                eprintln!("❌ Failed to initialize GitLab client: {}", e);
+                eprintln!("   Make sure the following environment variables are set:");
+                eprintln!("   - PRIVATE_TOKEN or CI_TOKEN (GitLab API token)");
+                eprintln!("   - CI_PROJECT_ID (GitLab project ID)");
+                eprintln!("   Optional: CI_PIPELINE_ID, CI_PIPELINE_URL, CI_COMMIT_SHA");
+            }
         }
     }
 }
@@ -906,7 +1074,7 @@ async fn handle_gitlab_issues_creation_async(aggregated: &crate::findings::Aggre
 /// Handle baseline operations: filter findings against baseline (Java-style)
 fn handle_baseline_operations(aggregated: &AggregatedFindings, args: &Args) -> AggregatedFindings {
     // If baseline file is provided, filter the findings to show only new ones
-    if let Some(ref baseline_path) = args.baseline_file {
+    if let Commands::Pipeline { baseline_file: Some(baseline_path), .. } = &args.command {
         if args.debug {
             println!("\n🔍 Translating baseline file");
         }
@@ -924,8 +1092,11 @@ fn handle_baseline_operations(aggregated: &AggregatedFindings, args: &Args) -> A
                 }
                 
                 // Check if policy assessment is enabled to determine precedence
-                let policy_enabled = args.policy_file.is_some() || args.policy_name.is_some() || 
-                    args.fail_on_severity.is_some() || args.fail_on_cwe.is_some();
+                let policy_enabled = if let Commands::Pipeline { policy_file, policy_name, fail_on_severity, fail_on_cwe, .. } = &args.command {
+                    policy_file.is_some() || policy_name.is_some() || fail_on_severity.is_some() || fail_on_cwe.is_some()
+                } else {
+                    false
+                };
                 let baseline_failed = comparison.summary.new_count > 0;
                 
                 if baseline_failed {
@@ -974,51 +1145,56 @@ fn handle_baseline_operations(aggregated: &AggregatedFindings, args: &Args) -> A
 /// Handle policy assessment operations: assess findings against policy and export violations
 async fn handle_policy_assessment(aggregated: &AggregatedFindings, args: &Args) -> (Option<PolicyAssessment>, AggregatedFindings) {
     // Check if policy assessment is requested
-    if args.policy_file.is_some() || args.policy_name.is_some() {
-        if args.debug {
-            println!("\n🔍 Policy assessment requested");
-        }
+    if let Commands::Pipeline { policy_file, policy_name, .. } = &args.command {
+        if policy_file.is_some() || policy_name.is_some() {
+            if args.debug {
+                println!("\n🔍 Policy assessment requested");
+            }
+            
+            let assessment_result = if let Some(policy_file_path) = policy_file {
+                // Use policy file
+                let policy_path = Path::new(policy_file_path);
+                execute_policy_file_assessment(aggregated, policy_path, None, args.debug)
+            } else if let Some(policy_name_str) = policy_name {
+                // Use policy name (requires async)
+                execute_policy_name_assessment(aggregated, policy_name_str, None, args).await
+            } else {
+                return (None, aggregated.clone());
+            };
         
-        let assessment_result = if let Some(ref policy_file_path) = args.policy_file {
-            // Use policy file
-            let policy_path = Path::new(policy_file_path);
-            execute_policy_file_assessment(aggregated, policy_path, None, args.debug)
-        } else if let Some(ref policy_name) = args.policy_name {
-            // Use policy name (requires async)
-            execute_policy_name_assessment(aggregated, policy_name, None, args).await
-        } else {
-            return (None, aggregated.clone());
-        };
-        
-        match assessment_result {
-            Ok(assessment) => {
-                // Note: Filtered JSON export is now handled centrally in export_pass_fail_violations
-                
-                // Return violations as filtered findings for subsequent processing
-                if !assessment.violations.is_empty() {
-                    let mut filtered_aggregated = aggregated.clone();
-                    filtered_aggregated.findings = assessment.violations.clone();
+            match assessment_result {
+                Ok(assessment) => {
+                    // Note: Filtered JSON export is now handled centrally in export_pass_fail_violations
                     
-                    // Recalculate summary for violations only
-                    let aggregator = FindingsAggregator::new(args.debug);
-                    let updated_summary = aggregator.calculate_summary_from_findings(&filtered_aggregated.findings);
-                    filtered_aggregated.summary = updated_summary;
+                    // Return violations as filtered findings for subsequent processing
+                    if !assessment.violations.is_empty() {
+                        let mut filtered_aggregated = aggregated.clone();
+                        filtered_aggregated.findings = assessment.violations.clone();
+                        
+                        // Recalculate summary for violations only
+                        let aggregator = FindingsAggregator::new(args.debug);
+                        let updated_summary = aggregator.calculate_summary_from_findings(&filtered_aggregated.findings);
+                        filtered_aggregated.summary = updated_summary;
+                        
+                        // Update stats
+                        filtered_aggregated.stats.total_findings = filtered_aggregated.findings.len() as u32;
+                        
+                        return (Some(assessment), filtered_aggregated);
+                    }
                     
-                    // Update stats
-                    filtered_aggregated.stats.total_findings = filtered_aggregated.findings.len() as u32;
-                    
-                    return (Some(assessment), filtered_aggregated);
+                    (Some(assessment), aggregated.clone())
                 }
-                
-                (Some(assessment), aggregated.clone())
+                Err(exit_code) => {
+                    eprintln!("❌ Policy assessment failed with exit code: {}", exit_code);
+                    (None, aggregated.clone())
+                }
             }
-            Err(exit_code) => {
-                eprintln!("❌ Policy assessment failed with exit code: {}", exit_code);
-                (None, aggregated.clone())
-            }
+        } else {
+            // No policy assessment requested
+            (None, aggregated.clone())
         }
     } else {
-        // No policy assessment requested
+        // No policy assessment requested  
         (None, aggregated.clone())
     }
 }
@@ -1090,46 +1266,48 @@ async fn export_pass_fail_violations(
     }
     
     // 2. Baseline violations (only if no severity/CWE criteria specified)
-    if args.baseline_file.is_some() && args.fail_on_severity.is_none() && args.fail_on_cwe.is_none() {
-        if !baseline_filtered.findings.is_empty() {
-            violating_findings.extend(baseline_filtered.findings.clone());
-            criteria_description.push("New findings vs baseline".to_string());
-        }
-    }
-    
-    // 3. Fail-on-severity violations (takes precedence over baseline)
-    if let Some(ref severity_list) = args.fail_on_severity {
-        let target_findings = if args.baseline_file.is_some() {
-            &baseline_filtered.findings  // Apply to new baseline findings only
-        } else {
-            &final_filtered.findings     // Apply to all findings
-        };
-        
-        let severity_violations = evaluate_fail_on_severity(target_findings, severity_list);
-        if !severity_violations.is_empty() {
-            violating_findings.extend(severity_violations);
-            if args.baseline_file.is_some() {
+    if let Commands::Pipeline { baseline_file, fail_on_severity, fail_on_cwe, .. } = &args.command {
+        if baseline_file.is_some() && fail_on_severity.is_none() && fail_on_cwe.is_none() {
+            if !baseline_filtered.findings.is_empty() {
+                violating_findings.extend(baseline_filtered.findings.clone());
                 criteria_description.push("New findings vs baseline".to_string());
             }
-            criteria_description.push(format!("Severity criteria: {}", severity_list));
         }
-    }
-    
-    // 4. Fail-on-CWE violations (takes precedence over baseline)
-    if let Some(ref cwe_list) = args.fail_on_cwe {
-        let target_findings = if args.baseline_file.is_some() {
-            &baseline_filtered.findings  // Apply to new baseline findings only
-        } else {
-            &final_filtered.findings     // Apply to all findings
-        };
         
-        let cwe_violations = evaluate_fail_on_cwe(target_findings, cwe_list);
-        if !cwe_violations.is_empty() {
-            violating_findings.extend(cwe_violations);
-            if args.baseline_file.is_some() && !criteria_description.contains(&"New findings vs baseline".to_string()) {
-                criteria_description.push("New findings vs baseline".to_string());
+        // 3. Fail-on-severity violations (takes precedence over baseline)
+        if let Some(severity_list) = fail_on_severity {
+            let target_findings = if baseline_file.is_some() {
+                &baseline_filtered.findings  // Apply to new baseline findings only
+            } else {
+                &final_filtered.findings     // Apply to all findings
+            };
+        
+            let severity_violations = evaluate_fail_on_severity(target_findings, severity_list);
+            if !severity_violations.is_empty() {
+                violating_findings.extend(severity_violations);
+                if baseline_file.is_some() {
+                    criteria_description.push("New findings vs baseline".to_string());
+                }
+                criteria_description.push(format!("Severity criteria: {}", severity_list));
             }
-            criteria_description.push(format!("CWE criteria: {}", cwe_list));
+        }
+        
+        // 4. Fail-on-CWE violations (takes precedence over baseline)
+        if let Some(cwe_list) = fail_on_cwe {
+            let target_findings = if baseline_file.is_some() {
+                &baseline_filtered.findings  // Apply to new baseline findings only
+            } else {
+                &final_filtered.findings     // Apply to all findings
+            };
+            
+            let cwe_violations = evaluate_fail_on_cwe(target_findings, cwe_list);
+            if !cwe_violations.is_empty() {
+                violating_findings.extend(cwe_violations);
+                if baseline_file.is_some() && !criteria_description.contains(&"New findings vs baseline".to_string()) {
+                    criteria_description.push("New findings vs baseline".to_string());
+                }
+                criteria_description.push(format!("CWE criteria: {}", cwe_list));
+            }
         }
     }
     
@@ -1153,14 +1331,16 @@ async fn export_pass_fail_violations(
         std::process::exit(1);
     } else {
         // When policy criteria are specified and pass, show success message
-        if args.fail_on_severity.is_some() || args.fail_on_cwe.is_some() {
-            if args.baseline_file.is_some() {
-                println!("\n✅ Baseline comparison PASSED - no policy violations in new findings");
-            } else {
-                println!("\n✅ Pass-fail criteria PASSED - no violations detected");
+        if let Commands::Pipeline { fail_on_severity, fail_on_cwe, baseline_file, .. } = &args.command {
+            if fail_on_severity.is_some() || fail_on_cwe.is_some() {
+                if baseline_file.is_some() {
+                    println!("\n✅ Baseline comparison PASSED - no policy violations in new findings");
+                } else {
+                    println!("\n✅ Pass-fail criteria PASSED - no violations detected");
+                }
+            } else if args.debug {
+                println!("ℹ️  No pass-fail criteria violations found - filtered JSON not created");
             }
-        } else if args.debug {
-            println!("ℹ️  No pass-fail criteria violations found - filtered JSON not created");
         }
     }
 }
@@ -1300,5 +1480,234 @@ fn calculate_cwe_breakdown(findings: &[FindingWithSource]) -> serde_json::Value 
     let top_cwes: std::collections::HashMap<String, u32> = cwe_vec.into_iter().take(10).collect();
     
     serde_json::to_value(top_cwes).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
+}
+
+/// Validate that all specified teams exist in Veracode
+async fn validate_teams_exist(client: &veracode_platform::VeracodeClient, team_names: &[String], debug: bool) -> Result<(), String> {
+    if team_names.is_empty() {
+        return Ok(());
+    }
+    
+    if debug {
+        println!("🔍 Validating team existence...");
+    }
+    
+    // Get all available teams from Veracode
+    let identity_api = IdentityApi::new(client);
+    let all_teams = match identity_api.list_teams().await {
+        Ok(teams) => teams,
+        Err(e) => {
+            return Err(format!("Failed to fetch teams from Veracode: {}", e));
+        }
+    };
+    
+    if debug {
+        println!("   Found {} teams in Veracode", all_teams.len());
+    }
+    
+    // Create a set of existing team names for fast lookup
+    let existing_team_names: std::collections::HashSet<String> = all_teams
+        .iter()
+        .map(|team| team.team_name.clone())
+        .collect();
+    
+    // Check if all requested teams exist
+    let mut missing_teams = Vec::new();
+    for team_name in team_names {
+        if !existing_team_names.contains(team_name) {
+            missing_teams.push(team_name.clone());
+        }
+    }
+    
+    if !missing_teams.is_empty() {
+        return Err(format!(
+            "The following teams do not exist in Veracode: {}. Available teams: {}",
+            missing_teams.join(", "),
+            existing_team_names.iter().take(10).cloned().collect::<Vec<_>>().join(", ")
+                + if existing_team_names.len() > 10 { " ..." } else { "" }
+        ));
+    }
+    
+    if debug {
+        println!("✅ All teams validated successfully");
+        for team_name in team_names {
+            println!("   ✓ {}", team_name);
+        }
+    }
+    
+    Ok(())
+}
+
+/// Execute assessment scan workflow
+pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result<(), i32> {
+    if let Commands::Assessment { app_profile_name, sandbox_name, timeout, threads, modules, export_results, deleteincompletescan, .. } = &args.command {
+        println!("\n🚀 Assessment Scan requested");
+        
+        // Check credentials
+        let (api_id, api_key) = check_pipeline_credentials(args)
+            .map_err(|_| 1)?;
+
+        // App profile name is required field, no need to check
+        
+        // Determine scan type based on sandbox_name
+        let scan_type = if sandbox_name.is_some() {
+            ScanType::Sandbox
+        } else {
+            ScanType::Policy
+        };
+
+        // Use assessment timeout default if not overridden
+        let timeout_value = if *timeout == 60 { // Assessment default, not overridden
+            60 // Use assessment default
+        } else {
+            *timeout
+        };
+
+        let region = parse_region(&args.region)?;
+        let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
+        
+        // Check environment variable for certificate validation
+        if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
+            veracode_config = veracode_config.with_certificate_validation_disabled();
+            println!("⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION");
+            println!("   This should only be used in development environments!");
+        }
+
+        // Parse modules if provided
+        let selected_modules = modules.as_ref().map(|modules_str| {
+            modules_str.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>()
+        });
+
+        let assessment_config = AssessmentScanConfig {
+            app_profile_name: app_profile_name.clone(),
+            scan_type,
+            sandbox_name: sandbox_name.clone(),
+            selected_modules,
+            region,
+            timeout: timeout_value,
+            threads: *threads,
+            debug: args.debug,
+            autoscan: true, // Default to enabled for now, could be made configurable via CLI
+            export_results_path: export_results.clone(),
+            deleteincompletescan: *deleteincompletescan,
+        };
+
+        let submitter = AssessmentSubmitter::new(veracode_config, assessment_config)
+            .map_err(|e| {
+                eprintln!("❌ Failed to create assessment submitter: {}", e);
+                1
+            })?;
+
+        execute_assessment_scan_with_runtime(submitter, matched_files, args)
+    } else {
+        eprintln!("❌ execute_assessment_scan called with non-assessment command");
+        Err(1)
+    }
+}
+
+/// Execute assessment scan with async runtime
+fn execute_assessment_scan_with_runtime(submitter: AssessmentSubmitter, matched_files: &[PathBuf], args: &Args) -> Result<(), i32> {
+    submitter.display_config();
+    
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async move {
+            execute_assessment_scan_async(submitter, matched_files, args).await
+        })
+}
+
+/// Async execution of assessment scan
+async fn execute_assessment_scan_async(submitter: AssessmentSubmitter, matched_files: &[PathBuf], args: &Args) -> Result<(), i32> {
+    if let Commands::Assessment { app_profile_name, teamname, bus_cri, .. } = &args.command {
+        
+        if args.debug {
+            println!("🔍 Looking up or creating application profile: {}", app_profile_name);
+        }
+        
+        // Parse team names from CLI if provided
+        let team_names = teamname.as_ref().map(|team_str| {
+            team_str.split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<String>>()
+        });
+    
+    if let Some(ref teams) = team_names {
+        if args.debug {
+            println!("   Teams to assign: {}", teams.join(", "));
+        }
+        
+        // Validate team existence before creating application
+        if let Err(e) = validate_teams_exist(&submitter.client, teams, args.debug).await {
+            eprintln!("❌ Team validation failed: {}", e);
+            return Err(1);
+        }
+    }
+    
+        let app_id = match submitter.client.create_application_if_not_exists(
+            app_profile_name,
+            crate::cli::parse_business_criticality(bus_cri),
+            Some(format!("Application created by Verascan for assessment scanning")),
+            team_names,
+        ).await {
+        Ok(app) => {
+            if args.debug {
+                println!("✅ Application ready: {} (ID: {}, GUID: {})", 
+                         app.profile.as_ref().map(|p| p.name.as_str()).unwrap_or("Unknown"), 
+                         app.id, app.guid);
+                if let Some(profile) = &app.profile {
+                    if let Some(teams) = &profile.teams {
+                        if !teams.is_empty() {
+                            let team_names: Vec<String> = teams.iter()
+                                .filter_map(|t| t.team_name.as_ref())
+                                .cloned()
+                                .collect();
+                            println!("   Associated teams: {}", team_names.join(", "));
+                        }
+                    }
+                }
+            } else {
+                println!("✅ Application ready: {}", app_profile_name);
+            }
+            crate::assessment::ApplicationId::new(app.guid, app.id.to_string())
+        },
+        Err(e) => {
+            eprintln!("❌ Failed to lookup or create application '{}': {}", app_profile_name, e);
+            return Err(1);
+        }
+    };
+
+    // Upload files and start scan
+    match submitter.upload_and_scan(&matched_files, &app_id).await {
+        Ok(build_id) => {
+            println!("✅ Assessment scan workflow completed");
+            println!("   Build ID: {}", build_id);
+            println!("   App Profile: {}", app_profile_name);
+            match &submitter.config.scan_type {
+                ScanType::Sandbox => {
+                    if let Some(sandbox_name) = &submitter.config.sandbox_name {
+                        println!("   Sandbox: {}", sandbox_name);
+                    }
+                },
+                ScanType::Policy => {
+                    println!("   Scan Type: Policy");
+                }
+            }
+            Ok(())
+        },
+        Err(e) => {
+            eprintln!("❌ Assessment scan failed: {}", e);
+            Err(1)
+        }
+    }
+    } else {
+        eprintln!("❌ execute_assessment_scan_async called with non-assessment command");
+        Err(1)
+    }
 }
 

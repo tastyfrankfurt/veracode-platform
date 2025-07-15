@@ -1,4 +1,4 @@
-use clap::Parser;
+use clap::{Parser, Subcommand};
 use serde_json;
 
 #[derive(Parser)]
@@ -6,33 +6,16 @@ use serde_json;
 #[command(about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting.")]
 #[command(version = "0.1.0")]
 pub struct Args {
-    /// Directory path to search in
-    #[arg(long = "filepath", short = 'f', help = "Path to the directory to search", required_unless_present = "request_policy")]
-    pub filepath: Option<String>,
-
-    /// File filter patterns (comma-separated)
-    #[arg(long = "filefilter", help = "File patterns to match (e.g., '*.jar,*.war,*.zip')", default_value = "*")]
-    pub filefilter: String,
-
-    /// Enable recursive search
-    #[arg(long = "recursive", short = 'r', help = "Search recursively through subdirectories", default_value = "true")]
-    pub recursive: bool,
-
-    /// Validate file types by checking file headers
-    #[arg(long = "validate", short = 'v', help = "Validate file types using header signatures", default_value = "true")]
-    pub validate: bool,
+    #[command(subcommand)]
+    pub command: Commands,
 
     /// Enable debug mode for detailed output
-    #[arg(long = "debug", short = 'd', help = "Enable debug mode for detailed diagnostic output")]
+    #[arg(long = "debug", short = 'd', help = "Enable debug mode for detailed diagnostic output", global = true)]
     pub debug: bool,
 
-    /// Submit found files for Veracode Pipeline Scan
-    #[arg(long = "pipeline-scan", help = "Submit valid files for Veracode Pipeline Scan")]
-    pub pipeline_scan: bool,
-
-    /// Download Veracode security policy by name
-    #[arg(long = "request-policy", help = "Download Veracode security policy by name and save as JSON", value_parser = validate_policy_name)]
-    pub request_policy: Option<String>,
+    /// Veracode region (commercial, european, federal)
+    #[arg(long = "region", help = "Veracode regions (commercial, european, federal)", default_value = "commercial", value_parser = validate_region, global = true)]
+    pub region: String,
 
     /// Veracode API ID (set VERACODE_API_ID env var)
     #[arg(skip)]
@@ -41,86 +24,187 @@ pub struct Args {
     /// Veracode API Key (set VERACODE_API_KEY env var)
     #[arg(skip)]
     pub api_key: Option<String>,
+}
 
-    /// Veracode application profile name to link the scan to an existing application
-    #[arg(short = 'n', long = "app-profile-name", help = "Veracode application profile name for automatic app_id lookup", requires = "pipeline_scan", value_parser = validate_name_field)]
-    pub app_profile_name: Option<String>,
+#[derive(Subcommand)]
+pub enum Commands {
+    /// Submit files for Veracode Pipeline Scan
+    Pipeline {
+        /// Directory path to search in
+        #[arg(long = "filepath", short = 'f', help = "Path to the directory to search", default_value = ".")]
+        filepath: String,
 
-    /// Project name for pipeline scan
-    #[arg(short = 'p', long = "project-name", help = "Project name for pipeline scan", requires = "pipeline_scan", value_parser = validate_name_field)]
-    pub project_name: Option<String>,
+        /// File filter patterns (comma-separated)
+        #[arg(long = "filefilter", help = "File patterns to match (e.g., '*.jar,*.war,*.zip')", default_value = "*")]
+        filefilter: String,
 
-    /// Project URL for pipeline scan
-    #[arg(short = 's', long = "project-url", help = "Project URL for pipeline scan (https:// required, http:// allowed with VERASCAN_DISABLE_CERT_VALIDATION)", requires = "pipeline_scan", value_parser = validate_project_url)]
-    pub project_url: Option<String>,
+        /// Enable recursive search
+        #[arg(long = "recursive", short = 'r', help = "Search recursively through subdirectories", default_value = "true")]
+        recursive: bool,
 
-    /// Veracode region (commercial, european, federal)
-    #[arg(long = "region", help = "Veracode region", default_value = "commercial", requires = "pipeline_scan", value_parser = validate_region)]
-    pub region: String,
+        /// Validate file types by checking file headers
+        #[arg(long = "validate", short = 'v', help = "Validate file types using header signatures", default_value = "true")]
+        validate: bool,
 
-    /// Timeout in minutes to wait for pipeline scan completion
-    #[arg(short = 't', long = "timeout", help = "Timeout in minutes to wait for pipeline scan completion (default: 30)", default_value = "30", requires = "pipeline_scan")]
-    pub timeout: u32,
+        /// Project name for pipeline scan
+        #[arg(short = 'p', long = "project-name", help = "Project name for pipeline scan", value_parser = validate_name_field)]
+        project_name: Option<String>,
 
-    /// Number of concurrent threads for pipeline scans
-    #[arg(long = "threads", help = "Number of concurrent threads for pipeline scans (2-10)", default_value = "4", requires = "pipeline_scan", value_parser = validate_threads)]
-    pub threads: usize,
+        /// Project URL for pipeline scan
+        #[arg(short = 's', long = "project-url", help = "Project URL for pipeline scan (https:// required, http:// allowed with VERASCAN_DISABLE_CERT_VALIDATION)", value_parser = validate_project_url)]
+        project_url: Option<String>,
 
-    /// Export aggregated findings to a file
-    #[arg(long = "export-findings", help = "Export aggregated findings to specified file path (supports .json and .csv)", requires = "pipeline_scan")]
-    pub export_findings: Option<String>,
+        /// Timeout in minutes to wait for scan completion
+        #[arg(short = 't', long = "timeout", help = "Timeout in minutes to wait for scan completion", default_value = "30")]
+        timeout: u32,
 
-    /// Export format for findings
-    #[arg(long = "export-format", help = "Export format for findings (json, csv, gitlab, all)", default_value = "json", requires = "export_findings", value_parser = validate_export_format)]
-    pub export_format: String,
+        /// Number of concurrent threads for file uploads
+        #[arg(long = "threads", help = "Number of concurrent threads for file uploads (2-10)", default_value = "4", value_parser = validate_threads)]
+        threads: usize,
 
-    /// Show detailed findings in human-readable format
-    #[arg(long = "show-findings", help = "Display detailed findings in human-readable format to CLI", requires = "pipeline_scan")]
-    pub show_findings: bool,
+        /// Export aggregated findings to a file
+        #[arg(long = "export-findings", help = "Export aggregated findings to specified file path (supports .json and .csv)", default_value = "results.json")]
+        export_findings: String,
 
-    /// Limit number of findings to display
-    #[arg(long = "findings-limit", help = "Limit number of findings to display (1-100, 0 = show all)", default_value = "20", requires = "show_findings", value_parser = validate_findings_limit)]
-    pub findings_limit: u32,
+        /// Export format for findings
+        #[arg(long = "export-format", help = "Export format for findings (json, csv, gitlab, all)", default_value = "json", value_parser = validate_export_format)]
+        export_format: String,
 
-    /// Filter findings by minimum severity level across all findings processing
-    #[arg(long = "min-severity", help = "Filter out findings below this severity level from all processing (informational, very-low, low, medium, high, very-high)", requires = "pipeline_scan", value_parser = validate_severity_level)]
-    pub min_severity: Option<String>,
+        /// Show detailed findings in human-readable format
+        #[arg(long = "show-findings", help = "Display detailed findings in human-readable format to CLI")]
+        show_findings: bool,
 
-    /// Project directory root for resolving relative file paths in GitLab permalinks
-    #[arg(long = "project-dir", help = "Project directory root for resolving file paths in GitLab permalinks", default_value = ".")]
-    pub project_dir: String,
+        /// Limit number of findings to display
+        #[arg(long = "findings-limit", help = "Limit number of findings to display (1-100, 0 = show all)", default_value = "20", value_parser = validate_findings_limit)]
+        findings_limit: u32,
 
-    /// Create GitLab issues from findings
-    #[arg(long = "create-gitlab-issues", help = "Create GitLab issues from scan findings using CI environment variables", requires = "pipeline_scan")]
-    pub create_gitlab_issues: bool,
+        /// Filter findings by minimum severity level across all findings processing
+        #[arg(long = "min-severity", help = "Filter out findings below this severity level from all processing (informational, very-low, low, medium, high, very-high)", value_parser = validate_severity_level)]
+        min_severity: Option<String>,
 
-    /// Baseline file for comparison with current scan results
-    #[arg(long = "baseline-file", short = 'b', help = "Provide the baseline file.", requires = "export_findings", value_parser = validate_baseline_file)]
-    pub baseline_file: Option<String>,
+        /// Project directory root for resolving relative file paths in GitLab permalinks
+        #[arg(long = "project-dir", help = "Project directory root for resolving file paths in GitLab permalinks", default_value = ".")]
+        project_dir: String,
 
-    /// Policy file for results assessment
-    #[arg(long = "policy-file", help = "Name of the local policy file to be applied to the scan results.", requires = "export_findings", conflicts_with = "policy_name", value_parser = validate_policy_file)]
-    pub policy_file: Option<String>,
+        /// Create GitLab issues from findings
+        #[arg(long = "create-gitlab-issues", help = "Create GitLab issues from scan findings using CI environment variables")]
+        create_gitlab_issues: bool,
 
-    /// Policy name for results assessment
-    #[arg(long = "policy-name", help = "Name of the Veracode Platform Policy to be applied to the scan results.", requires = "export_findings", conflicts_with = "policy_file", value_parser = validate_policy_name)]
-    pub policy_name: Option<String>,
+        /// Baseline file for comparison with current scan results
+        #[arg(long = "baseline-file", short = 'b', help = "Provide the baseline file.", value_parser = validate_baseline_file)]
+        baseline_file: Option<String>,
 
-    /// Filtered JSON output file for policy violations
-    #[arg(long = "filtered-json-output-file", help = "Filename (in the current directory) to save results that violate pass-fail criteria.", requires = "baseline_file")]
-    pub filtered_json_output_file: Option<String>,
+        /// Policy file for results assessment
+        #[arg(long = "policy-file", help = "Name of the local policy file to be applied to the scan results.", conflicts_with = "policy_name", value_parser = validate_policy_file)]
+        policy_file: Option<String>,
 
-    /// Development stage for pipeline scan
-    #[arg(long = "development-stage", help = "Development stage (development, testing, release)", default_value = "development", requires = "pipeline_scan", value_parser = validate_development_stage)]
-    pub development_stage: String,
+        /// Policy name for results assessment
+        #[arg(long = "policy-name", help = "Name of the Veracode Platform Policy to be applied to the scan results.", conflicts_with = "policy_file", value_parser = validate_policy_name)]
+        policy_name: Option<String>,
 
-    /// Fail on specific severity levels (comma-separated)
-    #[arg(long = "fail-on-severity", help = "Set analysis to fail for issues of the given severities. Comma-separated list (e.g., 'Very High,High')", requires = "export_findings", value_parser = validate_fail_on_severity)]
-    pub fail_on_severity: Option<String>,
+        /// Filtered JSON output file for policy violations
+        #[arg(long = "filtered-json-output-file", help = "Filename (in the current directory) to save results that violate pass-fail criteria.")]
+        filtered_json_output_file: Option<String>,
 
-    /// Fail on specific CWE IDs (comma-separated)
-    #[arg(long = "fail-on-cwe", help = "Set analysis to fail for the given CWEs. Comma-separated list (e.g., '89,79,22')", requires = "export_findings", value_parser = validate_fail_on_cwe)]
-    pub fail_on_cwe: Option<String>,
+        /// Development stage for pipeline scan
+        #[arg(long = "development-stage", help = "Development stage (development, testing, release)", default_value = "development", value_parser = validate_development_stage)]
+        development_stage: String,
+
+        /// Fail on specific severity levels (comma-separated)
+        #[arg(long = "fail-on-severity", help = "Set analysis to fail for issues of the given severities. Comma-separated list (e.g., 'Very High,High')", value_parser = validate_fail_on_severity)]
+        fail_on_severity: Option<String>,
+
+        /// Fail on specific CWE IDs (comma-separated)
+        #[arg(long = "fail-on-cwe", help = "Set analysis to fail for the given CWEs. Comma-separated list (e.g., '89,79,22')", value_parser = validate_fail_on_cwe)]
+        fail_on_cwe: Option<String>,
+    },
+
+    /// Submit files for Veracode Assessment Scan (sandbox or policy)
+    Assessment {
+        /// Directory path to search in
+        #[arg(long = "filepath", short = 'f', help = "Path to the directory to search", default_value = ".")]
+        filepath: String,
+
+        /// File filter patterns (comma-separated)
+        #[arg(long = "filefilter", help = "File patterns to match (e.g., '*.jar,*.war,*.zip')", default_value = "*")]
+        filefilter: String,
+
+        /// Enable recursive search
+        #[arg(long = "recursive", short = 'r', help = "Search recursively through subdirectories", default_value = "true")]
+        recursive: bool,
+
+        /// Validate file types by checking file headers
+        #[arg(long = "validate", short = 'v', help = "Validate file types using header signatures", default_value = "true")]
+        validate: bool,
+
+        /// Veracode application profile name to link the scan to an existing application
+        #[arg(short = 'n', long = "app-profile-name", help = "Veracode application profile name for automatic app_id lookup (required)", value_parser = validate_name_field)]
+        app_profile_name: String,
+
+        /// Timeout in minutes to wait for scan completion
+        #[arg(short = 't', long = "timeout", help = "Timeout in minutes to wait for scan completion", default_value = "60")]
+        timeout: u32,
+
+        /// Number of concurrent threads for file uploads
+        #[arg(long = "threads", help = "Number of concurrent threads for file uploads (2-10)", default_value = "4", value_parser = validate_threads)]
+        threads: usize,
+
+        /// Export assessment scan results to a file
+        #[arg(long = "export-results", help = "Export assessment scan results to specified file path (JSON format)", default_value = "assessment-results.json")]
+        export_results: String,
+
+        /// Sandbox name for sandbox assessment scans
+        #[arg(long = "sandbox-name", help = "Sandbox name for sandbox assessment scans (enables sandbox mode)", value_parser = validate_name_field)]
+        sandbox_name: Option<String>,
+
+        /// Selected modules for scanning (comma-separated)
+        #[arg(long = "modules", help = "Specific modules to scan (comma-separated, e.g., 'module1,module2'). If not specified, scans all nonfatal top-level modules", value_parser = validate_modules_list)]
+        modules: Option<String>,
+
+        /// Team to assign to App-Profile-Name when App-Profile-Name does not exist
+        #[arg(long = "teamname", help = "Specify the team name to ensure the teamname is added to the app-profile-name on creation", value_parser = validate_name_field)]
+        teamname: Option<String>,
+
+        /// Business criticality level for application creation
+        #[arg(long = "bus-cri", help = "Business criticality level for application creation (very-high, high, medium, low, very-low)", default_value = "very-high", value_parser = validate_business_criticality)]
+        bus_cri: String,
+
+        /// Delete incomplete scan policy for assessment scans
+        #[arg(long = "deleteincompletescan", help = "Build deletion policy for assessment scans: 0=Never delete, 1=Delete safe builds only (default), 2=Delete any build except Results Ready", default_value = "1", value_parser = validate_delete_incomplete_scan)]
+        deleteincompletescan: u8,
+    },
+
+    /// Download Veracode security policy by name
+    Policy {
+        /// Policy name to download
+        #[arg(help = "Name of the Veracode security policy to download", value_parser = validate_policy_name)]
+        policy_name: String,
+    },
+}
+
+impl Args {
+    /// Validate conditional requirements after parsing
+    pub fn validate_conditional_requirements(&self) -> Result<(), String> {
+        match &self.command {
+            Commands::Pipeline { baseline_file, export_findings, filtered_json_output_file, .. } => {
+                // Validate baseline file requirements for pipeline scans
+                if baseline_file.is_some() && export_findings.is_empty() {
+                    return Err("--baseline-file requires --export-findings to be specified".to_string());
+                }
+                if filtered_json_output_file.is_some() && baseline_file.is_none() {
+                    return Err("--filtered-json-output-file requires --baseline-file to be specified".to_string());
+                }
+            },
+            Commands::Assessment { .. } => {
+                // Assessment validation happens at the field level with required fields
+            },
+            Commands::Policy { .. } => {
+                // Policy validation happens at the field level
+            },
+        }
+        
+        Ok(())
+    }
 }
 
 /// Validate severity level input
@@ -425,4 +509,288 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
     }
     
     Ok(s.to_string())
+}
+
+/// Validate modules list input (comma-separated module names)
+fn validate_modules_list(s: &str) -> Result<String, String> {
+    if s.trim().is_empty() {
+        return Err("Modules list cannot be empty".to_string());
+    }
+    
+    // Split by comma and validate each module name
+    let modules: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    
+    for module in &modules {
+        if module.is_empty() {
+            return Err("Module names cannot be empty".to_string());
+        }
+        
+        // Check for valid characters (alphanumeric, dash, underscore, space, dot)
+        let is_valid = module.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.');
+        
+        if !is_valid {
+            return Err(format!(
+                "Invalid module name '{}'. Module names can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.)",
+                module
+            ));
+        }
+        
+        // Check length (reasonable limit)
+        if module.len() > 100 {
+            return Err(format!(
+                "Module name '{}' is too long. Maximum length is 100 characters",
+                module
+            ));
+        }
+    }
+    
+    Ok(s.to_string())
+}
+
+/// Validate business criticality input
+fn validate_business_criticality(s: &str) -> Result<String, String> {
+    const VALID_CRITICALITIES: &[&str] = &[
+        "very-high", "veryhigh", "very_high",
+        "high",
+        "medium", "med",
+        "low",
+        "very-low", "verylow", "very_low"
+    ];
+    
+    let lower_input = s.to_lowercase();
+    if VALID_CRITICALITIES.contains(&lower_input.as_str()) {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "Invalid business criticality '{}'. Valid options are: very-high, high, medium, low, very-low",
+            s
+        ))
+    }
+}
+
+/// Validate delete incomplete scan policy input
+fn validate_delete_incomplete_scan(s: &str) -> Result<u8, String> {
+    match s.parse::<u8>() {
+        Ok(0) => Ok(0), // Never delete builds
+        Ok(1) => Ok(1), // Delete safe builds only (default)
+        Ok(2) => Ok(2), // Delete any build except Results Ready
+        Ok(n) => Err(format!(
+            "Delete incomplete scan policy must be 0, 1, or 2, got: {}",
+            n
+        )),
+        Err(_) => Err(format!(
+            "Delete incomplete scan policy must be a valid number (0, 1, or 2), got: '{}'",
+            s
+        )),
+    }
+}
+
+/// Parse business criticality string to BusinessCriticality enum
+pub fn parse_business_criticality(criticality_str: &str) -> veracode_platform::app::BusinessCriticality {
+    use veracode_platform::app::BusinessCriticality;
+    
+    match criticality_str.to_lowercase().as_str() {
+        "very-high" | "veryhigh" | "very_high" => BusinessCriticality::VeryHigh,
+        "high" => BusinessCriticality::High,
+        "medium" | "med" => BusinessCriticality::Medium,
+        "low" => BusinessCriticality::Low,
+        "very-low" | "verylow" | "very_low" => BusinessCriticality::VeryLow,
+        _ => {
+            // This should not happen due to CLI validation, but provide a fallback
+            eprintln!("⚠️  Warning: Invalid business criticality '{}', defaulting to Medium", criticality_str);
+            BusinessCriticality::Medium
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_conditional_requirements_pipeline_with_baseline_requires_export() {
+        let args = Args {
+            command: Commands::Pipeline {
+                filepath: ".".to_string(),
+                filefilter: "*".to_string(),
+                recursive: true,
+                validate: true,
+                project_name: Some("TestProject".to_string()),
+                project_url: None,
+                timeout: 30,
+                threads: 4,
+                export_findings: "".to_string(), // empty export_findings
+                export_format: "json".to_string(),
+                show_findings: false,
+                findings_limit: 20,
+                min_severity: None,
+                project_dir: ".".to_string(),
+                create_gitlab_issues: false,
+                baseline_file: Some("baseline.json".to_string()), // baseline specified
+                policy_file: None,
+                policy_name: None,
+                filtered_json_output_file: None,
+                development_stage: "development".to_string(),
+                fail_on_severity: None,
+                fail_on_cwe: None,
+            },
+            debug: false,
+            region: "commercial".to_string(),
+            api_id: None,
+            api_key: None,
+        };
+        
+        let result = args.validate_conditional_requirements();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--baseline-file requires --export-findings"));
+    }
+
+    #[test]
+    fn test_validate_conditional_requirements_pipeline_with_filtered_output_requires_baseline() {
+        let args = Args {
+            command: Commands::Pipeline {
+                filepath: ".".to_string(),
+                filefilter: "*".to_string(),
+                recursive: true,
+                validate: true,
+                project_name: Some("TestProject".to_string()),
+                project_url: None,
+                timeout: 30,
+                threads: 4,
+                export_findings: "results.json".to_string(),
+                export_format: "json".to_string(),
+                show_findings: false,
+                findings_limit: 20,
+                min_severity: None,
+                project_dir: ".".to_string(),
+                create_gitlab_issues: false,
+                baseline_file: None, // no baseline
+                policy_file: None,
+                policy_name: None,
+                filtered_json_output_file: Some("filtered.json".to_string()), // but filtered output specified
+                development_stage: "development".to_string(),
+                fail_on_severity: None,
+                fail_on_cwe: None,
+            },
+            debug: false,
+            region: "commercial".to_string(),
+            api_id: None,
+            api_key: None,
+        };
+        
+        let result = args.validate_conditional_requirements();
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("--filtered-json-output-file requires --baseline-file"));
+    }
+
+    #[test]
+    fn test_validate_conditional_requirements_assessment_scan_ok() {
+        let args = Args {
+            command: Commands::Assessment {
+                filepath: ".".to_string(),
+                filefilter: "*".to_string(),
+                recursive: true,
+                validate: true,
+                app_profile_name: "TestApp".to_string(),
+                timeout: 60,
+                threads: 4,
+                export_results: "assessment-results.json".to_string(),
+                sandbox_name: None,
+                modules: None,
+                teamname: None,
+                bus_cri: "very-high".to_string(),
+                deleteincompletescan: 1,
+            },
+            debug: false,
+            region: "commercial".to_string(),
+            api_id: None,
+            api_key: None,
+        };
+        
+        let result = args.validate_conditional_requirements();
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_business_criticality_valid() {
+        assert!(validate_business_criticality("very-high").is_ok());
+        assert!(validate_business_criticality("high").is_ok());
+        assert!(validate_business_criticality("medium").is_ok());
+        assert!(validate_business_criticality("low").is_ok());
+        assert!(validate_business_criticality("very-low").is_ok());
+        assert!(validate_business_criticality("veryhigh").is_ok());
+        assert!(validate_business_criticality("med").is_ok());
+    }
+
+    #[test]
+    fn test_validate_business_criticality_invalid() {
+        let result = validate_business_criticality("invalid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid business criticality"));
+    }
+
+    #[test]
+    fn test_parse_business_criticality() {
+        use veracode_platform::app::BusinessCriticality;
+        
+        assert_eq!(parse_business_criticality("very-high"), BusinessCriticality::VeryHigh);
+        assert_eq!(parse_business_criticality("high"), BusinessCriticality::High);
+        assert_eq!(parse_business_criticality("medium"), BusinessCriticality::Medium);
+        assert_eq!(parse_business_criticality("low"), BusinessCriticality::Low);
+        assert_eq!(parse_business_criticality("very-low"), BusinessCriticality::VeryLow);
+        assert_eq!(parse_business_criticality("invalid"), BusinessCriticality::Medium); // fallback
+    }
+
+    #[test]
+    fn test_validate_modules_list_valid() {
+        let result = validate_modules_list("module1,module2,module3");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "module1,module2,module3");
+    }
+
+    #[test]
+    fn test_validate_modules_list_with_spaces() {
+        let result = validate_modules_list("module 1, module 2 , module 3");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_modules_list_empty() {
+        let result = validate_modules_list("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_modules_list_invalid_characters() {
+        let result = validate_modules_list("module1,module@2");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("Invalid module name"));
+    }
+
+    #[test]
+    fn test_validate_modules_list_too_long() {
+        let long_module = "a".repeat(101);
+        let result = validate_modules_list(&long_module);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("too long"));
+    }
+
+    #[test]
+    fn test_validate_delete_incomplete_scan_valid() {
+        assert_eq!(validate_delete_incomplete_scan("0").unwrap(), 0);
+        assert_eq!(validate_delete_incomplete_scan("1").unwrap(), 1);
+        assert_eq!(validate_delete_incomplete_scan("2").unwrap(), 2);
+    }
+
+    #[test]
+    fn test_validate_delete_incomplete_scan_invalid() {
+        let result = validate_delete_incomplete_scan("3");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be 0, 1, or 2"));
+
+        let result = validate_delete_incomplete_scan("invalid");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("must be a valid number"));
+    }
 }

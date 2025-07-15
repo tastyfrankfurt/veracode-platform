@@ -1,3 +1,4 @@
+pub mod assessment;
 pub mod baseline;
 pub mod cli;
 pub mod credentials;
@@ -11,8 +12,9 @@ pub mod policy;
 pub mod scan;
 pub mod search;
 
+pub use assessment::{AssessmentSubmitter, AssessmentScanConfig, AssessmentError, ScanType};
 pub use baseline::{execute_baseline_create, execute_baseline_compare, BaselineComparison, execute_policy_file_assessment, execute_policy_name_assessment, PolicyAssessment};
-pub use cli::Args;
+pub use cli::{Args, Commands};
 pub use credentials::{validate_api_credential, load_api_credentials, check_pipeline_credentials};
 pub use filefinder::FileFinder;
 pub use filevalidator::{FileValidator, SupportedFileType, ValidationError};
@@ -21,5 +23,5 @@ pub use gitlab::{GitLabExporter, GitLabExportConfig};
 pub use gitlab_issues::{GitLabIssuesClient, GitLabConfig, GitLabError};
 pub use pipeline::{PipelineSubmitter, PipelineScanConfig, PipelineError};
 pub use policy::execute_policy_download;
-pub use scan::execute_pipeline_scan;
+pub use scan::{execute_pipeline_scan, execute_assessment_scan};
 pub use search::execute_file_search;

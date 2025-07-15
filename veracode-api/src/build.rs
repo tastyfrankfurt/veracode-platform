@@ -12,6 +12,130 @@ use quick_xml::events::Event;
 
 use crate::{VeracodeClient, VeracodeError};
 
+/// Valid lifecycle stage values for Veracode builds
+pub const LIFECYCLE_STAGES: &[&str] = &[
+    "In Development (pre-Alpha)",
+    "Internal or Alpha Testing", 
+    "External or Beta Testing",
+    "Deployed",
+    "Maintenance",
+    "Cannot Disclose",
+    "Not Specified"
+];
+
+/// Validate if a lifecycle stage value is valid
+pub fn is_valid_lifecycle_stage(stage: &str) -> bool {
+    LIFECYCLE_STAGES.contains(&stage)
+}
+
+/// Get the default lifecycle stage for development builds
+pub fn default_lifecycle_stage() -> &'static str {
+    "In Development (pre-Alpha)"
+}
+
+/// Build status enumeration based on Veracode Java implementation
+/// These represent the possible build/analysis states that determine deletion safety
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BuildStatus {
+    Incomplete,
+    NotSubmitted,
+    SubmittedToEngine,
+    ScanInProcess,
+    PreScanSubmitted,
+    PreScanSuccess,
+    PreScanFailed,
+    PreScanCancelled,
+    PrescanFailed,
+    PrescanCancelled,
+    ScanCancelled,
+    ResultsReady,
+    Failed,
+    Cancelled,
+    Unknown(String), // For any status not explicitly handled
+}
+
+impl BuildStatus {
+    /// Parse a build status string from the Veracode API
+    pub fn from_str(status: &str) -> Self {
+        match status {
+            "Incomplete" => BuildStatus::Incomplete,
+            "Not Submitted" => BuildStatus::NotSubmitted,
+            "Submitted to Engine" => BuildStatus::SubmittedToEngine,
+            "Scan in Process" => BuildStatus::ScanInProcess,
+            "Pre-Scan Submitted" => BuildStatus::PreScanSubmitted,
+            "Pre-Scan Success" => BuildStatus::PreScanSuccess,
+            "Pre-Scan Failed" => BuildStatus::PreScanFailed,
+            "Pre-Scan Cancelled" => BuildStatus::PreScanCancelled,
+            "Prescan Failed" => BuildStatus::PrescanFailed,
+            "Prescan Cancelled" => BuildStatus::PrescanCancelled,
+            "Scan Cancelled" => BuildStatus::ScanCancelled,
+            "Results Ready" => BuildStatus::ResultsReady,
+            "Failed" => BuildStatus::Failed,
+            "Cancelled" => BuildStatus::Cancelled,
+            _ => BuildStatus::Unknown(status.to_string()),
+        }
+    }
+
+    /// Convert build status to string representation
+    pub fn to_str(&self) -> &str {
+        match self {
+            BuildStatus::Incomplete => "Incomplete",
+            BuildStatus::NotSubmitted => "Not Submitted",
+            BuildStatus::SubmittedToEngine => "Submitted to Engine",
+            BuildStatus::ScanInProcess => "Scan in Process",
+            BuildStatus::PreScanSubmitted => "Pre-Scan Submitted",
+            BuildStatus::PreScanSuccess => "Pre-Scan Success",
+            BuildStatus::PreScanFailed => "Pre-Scan Failed",
+            BuildStatus::PreScanCancelled => "Pre-Scan Cancelled",
+            BuildStatus::PrescanFailed => "Prescan Failed",
+            BuildStatus::PrescanCancelled => "Prescan Cancelled",
+            BuildStatus::ScanCancelled => "Scan Cancelled",
+            BuildStatus::ResultsReady => "Results Ready",
+            BuildStatus::Failed => "Failed",
+            BuildStatus::Cancelled => "Cancelled",
+            BuildStatus::Unknown(s) => s,
+        }
+    }
+
+    /// Determine if a build is safe to delete based on its status and deletion policy
+    /// 
+    /// Deletion Policy Levels:
+    /// - 0: Never delete builds
+    /// - 1: Delete only "safe" builds (incomplete, failed, cancelled states)
+    /// - 2: Delete any build except "Results Ready"
+    pub fn is_safe_to_delete(&self, deletion_policy: u8) -> bool {
+        match deletion_policy {
+            0 => false, // Never delete
+            1 => {
+                // Delete only safe builds (incomplete, failed, cancelled states)
+                matches!(self,
+                    BuildStatus::Incomplete |
+                    BuildStatus::NotSubmitted |
+                    BuildStatus::PreScanFailed |
+                    BuildStatus::PreScanCancelled |
+                    BuildStatus::PrescanFailed |
+                    BuildStatus::PrescanCancelled |
+                    BuildStatus::ScanCancelled |
+                    BuildStatus::Failed |
+                    BuildStatus::Cancelled
+                )
+            },
+            2 => {
+                // Delete any build except Results Ready
+                !matches!(self, BuildStatus::ResultsReady)
+            },
+            _ => false, // Invalid policy, default to never delete
+        }
+    }
+}
+
+impl std::fmt::Display for BuildStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.to_str())
+    }
+}
+
+
 /// Represents a Veracode build
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Build {
@@ -227,7 +351,7 @@ impl BuildApi {
     ///
     /// A `Result` containing the created build information or an error.
     pub async fn create_build(&self, request: CreateBuildRequest) -> Result<Build, BuildError> {
-        let endpoint = "api/5.0/createbuild.do";
+        let endpoint = "/api/5.0/createbuild.do";
         
         // Build query parameters
         let mut query_params = Vec::new();
@@ -281,7 +405,7 @@ impl BuildApi {
     ///
     /// A `Result` containing the updated build information or an error.
     pub async fn update_build(&self, request: UpdateBuildRequest) -> Result<Build, BuildError> {
-        let endpoint = "api/5.0/updatebuild.do";
+        let endpoint = "/api/5.0/updatebuild.do";
         
         // Build query parameters
         let mut query_params = Vec::new();
@@ -345,7 +469,7 @@ impl BuildApi {
     ///
     /// A `Result` containing the deletion result or an error.
     pub async fn delete_build(&self, request: DeleteBuildRequest) -> Result<DeleteBuildResult, BuildError> {
-        let endpoint = "api/5.0/deletebuild.do";
+        let endpoint = "/api/5.0/deletebuild.do";
         
         // Build query parameters
         let mut query_params = Vec::new();
@@ -393,7 +517,7 @@ impl BuildApi {
     ///
     /// A `Result` containing the build information or an error.
     pub async fn get_build_info(&self, request: GetBuildInfoRequest) -> Result<Build, BuildError> {
-        let endpoint = "api/5.0/getbuildinfo.do";
+        let endpoint = "/api/5.0/getbuildinfo.do";
         
         // Build query parameters
         let mut query_params = Vec::new();
@@ -445,7 +569,7 @@ impl BuildApi {
     ///
     /// A `Result` containing the build list or an error.
     pub async fn get_build_list(&self, request: GetBuildListRequest) -> Result<BuildList, BuildError> {
-        let endpoint = "api/5.0/getbuildlist.do";
+        let endpoint = "/api/5.0/getbuildlist.do";
         
         // Build query parameters
         let mut query_params = Vec::new();
@@ -485,6 +609,33 @@ impl BuildApi {
 
     /// Parse build info XML response
     fn parse_build_info(&self, xml: &str) -> Result<Build, BuildError> {
+        
+        // Check if response contains an error element first
+        if xml.contains("<error>") {
+            let mut reader = Reader::from_str(xml);
+            reader.config_mut().trim_text(true);
+            let mut buf = Vec::new();
+            
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.name().as_ref() == b"error" => {
+                        if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf) {
+                            let error_msg = String::from_utf8_lossy(&text);
+                            if error_msg.contains("Could not find a build") {
+                                return Err(BuildError::BuildNotFound);
+                            } else {
+                                return Err(BuildError::Api(VeracodeError::InvalidResponse(error_msg.to_string())));
+                            }
+                        }
+                    },
+                    Ok(Event::Eof) => break,
+                    Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
+                    _ => {}
+                }
+                buf.clear();
+            }
+        }
+        
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
         
@@ -512,55 +663,108 @@ impl BuildApi {
             attributes: HashMap::new(),
         };
 
+        let mut inside_build = false;
+        
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == b"build" {
+                    
+                    match e.name().as_ref() {
+                        b"build" => {
+                            inside_build = true;
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    let key = String::from_utf8_lossy(attr.key.as_ref());
+                                    let value = String::from_utf8_lossy(&attr.value);
+                                    
+                                    match key.as_ref() {
+                                        "build_id" => build.build_id = value.to_string(),
+                                        "app_id" => build.app_id = value.to_string(),
+                                        "version" => build.version = Some(value.to_string()),
+                                        "app_name" => build.app_name = Some(value.to_string()),
+                                        "sandbox_id" => build.sandbox_id = Some(value.to_string()),
+                                        "sandbox_name" => build.sandbox_name = Some(value.to_string()),
+                                        "lifecycle_stage" => build.lifecycle_stage = Some(value.to_string()),
+                                        "submitter" => build.submitter = Some(value.to_string()),
+                                        "platform" => build.platform = Some(value.to_string()),
+                                        "analysis_unit" => build.analysis_unit = Some(value.to_string()),
+                                        "policy_name" => build.policy_name = Some(value.to_string()),
+                                        "policy_version" => build.policy_version = Some(value.to_string()),
+                                        "policy_compliance_status" => build.policy_compliance_status = Some(value.to_string()),
+                                        "rules_status" => build.rules_status = Some(value.to_string()),
+                                        "grace_period_expired" => {
+                                            build.grace_period_expired = value.parse::<bool>().ok();
+                                        }
+                                        "scan_overdue" => {
+                                            build.scan_overdue = value.parse::<bool>().ok();
+                                        }
+                                        "legacy_scan_engine" => {
+                                            build.legacy_scan_engine = value.parse::<bool>().ok();
+                                        }
+                                        "launch_date" => {
+                                            if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y") {
+                                                build.launch_date = Some(date);
+                                            }
+                                        }
+                                        "policy_updated_date" => {
+                                            if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(&value) {
+                                                build.policy_updated_date = Some(datetime.with_timezone(&Utc));
+                                            }
+                                        }
+                                        _ => {
+                                            build.attributes.insert(key.to_string(), value.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        b"analysis_unit" if inside_build => {
+                            // Parse analysis_unit element nested inside build (primary source for build status)
+                            for attr in e.attributes() {
+                                if let Ok(attr) = attr {
+                                    let key = String::from_utf8_lossy(attr.key.as_ref());
+                                    let value = String::from_utf8_lossy(&attr.value);
+                                    
+                                    // Store all analysis_unit attributes, especially status
+                                    match key.as_ref() {
+                                        "status" => {
+                                            // Store the analysis_unit status as the primary status
+                                            build.attributes.insert("status".to_string(), value.to_string());
+                                        }
+                                        _ => {
+                                            // Store other analysis_unit attributes with prefix
+                                            build.attributes.insert(format!("analysis_{}", key), value.to_string());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing elements like <analysis_unit ... />
+                    if e.name().as_ref() == b"analysis_unit" && inside_build {
                         for attr in e.attributes() {
                             if let Ok(attr) = attr {
                                 let key = String::from_utf8_lossy(attr.key.as_ref());
                                 let value = String::from_utf8_lossy(&attr.value);
                                 
                                 match key.as_ref() {
-                                    "build_id" => build.build_id = value.to_string(),
-                                    "app_id" => build.app_id = value.to_string(),
-                                    "version" => build.version = Some(value.to_string()),
-                                    "app_name" => build.app_name = Some(value.to_string()),
-                                    "sandbox_id" => build.sandbox_id = Some(value.to_string()),
-                                    "sandbox_name" => build.sandbox_name = Some(value.to_string()),
-                                    "lifecycle_stage" => build.lifecycle_stage = Some(value.to_string()),
-                                    "submitter" => build.submitter = Some(value.to_string()),
-                                    "platform" => build.platform = Some(value.to_string()),
-                                    "analysis_unit" => build.analysis_unit = Some(value.to_string()),
-                                    "policy_name" => build.policy_name = Some(value.to_string()),
-                                    "policy_version" => build.policy_version = Some(value.to_string()),
-                                    "policy_compliance_status" => build.policy_compliance_status = Some(value.to_string()),
-                                    "rules_status" => build.rules_status = Some(value.to_string()),
-                                    "grace_period_expired" => {
-                                        build.grace_period_expired = value.parse::<bool>().ok();
-                                    }
-                                    "scan_overdue" => {
-                                        build.scan_overdue = value.parse::<bool>().ok();
-                                    }
-                                    "legacy_scan_engine" => {
-                                        build.legacy_scan_engine = value.parse::<bool>().ok();
-                                    }
-                                    "launch_date" => {
-                                        if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y") {
-                                            build.launch_date = Some(date);
-                                        }
-                                    }
-                                    "policy_updated_date" => {
-                                        if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(&value) {
-                                            build.policy_updated_date = Some(datetime.with_timezone(&Utc));
-                                        }
+                                    "status" => {
+                                        build.attributes.insert("status".to_string(), value.to_string());
                                     }
                                     _ => {
-                                        build.attributes.insert(key.to_string(), value.to_string());
+                                        build.attributes.insert(format!("analysis_{}", key), value.to_string());
                                     }
                                 }
                             }
                         }
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"build" {
+                        inside_build = false;
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -573,6 +777,7 @@ impl BuildApi {
         if build.build_id.is_empty() {
             return Err(BuildError::XmlParsingError("No build information found in response".to_string()));
         }
+
 
         Ok(build)
     }
@@ -901,14 +1106,14 @@ mod tests {
         let request = CreateBuildRequest {
             app_id: "123".to_string(),
             version: Some("1.0.0".to_string()),
-            lifecycle_stage: Some("Development".to_string()),
+            lifecycle_stage: Some("In Development (pre-Alpha)".to_string()),
             launch_date: Some("12/31/2024".to_string()),
             sandbox_id: None,
         };
         
         assert_eq!(request.app_id, "123");
         assert_eq!(request.version, Some("1.0.0".to_string()));
-        assert_eq!(request.lifecycle_stage, Some("Development".to_string()));
+        assert_eq!(request.lifecycle_stage, Some("In Development (pre-Alpha)".to_string()));
     }
 
     #[test]
@@ -917,7 +1122,7 @@ mod tests {
             app_id: "123".to_string(),
             build_id: Some("456".to_string()),
             version: Some("1.1.0".to_string()),
-            lifecycle_stage: Some("QA".to_string()),
+            lifecycle_stage: Some("Internal or Alpha Testing".to_string()),
             launch_date: None,
             sandbox_id: Some("789".to_string()),
         };
@@ -925,6 +1130,29 @@ mod tests {
         assert_eq!(request.app_id, "123");
         assert_eq!(request.build_id, Some("456".to_string()));
         assert_eq!(request.sandbox_id, Some("789".to_string()));
+    }
+
+    #[test]
+    fn test_lifecycle_stage_validation() {
+        // Test valid lifecycle stages
+        assert!(is_valid_lifecycle_stage("In Development (pre-Alpha)"));
+        assert!(is_valid_lifecycle_stage("Internal or Alpha Testing"));
+        assert!(is_valid_lifecycle_stage("External or Beta Testing"));
+        assert!(is_valid_lifecycle_stage("Deployed"));
+        assert!(is_valid_lifecycle_stage("Maintenance"));
+        assert!(is_valid_lifecycle_stage("Cannot Disclose"));
+        assert!(is_valid_lifecycle_stage("Not Specified"));
+        
+        // Test invalid lifecycle stages
+        assert!(!is_valid_lifecycle_stage("In Development"));
+        assert!(!is_valid_lifecycle_stage("Development"));
+        assert!(!is_valid_lifecycle_stage("QA"));
+        assert!(!is_valid_lifecycle_stage("Production"));
+        assert!(!is_valid_lifecycle_stage(""));
+        
+        // Test default
+        assert_eq!(default_lifecycle_stage(), "In Development (pre-Alpha)");
+        assert!(is_valid_lifecycle_stage(default_lifecycle_stage()));
     }
 
     #[test]
@@ -970,4 +1198,63 @@ mod tests {
         // If this compiles, the methods have correct signatures
         assert!(true);
     }
+
+    #[test]
+    fn test_build_status_from_str() {
+        assert_eq!(BuildStatus::from_str("Incomplete"), BuildStatus::Incomplete);
+        assert_eq!(BuildStatus::from_str("Results Ready"), BuildStatus::ResultsReady);
+        assert_eq!(BuildStatus::from_str("Pre-Scan Failed"), BuildStatus::PreScanFailed);
+        assert_eq!(BuildStatus::from_str("Unknown Status"), BuildStatus::Unknown("Unknown Status".to_string()));
+    }
+
+    #[test]
+    fn test_build_status_to_str() {
+        assert_eq!(BuildStatus::Incomplete.to_str(), "Incomplete");
+        assert_eq!(BuildStatus::ResultsReady.to_str(), "Results Ready");
+        assert_eq!(BuildStatus::PreScanFailed.to_str(), "Pre-Scan Failed");
+        assert_eq!(BuildStatus::Unknown("Custom".to_string()).to_str(), "Custom");
+    }
+
+    #[test]
+    fn test_build_status_deletion_policy_0() {
+        // Policy 0: Never delete builds
+        assert!(!BuildStatus::Incomplete.is_safe_to_delete(0));
+        assert!(!BuildStatus::ResultsReady.is_safe_to_delete(0));
+        assert!(!BuildStatus::Failed.is_safe_to_delete(0));
+    }
+
+    #[test]
+    fn test_build_status_deletion_policy_1() {
+        // Policy 1: Delete only safe builds (incomplete, failed, cancelled states)
+        assert!(BuildStatus::Incomplete.is_safe_to_delete(1));
+        assert!(BuildStatus::NotSubmitted.is_safe_to_delete(1));
+        assert!(BuildStatus::PreScanFailed.is_safe_to_delete(1));
+        assert!(BuildStatus::Failed.is_safe_to_delete(1));
+        assert!(BuildStatus::Cancelled.is_safe_to_delete(1));
+        
+        // Should not delete active or successful builds
+        assert!(!BuildStatus::ResultsReady.is_safe_to_delete(1));
+        assert!(!BuildStatus::ScanInProcess.is_safe_to_delete(1));
+        assert!(!BuildStatus::PreScanSuccess.is_safe_to_delete(1));
+    }
+
+    #[test]
+    fn test_build_status_deletion_policy_2() {
+        // Policy 2: Delete any build except Results Ready
+        assert!(BuildStatus::Incomplete.is_safe_to_delete(2));
+        assert!(BuildStatus::Failed.is_safe_to_delete(2));
+        assert!(BuildStatus::ScanInProcess.is_safe_to_delete(2));
+        assert!(BuildStatus::PreScanSuccess.is_safe_to_delete(2));
+        
+        // Should not delete Results Ready
+        assert!(!BuildStatus::ResultsReady.is_safe_to_delete(2));
+    }
+
+    #[test]
+    fn test_build_status_deletion_policy_invalid() {
+        // Invalid policy should default to never delete
+        assert!(!BuildStatus::Incomplete.is_safe_to_delete(3));
+        assert!(!BuildStatus::Failed.is_safe_to_delete(255));
+    }
+
 }

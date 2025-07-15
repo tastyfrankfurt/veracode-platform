@@ -6,6 +6,16 @@
 //! - getbuildinfo.do - Retrieving build details
 //! - getbuildlist.do - Listing all builds
 //! - deletebuild.do - Deleting builds
+//!
+//! ## Valid Lifecycle Stages
+//! The Veracode API accepts these specific lifecycle stage values:
+//! - "In Development (pre-Alpha)"
+//! - "Internal or Alpha Testing"
+//! - "External or Beta Testing"
+//! - "Deployed"
+//! - "Maintenance"
+//! - "Cannot Disclose"
+//! - "Not Specified"
 
 use veracode_platform::{
     VeracodeConfig, VeracodeClient, VeracodeRegion,
@@ -177,7 +187,7 @@ async fn demonstrate_create_builds(
     let create_request = CreateBuildRequest {
         app_id: app_id.to_string(),
         version: Some("sandbox-1.0.0".to_string()),
-        lifecycle_stage: Some("Development".to_string()),
+        lifecycle_stage: Some("In Development (pre-Alpha)".to_string()),
         launch_date: Some("12/31/2024".to_string()),
         sandbox_id: Some(sandbox_id.to_string()),
     };
@@ -406,7 +416,7 @@ async fn demonstrate_update_builds(
         app_id: app_id.to_string(),
         build_id: None, // Update most recent
         version: Some("1.1.0-updated".to_string()),
-        lifecycle_stage: Some("QA".to_string()),
+        lifecycle_stage: Some("Internal or Alpha Testing".to_string()),
         launch_date: Some("01/15/2025".to_string()),
         sandbox_id: None,
     };
@@ -434,7 +444,7 @@ async fn demonstrate_update_builds(
         app_id: app_id.to_string(),
         build_id: None,
         version: Some("sandbox-1.1.0-updated".to_string()),
-        lifecycle_stage: Some("Testing".to_string()),
+        lifecycle_stage: Some("External or Beta Testing".to_string()),
         launch_date: None,
         sandbox_id: Some(sandbox_id.to_string()),
     };

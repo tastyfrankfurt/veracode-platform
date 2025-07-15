@@ -49,6 +49,7 @@ pub struct PipelineScanConfig {
     pub timeout: Option<u32>,
     pub include_low_severity: Option<bool>,
     pub max_findings: Option<u32>,
+    pub selected_modules: Option<Vec<String>>,
     pub debug: bool,
     pub app_profile_name: Option<String>,
     pub threads: usize,
@@ -64,6 +65,7 @@ impl Default for PipelineScanConfig {
             timeout: Some(60), // 1 hour default in minutes
             include_low_severity: Some(true),
             max_findings: None,
+            selected_modules: None,
             debug: false,
             app_profile_name: None,
             threads: 4,
@@ -124,6 +126,10 @@ impl PipelineSubmitter {
             println!("   Binary Hash: {}", binary_hash);
         }
 
+        // Convert selected modules to comma-separated string
+        let include_modules = self.config.selected_modules.as_ref()
+            .map(|modules| modules.join(","));
+
         // Create scan request
         let scan_request = CreateScanRequest {
             binary_name,
@@ -137,7 +143,7 @@ impl PipelineSubmitter {
             scan_timeout: self.config.timeout,
             plugin_version: Some("verascan-0.1.0".to_string()),
             emit_stack_dump: None,
-            include_modules: None,
+            include_modules,
         };
 
         if self.config.debug {
@@ -146,6 +152,11 @@ impl PipelineSubmitter {
             println!("   Project URI: {:?}", scan_request.project_uri);
             println!("   Dev Stage: {:?}", scan_request.dev_stage);
             println!("   Timeout: {:?} minutes", scan_request.scan_timeout);
+            if let Some(ref modules) = scan_request.include_modules {
+                println!("   Selected Modules: {}", modules);
+            } else {
+                println!("   Modules: All available modules");
+            }
         }
 
         // Submit the scan
@@ -255,6 +266,9 @@ impl PipelineSubmitter {
         if self.config.debug {
             println!("⏳ Waiting for scan to complete (timeout: {} minutes)...", timeout_minutes);
             println!("🔍 Polling scan status for ID: {}", scan_id);
+        } else {
+            print!("⏳ Waiting for scan to complete");
+            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
         }
 
         let pipeline_api = self.client.pipeline_api_with_debug(self.config.debug);
@@ -284,6 +298,7 @@ impl PipelineSubmitter {
                             println!("⏳ Scan {} in progress, waiting {} seconds...", scan_id, poll_interval);
                         } else {
                             print!(".");
+                            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
                         }
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into())).await;
                     } else {
@@ -543,6 +558,9 @@ impl PipelineSubmitter {
                     } else if scan.scan_status.is_in_progress() {
                         if self.config.debug {
                             println!("⏳ Scan {} in progress, waiting {} seconds...", scan_id, poll_interval);
+                        } else {
+                            print!(".");
+                            std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
                         }
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into())).await;
                     } else {

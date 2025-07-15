@@ -9,6 +9,32 @@ use std::path::{Path, PathBuf};
 use reqwest::{Client, header::{HeaderMap, HeaderValue}};
 use crate::findings::AggregatedFindings;
 
+/// Secure token wrapper that prevents accidental exposure in logs
+#[derive(Clone)]
+pub struct SecureToken(String);
+
+impl SecureToken {
+    pub fn new(token: String) -> Self {
+        SecureToken(token)
+    }
+    
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl std::fmt::Debug for SecureToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl std::fmt::Display for SecureToken {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
 /// GitLab issue creation payload
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabIssuePayload {
@@ -36,16 +62,33 @@ pub struct GitLabIssueResponse {
 }
 
 /// GitLab environment configuration
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct GitLabConfig {
-    pub api_token: String,
+    pub api_token: SecureToken,
     pub project_id: String,
     pub pipeline_id: Option<String>,
     pub gitlab_url: String,
     pub project_web_url: Option<String>,
     pub commit_sha: Option<String>,
     pub project_path_with_namespace: Option<String>,
+    pub project_name: Option<String>,
     pub project_dir: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for GitLabConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("GitLabConfig")
+            .field("api_token", &"[REDACTED]")
+            .field("project_id", &self.project_id)
+            .field("pipeline_id", &self.pipeline_id)
+            .field("gitlab_url", &self.gitlab_url)
+            .field("project_web_url", &self.project_web_url)
+            .field("commit_sha", &self.commit_sha)
+            .field("project_path_with_namespace", &self.project_path_with_namespace)
+            .field("project_name", &self.project_name)
+            .field("project_dir", &self.project_dir)
+            .finish()
+    }
 }
 
 /// Error types for GitLab integration
@@ -87,7 +130,7 @@ impl GitLabIssuesClient {
         // Test API connectivity by checking project access
         let mut headers = HeaderMap::new();
         headers.insert("Content-Type", HeaderValue::from_static("application/json"));
-        headers.insert("PRIVATE-TOKEN", HeaderValue::from_str(&config.api_token)
+        headers.insert("PRIVATE-TOKEN", HeaderValue::from_str(config.api_token.as_str())
             .map_err(|_| GitLabError::MissingEnvVar("Invalid PRIVATE_TOKEN format".to_string()))?);
         
         let client = Client::builder()
@@ -143,7 +186,7 @@ impl GitLabIssuesClient {
         
         let mut headers = HeaderMap::new();
         headers.insert("Content-Type", HeaderValue::from_static("application/json"));
-        headers.insert("PRIVATE-TOKEN", HeaderValue::from_str(&config.api_token)
+        headers.insert("PRIVATE-TOKEN", HeaderValue::from_str(config.api_token.as_str())
             .map_err(|_| GitLabError::MissingEnvVar("Invalid PRIVATE_TOKEN format".to_string()))?);
         
         let mut client_builder = Client::builder()
@@ -277,9 +320,11 @@ impl GitLabIssuesClient {
             } else {
                 println!("   Labels: None");
             }
-            if let Some(serialized) = serde_json::to_string_pretty(payload).ok() {
-                println!("   Full JSON payload:");
-                println!("{}", serialized);
+            
+            // Print full JSON payload
+            match serde_json::to_string_pretty(payload) {
+                Ok(json) => println!("   Full JSON payload:\n{}", json),
+                Err(e) => println!("   Failed to serialize payload: {}", e),
             }
         }
         
@@ -293,9 +338,30 @@ impl GitLabIssuesClient {
         
         if status.is_success() {
             let issue: GitLabIssueResponse = response.json().await?;
+            
+            if self.debug {
+                println!("📥 GitLab API Response:");
+                println!("   Status: {}", status);
+                println!("   Issue ID: {}", issue.id);
+                println!("   Issue IID: {}", issue.iid);
+                println!("   Title: {}", issue.title);
+                println!("   Web URL: {}", issue.web_url);
+                
+                // Print full JSON response
+                match serde_json::to_string_pretty(&issue) {
+                    Ok(json) => println!("   Full JSON response:\n{}", json),
+                    Err(e) => println!("   Failed to serialize response: {}", e),
+                }
+            }
+            
             Ok(issue)
         } else {
             let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            if self.debug {
+                println!("❌ GitLab API Error:");
+                println!("   Status: {}", status);
+                println!("   Error: {}", error_text);
+            }
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
                 message: error_text,
@@ -349,7 +415,7 @@ impl GitLabIssuesClient {
     /// Create issue payload from finding
     fn create_issue_payload(&self, finding_with_source: &crate::findings::FindingWithSource) -> Result<GitLabIssuePayload, GitLabError> {
         let finding = &finding_with_source.finding;
-        let _source = &finding_with_source.source_scan;
+        let source = &finding_with_source.source_scan;
         
         if self.debug {
             println!("🔍 DEBUG: Creating issue payload for finding:");
@@ -448,8 +514,11 @@ impl GitLabIssuesClient {
         use sha2::{Sha256, Digest};
         let mut hasher = Sha256::new();
         
-        // Project_Name (use "Unknown" if not available)
-        let project_name = "Unknown"; // TODO: Get actual project name if available
+        // Project_Name (use project name from GitLab, fallback to source project name)
+        let project_name = self.config.project_name
+            .as_deref()
+            .unwrap_or(&source.project_name);
+        println!("{}",project_name);
         hasher.update(project_name.as_bytes());
         hasher.update(b"|");
         
@@ -476,7 +545,7 @@ impl GitLabIssuesClient {
         // File_Path (resolved file path)
         hasher.update(resolved_file_path.as_bytes());
         hasher.update(b"|");
-        
+        println!("{}",resolved_file_path);
         // Line_Number
         hasher.update(finding.files.source_file.line.to_string().as_bytes());
         hasher.update(b"|");
@@ -817,7 +886,7 @@ impl GitLabIssuesClient {
         // Enhanced source code section with direct link
         if let Some(project_web_url) = self.get_project_web_url() {
             let branch_or_commit = self.config.commit_sha.as_deref().unwrap_or("main");
-            let file_url = format!("{}/-/blob/{}/{}?ref_type=heads#L{}", 
+            let file_url = format!("{}/-/blob/{}/{}#L{}", 
                 project_web_url, 
                 branch_or_commit, 
                 resolved_file_path, 
@@ -907,8 +976,8 @@ impl GitLabIssuesClient {
             // Get commit SHA or use 'main' as default branch
             let branch_or_commit = self.config.commit_sha.as_deref().unwrap_or("main");
             
-            // Create permalink format: /project/-/blob/branch/file?ref_type=heads#Lnumber
-            let file_url = format!("{}/-/blob/{}/{}?ref_type=heads#L{}", 
+            // Create permalink format: /project/-/blob/branch/file#Lnumber
+            let file_url = format!("{}/-/blob/{}/{}#L{}", 
                 base_url, 
                 branch_or_commit, 
                 file_path, 
@@ -953,6 +1022,9 @@ impl GitLabIssuesClient {
             let project_info: serde_json::Value = response.json().await?;
             if let Some(path_with_namespace) = project_info["path_with_namespace"].as_str() {
                 self.config.project_path_with_namespace = Some(path_with_namespace.to_string());
+            }
+            if let Some(project_name) = project_info["name"].as_str() {
+                self.config.project_name = Some(project_name.to_string());
             }
         }
         
@@ -1014,20 +1086,22 @@ impl GitLabConfig {
         // Optional environment variables
         let pipeline_id = env::var("CI_PIPELINE_ID").ok();
         
-        let gitlab_url = env::var("GITLAB_URL")
+        let gitlab_url = env::var("CI_API_V4_URL")
+            .map(|url| format!("{}/projects/", url.trim_end_matches('/')))
             .unwrap_or_else(|_| "https://gitlab.com/api/v4/projects/".to_string());
         
         let project_web_url = env::var("CI_PROJECT_URL").ok();
         let commit_sha = env::var("CI_COMMIT_SHA").ok();
         
         Ok(Self {
-            api_token,
+            api_token: SecureToken::new(api_token),
             project_id,
             pipeline_id,
             gitlab_url,
             project_web_url,
             commit_sha,
             project_path_with_namespace: None, // Will be populated during client creation
+            project_name: None, // Will be populated during client creation
             project_dir: None, // Will be set from CLI args
         })
     }
@@ -1042,13 +1116,14 @@ mod tests {
         let client = GitLabIssuesClient {
             client: Client::new(),
             config: GitLabConfig {
-                api_token: "test".to_string(),
+                api_token: SecureToken::new("test".to_string()),
                 project_id: "123".to_string(),
                 pipeline_id: None,
                 gitlab_url: "https://gitlab.com/api/v4/projects/".to_string(),
                 project_web_url: None,
                 commit_sha: None,
                 project_path_with_namespace: None,
+                project_name: None,
                 project_dir: None, // No project dir set
             },
             debug: false,
@@ -1088,13 +1163,14 @@ mod tests {
         let client = GitLabIssuesClient {
             client: Client::new(),
             config: GitLabConfig {
-                api_token: "test".to_string(),
+                api_token: SecureToken::new("test".to_string()),
                 project_id: "123".to_string(),
                 pipeline_id: None,
                 gitlab_url: "https://gitlab.com/api/v4/projects/".to_string(),
                 project_web_url: None,
                 commit_sha: None,
                 project_path_with_namespace: None,
+                project_name: None,
                 project_dir: None,
             },
             debug: false,
@@ -1245,5 +1321,98 @@ mod tests {
             }
             _ => panic!("Expected MissingEnvVar error"),
         }
+    }
+
+    #[test]
+    fn test_ci_api_v4_url_handling() {
+        use std::env;
+        
+        // Clean up any existing env vars first to ensure test isolation
+        unsafe {
+            env::remove_var("GITLAB_TOKEN");
+            env::remove_var("PRIVATE_TOKEN");
+            env::remove_var("CI_TOKEN");
+            env::remove_var("CI_PROJECT_ID");
+            env::remove_var("CI_API_V4_URL");
+        }
+        
+        // Test that CI_API_V4_URL gets /projects/ appended correctly
+        unsafe {
+            env::set_var("GITLAB_TOKEN", "test-token");
+            env::set_var("CI_PROJECT_ID", "123");
+            env::set_var("CI_API_V4_URL", "https://gitlab.example.com/api/v4");
+        }
+        
+        let result = GitLabConfig::from_env();
+        assert!(result.is_ok());
+        
+        let config = result.unwrap();
+        assert_eq!(config.gitlab_url, "https://gitlab.example.com/api/v4/projects/");
+        
+        // Test with trailing slash in CI_API_V4_URL
+        unsafe {
+            env::set_var("GITLAB_TOKEN", "test-token");
+            env::set_var("CI_PROJECT_ID", "123");
+            env::set_var("CI_API_V4_URL", "https://gitlab.example.com/api/v4/");
+        }
+        
+        let result = GitLabConfig::from_env();
+        assert!(result.is_ok());
+        
+        let config = result.unwrap();
+        assert_eq!(config.gitlab_url, "https://gitlab.example.com/api/v4/projects/");
+        
+        // Clean up
+        unsafe {
+            env::remove_var("GITLAB_TOKEN");
+            env::remove_var("CI_PROJECT_ID");
+            env::remove_var("CI_API_V4_URL");
+        }
+    }
+    
+    #[test]
+    fn test_secure_token_redaction() {
+        // Test that SecureToken properly redacts sensitive information
+        let token = SecureToken::new("super-secret-token-12345".to_string());
+        
+        // Test Debug formatting
+        let debug_output = format!("{:?}", token);
+        assert_eq!(debug_output, "[REDACTED]");
+        assert!(!debug_output.contains("super-secret-token"));
+        
+        // Test Display formatting
+        let display_output = format!("{}", token);
+        assert_eq!(display_output, "[REDACTED]");
+        assert!(!display_output.contains("super-secret-token"));
+        
+        // Test that we can still access the actual token when needed
+        assert_eq!(token.as_str(), "super-secret-token-12345");
+    }
+    
+    #[test]
+    fn test_gitlab_config_debug_redaction() {
+        // Test that GitLabConfig properly redacts the api_token in debug output
+        let config = GitLabConfig {
+            api_token: SecureToken::new("secret-token-456".to_string()),
+            project_id: "123".to_string(),
+            pipeline_id: Some("456".to_string()),
+            gitlab_url: "https://gitlab.example.com/api/v4/projects/".to_string(),
+            project_web_url: Some("https://gitlab.example.com/project".to_string()),
+            commit_sha: Some("abc123".to_string()),
+            project_path_with_namespace: Some("user/project".to_string()),
+            project_name: Some("MyProject".to_string()),
+            project_dir: None,
+        };
+        
+        let debug_output = format!("{:?}", config);
+        
+        // Verify the token is redacted
+        assert!(debug_output.contains("api_token: \"[REDACTED]\""));
+        assert!(!debug_output.contains("secret-token-456"));
+        
+        // Verify other fields are still visible
+        assert!(debug_output.contains("project_id: \"123\""));
+        assert!(debug_output.contains("pipeline_id: Some(\"456\")"));
+        assert!(debug_output.contains("gitlab_url: \"https://gitlab.example.com/api/v4/projects/\""));
     }
 }

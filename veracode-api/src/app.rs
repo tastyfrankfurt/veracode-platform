@@ -700,6 +700,7 @@ impl VeracodeClient {
     /// * `name` - The name of the application
     /// * `business_criticality` - Business criticality level (required for creation)
     /// * `description` - Optional description for new applications
+    /// * `team_names` - Optional list of team names to assign to the application
     ///
     /// # Returns
     ///
@@ -709,6 +710,7 @@ impl VeracodeClient {
         name: &str,
         business_criticality: BusinessCriticality,
         description: Option<String>,
+        team_names: Option<Vec<String>>,
     ) -> Result<Application, VeracodeError> {
         // First, check if application already exists
         if let Some(existing_app) = self.get_application_by_name(name).await? {
@@ -716,6 +718,16 @@ impl VeracodeClient {
         }
 
         // Application doesn't exist, create it
+        
+        // Convert team names to Team objects if provided
+        let teams = team_names.map(|names| {
+            names.into_iter().map(|team_name| Team {
+                team_id: None,           // Will be assigned by Veracode
+                team_name: Some(team_name),
+                team_legacy_id: None,    // Will be assigned by Veracode
+            }).collect()
+        });
+        
         let create_request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
                 name: name.to_string(),
@@ -724,13 +736,36 @@ impl VeracodeClient {
                 business_unit: None,
                 business_owners: None,
                 policies: None,
-                teams: None,
+                teams,
                 tags: None,
                 custom_fields: None,
             },
         };
 
         self.create_application(create_request).await
+    }
+
+    /// Create application if it doesn't exist, or return existing application (without teams).
+    ///
+    /// This is a convenience method that maintains backward compatibility
+    /// for callers that don't need to specify teams.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the application
+    /// * `business_criticality` - Business criticality level (required for creation)
+    /// * `description` - Optional description for new applications
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the application (existing or newly created).
+    pub async fn create_application_if_not_exists_simple(
+        &self,
+        name: &str,
+        business_criticality: BusinessCriticality,
+        description: Option<String>,
+    ) -> Result<Application, VeracodeError> {
+        self.create_application_if_not_exists(name, business_criticality, description, None).await
     }
 }
 
@@ -767,5 +802,38 @@ mod tests {
         assert_eq!(query.modified_after, Some("2023-01-01T00:00:00.000Z".to_string()));
         assert_eq!(query.page, Some(2));
         assert_eq!(query.size, Some(25));
+    }
+
+    #[test]
+    fn test_create_application_request_with_teams() {
+        let team_names = vec!["Security Team".to_string(), "Development Team".to_string()];
+        let teams: Vec<Team> = team_names.into_iter().map(|team_name| Team {
+            team_id: None,
+            team_name: Some(team_name),
+            team_legacy_id: None,
+        }).collect();
+
+        let request = CreateApplicationRequest {
+            profile: CreateApplicationProfile {
+                name: "Test Application".to_string(),
+                business_criticality: BusinessCriticality::Medium,
+                description: Some("Test description".to_string()),
+                business_unit: None,
+                business_owners: None,
+                policies: None,
+                teams: Some(teams.clone()),
+                tags: None,
+                custom_fields: None,
+            },
+        };
+
+        assert_eq!(request.profile.name, "Test Application");
+        assert_eq!(request.profile.business_criticality, BusinessCriticality::Medium);
+        assert!(request.profile.teams.is_some());
+        
+        let request_teams = request.profile.teams.unwrap();
+        assert_eq!(request_teams.len(), 2);
+        assert_eq!(request_teams[0].team_name, Some("Security Team".to_string()));
+        assert_eq!(request_teams[1].team_name, Some("Development Team".to_string()));
     }
 }
