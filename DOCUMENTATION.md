@@ -10,6 +10,7 @@ Verascan is a comprehensive command-line interface for the Veracode security pla
 - [Authentication](#authentication)
 - [Usage](#usage)
 - [Configuration](#configuration)
+- [Security Features](#security-features)
 - [Examples](#examples)
 - [CI/CD Integration](#cicd-integration)
 - [GitLab Integration](#gitlab-integration)
@@ -224,6 +225,69 @@ File filtering supports glob patterns:
 
 # Complex patterns
 --filefilter "**/*.jar,target/**/*.war"
+```
+
+## Security Features
+
+### Comprehensive Credential Protection
+
+Verascan implements industry-leading security measures to protect all sensitive credentials and prevent accidental exposure.
+
+#### 🔐 **Automatic Credential Redaction**
+
+All sensitive information is automatically redacted in debug output and logs:
+
+- **Veracode API Credentials**: `VERACODE_API_ID` and `VERACODE_API_KEY` show as `[REDACTED]`
+- **GitLab Tokens**: `PRIVATE_TOKEN`, `CI_TOKEN`, `GITLAB_TOKEN` are securely wrapped
+- **Git Passwords**: Repository URLs show as `username:[REDACTED]@host`
+- **Configuration Structures**: All credential-containing structures are protected
+
+#### 🛡️ **Secure Wrapper Implementation**
+
+```bash
+# Debug mode is now production-safe
+verascan --debug --pipeline-scan --filepath . --export-findings results.json
+
+# Example debug output (credentials are safely redacted):
+# VeracodeConfig { api_id: [REDACTED], api_key: [REDACTED], base_url: "https://api.veracode.com" }
+# GitLabConfig { api_token: [REDACTED], project_id: "12345", gitlab_url: "https://gitlab.com/api/v4/projects/" }
+```
+
+#### 🔄 **Backward Compatibility**
+
+- All existing scripts and configurations continue to work unchanged
+- No breaking changes to command-line interface
+- Security improvements are transparent to users
+- All examples and documentation remain valid
+
+#### ✅ **Comprehensive Test Coverage**
+
+- 18+ security-focused tests ensure protection works correctly
+- Debug redaction verified for all credential types
+- Integration tests confirm secure credential handling
+- Continuous validation of security measures
+
+### Security Best Practices
+
+1. **Environment Variables**: Always store credentials in environment variables
+2. **Debug Safety**: Debug mode is now production-safe with automatic redaction
+3. **Token Scopes**: Use minimum required scopes for GitLab and Veracode tokens
+4. **Regular Updates**: Keep verascan updated for security patches
+5. **Access Control**: Limit access to systems with these credentials
+
+### Production Deployment
+
+```bash
+# Safe to enable debug mode in production
+verascan --debug --pipeline-scan --filepath . \
+  --baseline-file security-baseline.json \
+  --export-findings results.json \
+  --create-gitlab-issues
+
+# All sensitive information is automatically redacted:
+# - API credentials show as [REDACTED]
+# - Git URLs show as username:[REDACTED]@host
+# - GitLab tokens are securely wrapped
 ```
 
 ## Examples

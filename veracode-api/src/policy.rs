@@ -3,9 +3,9 @@
 //! This module provides functionality for managing security policies, policy compliance,
 //! and policy scan operations within the Veracode platform.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 use crate::{VeracodeClient, VeracodeError};
 
@@ -335,7 +335,7 @@ impl PolicyListParams {
     /// Convert to query parameters for HTTP requests
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         let mut params = Vec::new();
-        
+
         if let Some(name) = &self.name {
             params.push(("name".to_string(), name.clone()));
         }
@@ -354,7 +354,7 @@ impl PolicyListParams {
         if let Some(size) = self.size {
             params.push(("size".to_string(), size.to_string()));
         }
-        
+
         params
     }
 }
@@ -416,8 +416,12 @@ impl std::fmt::Display for PolicyError {
             PolicyError::InvalidConfig(msg) => write!(f, "Invalid policy configuration: {msg}"),
             PolicyError::ScanFailed(msg) => write!(f, "Policy scan failed: {msg}"),
             PolicyError::EvaluationError(msg) => write!(f, "Policy evaluation error: {msg}"),
-            PolicyError::PermissionDenied => write!(f, "Insufficient permissions for policy operation"),
-            PolicyError::Unauthorized => write!(f, "Authentication required - invalid API credentials"),
+            PolicyError::PermissionDenied => {
+                write!(f, "Insufficient permissions for policy operation")
+            }
+            PolicyError::Unauthorized => {
+                write!(f, "Authentication required - invalid API credentials")
+            }
             PolicyError::InternalServerError => write!(f, "Internal server error occurred"),
             PolicyError::Timeout => write!(f, "Policy operation timed out"),
         }
@@ -469,19 +473,20 @@ impl<'a> PolicyApi<'a> {
         params: Option<PolicyListParams>,
     ) -> Result<Vec<SecurityPolicy>, PolicyError> {
         let endpoint = "/appsec/v1/policies";
-        
+
         let query_params = params.map(|p| p.to_query_params());
-        
+
         let response = self.client.get(endpoint, query_params.as_deref()).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
                 let policy_response: PolicyListResponse = response.json().await?;
-                let policies = policy_response.embedded
+                let policies = policy_response
+                    .embedded
                     .map(|e| e.policy_versions)
                     .unwrap_or_default();
-                
+
                 Ok(policies)
             }
             400 => {
@@ -494,9 +499,9 @@ impl<'a> PolicyApi<'a> {
             500 => Err(PolicyError::InternalServerError),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(PolicyError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(PolicyError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -531,9 +536,9 @@ impl<'a> PolicyApi<'a> {
             500 => Err(PolicyError::InternalServerError),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(PolicyError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(PolicyError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -552,7 +557,8 @@ impl<'a> PolicyApi<'a> {
         let policies = self.list_policies(Some(params)).await?;
         // Note: Default policy identification may need to be handled differently
         // based on the actual API response structure
-        policies.into_iter()
+        policies
+            .into_iter()
             .find(|p| p.policy_type == "CUSTOMER" && p.organization_id.is_some())
             .ok_or(PolicyError::NotFound)
     }
@@ -579,9 +585,7 @@ impl<'a> PolicyApi<'a> {
                 "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox}/policy/{policy_guid}/compliance"
             )
         } else {
-            format!(
-                "/appsec/v1/applications/{application_guid}/policy/{policy_guid}/compliance"
-            )
+            format!("/appsec/v1/applications/{application_guid}/policy/{policy_guid}/compliance")
         };
 
         let response = self.client.get(&endpoint, None).await?;
@@ -595,9 +599,9 @@ impl<'a> PolicyApi<'a> {
             404 => Err(PolicyError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(PolicyError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(PolicyError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -632,9 +636,9 @@ impl<'a> PolicyApi<'a> {
             404 => Err(PolicyError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(PolicyError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(PolicyError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -665,9 +669,9 @@ impl<'a> PolicyApi<'a> {
             404 => Err(PolicyError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(PolicyError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(PolicyError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -683,7 +687,10 @@ impl<'a> PolicyApi<'a> {
     /// A `Result` containing a boolean indicating completion status.
     pub async fn is_policy_scan_complete(&self, scan_id: u64) -> Result<bool, PolicyError> {
         let scan_result = self.get_policy_scan_result(scan_id).await?;
-        Ok(matches!(scan_result.status, ScanStatus::Completed | ScanStatus::Failed | ScanStatus::Cancelled))
+        Ok(matches!(
+            scan_result.status,
+            ScanStatus::Completed | ScanStatus::Failed | ScanStatus::Cancelled
+        ))
     }
 
     /// Get policy violations for an application
@@ -703,7 +710,9 @@ impl<'a> PolicyApi<'a> {
         policy_guid: &str,
         sandbox_guid: Option<&str>,
     ) -> Result<Vec<PolicyViolation>, PolicyError> {
-        let compliance = self.evaluate_policy_compliance(application_guid, policy_guid, sandbox_guid).await?;
+        let compliance = self
+            .evaluate_policy_compliance(application_guid, policy_guid, sandbox_guid)
+            .await?;
         Ok(compliance.violations.unwrap_or_default())
     }
 }
@@ -725,7 +734,9 @@ impl<'a> PolicyApi<'a> {
         application_guid: &str,
         policy_guid: &str,
     ) -> Result<bool, PolicyError> {
-        let compliance = self.evaluate_policy_compliance(application_guid, policy_guid, None).await?;
+        let compliance = self
+            .evaluate_policy_compliance(application_guid, policy_guid, None)
+            .await?;
         Ok(compliance.passed)
     }
 
@@ -744,7 +755,9 @@ impl<'a> PolicyApi<'a> {
         application_guid: &str,
         policy_guid: &str,
     ) -> Result<Option<f64>, PolicyError> {
-        let compliance = self.evaluate_policy_compliance(application_guid, policy_guid, None).await?;
+        let compliance = self
+            .evaluate_policy_compliance(application_guid, policy_guid, None)
+            .await?;
         Ok(compliance.score)
     }
 

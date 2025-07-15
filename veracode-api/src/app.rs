@@ -6,7 +6,7 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::{VeracodeError};
+use crate::VeracodeError;
 use crate::client::VeracodeClient;
 
 /// Represents a Veracode application.
@@ -68,7 +68,7 @@ pub struct Profile {
     #[serde(serialize_with = "serialize_business_criticality")]
     pub business_criticality: BusinessCriticality,
     /// Application Profile Settings
-    pub settings: Option<Settings>
+    pub settings: Option<Settings>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -249,7 +249,7 @@ impl BusinessCriticality {
     pub fn as_str(&self) -> &'static str {
         match self {
             BusinessCriticality::VeryHigh => "VERY_HIGH",
-            BusinessCriticality::High => "HIGH", 
+            BusinessCriticality::High => "HIGH",
             BusinessCriticality::Medium => "MEDIUM",
             BusinessCriticality::Low => "LOW",
             BusinessCriticality::VeryLow => "VERY_LOW",
@@ -270,7 +270,10 @@ impl std::fmt::Display for BusinessCriticality {
 }
 
 /// Custom serializer for BusinessCriticality
-fn serialize_business_criticality<S>(criticality: &BusinessCriticality, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_business_criticality<S>(
+    criticality: &BusinessCriticality,
+    serializer: S,
+) -> Result<S::Ok, S::Error>
 where
     S: serde::Serializer,
 {
@@ -288,7 +291,9 @@ impl std::str::FromStr for BusinessCriticality {
             "MEDIUM" => Ok(BusinessCriticality::Medium),
             "LOW" => Ok(BusinessCriticality::Low),
             "VERY_LOW" => Ok(BusinessCriticality::VeryLow),
-            _ => Err(format!("Invalid business criticality: '{s}'. Must be one of: VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW")),
+            _ => Err(format!(
+                "Invalid business criticality: '{s}'. Must be one of: VERY_HIGH, HIGH, MEDIUM, LOW, VERY_LOW"
+            )),
         }
     }
 }
@@ -407,7 +412,7 @@ impl ApplicationQuery {
     /// Convert the query to URL query parameters.
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         let mut params = Vec::new();
-        
+
         if let Some(ref name) = self.name {
             params.push(("name".to_string(), name.clone()));
         }
@@ -457,13 +462,16 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing an `ApplicationsResponse` with the list of applications.
-    pub async fn get_applications(&self, query: Option<ApplicationQuery>) -> Result<ApplicationsResponse, VeracodeError> {
+    pub async fn get_applications(
+        &self,
+        query: Option<ApplicationQuery>,
+    ) -> Result<ApplicationsResponse, VeracodeError> {
         let endpoint = "/appsec/v1/applications";
         let query_params = query.as_ref().map(|q| q.to_query_params());
-        
+
         let response = self.get(endpoint, query_params.as_deref()).await?;
         let response = Self::handle_response(response).await?;
-        
+
         let apps_response: ApplicationsResponse = response.json().await?;
         Ok(apps_response)
     }
@@ -479,10 +487,10 @@ impl VeracodeClient {
     /// A `Result` containing the `Application` details.
     pub async fn get_application(&self, guid: &str) -> Result<Application, VeracodeError> {
         let endpoint = format!("/appsec/v1/applications/{guid}");
-        
+
         let response = self.get(&endpoint, None).await?;
         let response = Self::handle_response(response).await?;
-        
+
         let app: Application = response.json().await?;
         Ok(app)
     }
@@ -496,12 +504,15 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the created `Application`.
-    pub async fn create_application(&self, request: CreateApplicationRequest) -> Result<Application, VeracodeError> {
+    pub async fn create_application(
+        &self,
+        request: CreateApplicationRequest,
+    ) -> Result<Application, VeracodeError> {
         let endpoint = "/appsec/v1/applications";
-        
+
         let response = self.post(endpoint, Some(&request)).await?;
         let response = Self::handle_response(response).await?;
-        
+
         let app: Application = response.json().await?;
         Ok(app)
     }
@@ -516,12 +527,16 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the updated `Application`.
-    pub async fn update_application(&self, guid: &str, request: UpdateApplicationRequest) -> Result<Application, VeracodeError> {
+    pub async fn update_application(
+        &self,
+        guid: &str,
+        request: UpdateApplicationRequest,
+    ) -> Result<Application, VeracodeError> {
         let endpoint = format!("/appsec/v1/applications/{guid}");
-        
+
         let response = self.put(&endpoint, Some(&request)).await?;
         let response = Self::handle_response(response).await?;
-        
+
         let app: Application = response.json().await?;
         Ok(app)
     }
@@ -537,10 +552,10 @@ impl VeracodeClient {
     /// A `Result` indicating success or failure.
     pub async fn delete_application(&self, guid: &str) -> Result<(), VeracodeError> {
         let endpoint = format!("/appsec/v1/applications/{guid}");
-        
+
         let response = self.delete(&endpoint).await?;
         let _response = Self::handle_response(response).await?;
-        
+
         Ok(())
     }
 
@@ -550,11 +565,10 @@ impl VeracodeClient {
     ///
     /// A `Result` containing a `Vec<Application>` of non-compliant applications.
     pub async fn get_non_compliant_applications(&self) -> Result<Vec<Application>, VeracodeError> {
-        let query = ApplicationQuery::new()
-            .with_policy_compliance("DID_NOT_PASS".to_string());
-        
+        let query = ApplicationQuery::new().with_policy_compliance("DID_NOT_PASS".to_string());
+
         let response = self.get_applications(Some(query)).await?;
-        
+
         if let Some(embedded) = response.embedded {
             Ok(embedded.applications)
         } else {
@@ -571,12 +585,14 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a `Vec<Application>` of applications modified after the date.
-    pub async fn get_applications_modified_after(&self, date: &str) -> Result<Vec<Application>, VeracodeError> {
-        let query = ApplicationQuery::new()
-            .with_modified_after(date.to_string());
-        
+    pub async fn get_applications_modified_after(
+        &self,
+        date: &str,
+    ) -> Result<Vec<Application>, VeracodeError> {
+        let query = ApplicationQuery::new().with_modified_after(date.to_string());
+
         let response = self.get_applications(Some(query)).await?;
-        
+
         if let Some(embedded) = response.embedded {
             Ok(embedded.applications)
         } else {
@@ -593,12 +609,14 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a `Vec<Application>` of applications matching the name.
-    pub async fn search_applications_by_name(&self, name: &str) -> Result<Vec<Application>, VeracodeError> {
-        let query = ApplicationQuery::new()
-            .with_name(name.to_string());
-        
+    pub async fn search_applications_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Vec<Application>, VeracodeError> {
+        let query = ApplicationQuery::new().with_name(name.to_string());
+
         let response = self.get_applications(Some(query)).await?;
-        
+
         if let Some(embedded) = response.embedded {
             Ok(embedded.applications)
         } else {
@@ -614,14 +632,12 @@ impl VeracodeClient {
     pub async fn get_all_applications(&self) -> Result<Vec<Application>, VeracodeError> {
         let mut all_applications = Vec::new();
         let mut page = 0;
-        
+
         loop {
-            let query = ApplicationQuery::new()
-                .with_page(page)
-                .with_size(100);
-            
+            let query = ApplicationQuery::new().with_page(page).with_size(100);
+
             let response = self.get_applications(Some(query)).await?;
-            
+
             if let Some(embedded) = response.embedded {
                 if embedded.applications.is_empty() {
                     break;
@@ -632,7 +648,7 @@ impl VeracodeClient {
                 break;
             }
         }
-        
+
         Ok(all_applications)
     }
 
@@ -645,9 +661,12 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing an `Option<Application>` if found.
-    pub async fn get_application_by_name(&self, name: &str) -> Result<Option<Application>, VeracodeError> {
+    pub async fn get_application_by_name(
+        &self,
+        name: &str,
+    ) -> Result<Option<Application>, VeracodeError> {
         let applications = self.search_applications_by_name(name).await?;
-        
+
         // Find exact match (search_applications_by_name does partial matching)
         Ok(applications.into_iter().find(|app| {
             if let Some(profile) = &app.profile {
@@ -718,16 +737,19 @@ impl VeracodeClient {
         }
 
         // Application doesn't exist, create it
-        
+
         // Convert team names to Team objects if provided
         let teams = team_names.map(|names| {
-            names.into_iter().map(|team_name| Team {
-                team_id: None,           // Will be assigned by Veracode
-                team_name: Some(team_name),
-                team_legacy_id: None,    // Will be assigned by Veracode
-            }).collect()
+            names
+                .into_iter()
+                .map(|team_name| Team {
+                    team_id: None, // Will be assigned by Veracode
+                    team_name: Some(team_name),
+                    team_legacy_id: None, // Will be assigned by Veracode
+                })
+                .collect()
         });
-        
+
         let create_request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
                 name: name.to_string(),
@@ -765,7 +787,8 @@ impl VeracodeClient {
         business_criticality: BusinessCriticality,
         description: Option<String>,
     ) -> Result<Application, VeracodeError> {
-        self.create_application_if_not_exists(name, business_criticality, description, None).await
+        self.create_application_if_not_exists(name, business_criticality, description, None)
+            .await
     }
 }
 
@@ -780,7 +803,7 @@ mod tests {
             .with_policy_compliance("PASSED".to_string())
             .with_page(1)
             .with_size(50);
-        
+
         let params = query.to_query_params();
         assert!(params.contains(&("name".to_string(), "test_app".to_string())));
         assert!(params.contains(&("policy_compliance".to_string(), "PASSED".to_string())));
@@ -796,10 +819,13 @@ mod tests {
             .with_modified_after("2023-01-01T00:00:00.000Z".to_string())
             .with_page(2)
             .with_size(25);
-        
+
         assert_eq!(query.name, Some("MyApp".to_string()));
         assert_eq!(query.policy_compliance, Some("DID_NOT_PASS".to_string()));
-        assert_eq!(query.modified_after, Some("2023-01-01T00:00:00.000Z".to_string()));
+        assert_eq!(
+            query.modified_after,
+            Some("2023-01-01T00:00:00.000Z".to_string())
+        );
         assert_eq!(query.page, Some(2));
         assert_eq!(query.size, Some(25));
     }
@@ -807,11 +833,14 @@ mod tests {
     #[test]
     fn test_create_application_request_with_teams() {
         let team_names = vec!["Security Team".to_string(), "Development Team".to_string()];
-        let teams: Vec<Team> = team_names.into_iter().map(|team_name| Team {
-            team_id: None,
-            team_name: Some(team_name),
-            team_legacy_id: None,
-        }).collect();
+        let teams: Vec<Team> = team_names
+            .into_iter()
+            .map(|team_name| Team {
+                team_id: None,
+                team_name: Some(team_name),
+                team_legacy_id: None,
+            })
+            .collect();
 
         let request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
@@ -828,12 +857,21 @@ mod tests {
         };
 
         assert_eq!(request.profile.name, "Test Application");
-        assert_eq!(request.profile.business_criticality, BusinessCriticality::Medium);
+        assert_eq!(
+            request.profile.business_criticality,
+            BusinessCriticality::Medium
+        );
         assert!(request.profile.teams.is_some());
-        
+
         let request_teams = request.profile.teams.unwrap();
         assert_eq!(request_teams.len(), 2);
-        assert_eq!(request_teams[0].team_name, Some("Security Team".to_string()));
-        assert_eq!(request_teams[1].team_name, Some("Development Team".to_string()));
+        assert_eq!(
+            request_teams[0].team_name,
+            Some("Security Team".to_string())
+        );
+        assert_eq!(
+            request_teams[1].team_name,
+            Some("Development Team".to_string())
+        );
     }
 }

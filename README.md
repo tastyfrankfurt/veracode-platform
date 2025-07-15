@@ -67,6 +67,12 @@ A powerful command-line application for security scanning and Veracode integrati
 - Real-time scan progress monitoring
 - Configurable timeouts and retry logic
 - Support for all Veracode regions (Commercial, European, Federal)
+- **Enhanced Security**: Comprehensive secure token handling with automatic credential redaction
+  - All Veracode API credentials (`VERACODE_API_ID`, `VERACODE_API_KEY`) are securely wrapped
+  - GitLab private tokens are automatically redacted in debug output
+  - Custom secure wrappers prevent accidental credential exposure
+- **Safe Logging**: Password redaction for Git URLs showing `username:[REDACTED]@host` format
+- **Debug Protection**: All sensitive credentials show `[REDACTED]` in debug logs
 
 ### 📊 **Baseline Comparison**
 - Create security baselines from scan results
@@ -91,6 +97,8 @@ A powerful command-line application for security scanning and Veracode integrati
 - SAST Security Dashboard reports
 - Source code permalinks in issues
 - CI/CD pipeline integration
+- **Improved URL Generation**: Fixed line number linking by removing problematic `ref_type=heads` parameter
+- **Project Name Resolution**: Uses actual GitLab project name instead of "Unknown" fallback
 
 ### ⚡ **Performance Optimized**
 - Concurrent file processing and scan submission
@@ -324,6 +332,12 @@ security_scan:
 
 ### GitHub Actions
 
+**NEW**: This project now includes comprehensive GitHub Actions workflows in `.github/workflows/`:
+
+- **`build.yml`**: Continuous integration with formatting checks, clippy linting, and testing
+- **`release.yml`**: Simple release workflow for tagged releases  
+- **`multiplatform.yml`**: Cross-platform builds for Linux, Windows, and macOS
+
 ```yaml
 name: Security Scan
 on: [push, pull_request]
@@ -508,15 +522,23 @@ cargo doc --workspace
 ### Enable Debug Mode
 
 ```bash
-# Comprehensive debug output
+# Comprehensive debug output with secure credential handling
 verascan --debug --pipeline-scan --filepath . --export-findings results.json
 ```
+
+**Security Note**: Debug mode is now safe to use in production environments. All sensitive credentials (Veracode API keys, GitLab tokens, Git passwords) are automatically redacted as `[REDACTED]` in debug output.
 
 Debug output includes:
 - File discovery and validation process
 - API request/response details
 - Policy evaluation and baseline comparison
 - Export operations and file writing
+- **Enhanced Security**: All sensitive tokens are automatically redacted in debug logs
+  - Veracode API credentials (`VERACODE_API_ID`, `VERACODE_API_KEY`) are securely wrapped
+  - GitLab private tokens are protected with secure wrappers
+  - Custom Debug implementations prevent accidental credential exposure
+- **Safe URL Logging**: Git URLs with passwords are redacted as `username:[REDACTED]@host`
+- **Comprehensive Protection**: 18+ tests ensure security measures work correctly
 
 ### Common Issues
 
@@ -525,6 +547,8 @@ Debug output includes:
 ❌ Veracode API credentials are invalid
 ```
 **Solution**: Verify `VERACODE_API_ID` and `VERACODE_API_KEY` environment variables.
+
+**Security Note**: All API credentials are automatically secured with protective wrappers that prevent accidental exposure in logs. Your credentials are safe even in debug mode.
 
 #### File Discovery Issues
 ```
@@ -543,6 +567,15 @@ Debug output includes:
 - Verify `PRIVATE_TOKEN` environment variable
 - Check token has `api` and `write_repository` scopes
 - Confirm `CI_PROJECT_ID` is correct
+- **Note**: Private tokens are automatically redacted in debug logs for security
+
+#### GitLab URL Issues
+```
+❌ GitLab issue links not working correctly
+```
+**Solutions**:
+- This has been fixed by removing the problematic `ref_type=heads` parameter
+- GitLab line number links now work correctly in issue descriptions
 
 ### Performance Tuning
 
@@ -584,6 +617,56 @@ Verascan automatically detects and validates:
 - **Source packages**: Various compressed source code formats
 
 File type detection uses magic byte analysis, not just file extensions.
+
+## 🔐 Security Features
+
+### Comprehensive Credential Protection
+
+This project implements industry-leading security measures to protect all sensitive credentials:
+
+#### 🔒 **Automatic Credential Redaction**
+- All sensitive tokens show `[REDACTED]` in debug output
+- Veracode API credentials (`VERACODE_API_ID`, `VERACODE_API_KEY`) are securely wrapped
+- GitLab private tokens are protected with secure containers
+- Git repository passwords are redacted in URL logging
+
+#### 🛡️ **Secure Wrapper Implementation**
+```rust
+// Example: Veracode API credentials are automatically secured
+let config = VeracodeConfig::new(
+    env::var("VERACODE_API_ID")?,
+    env::var("VERACODE_API_KEY")?,
+);
+
+// Debug output safely shows:
+// VeracodeConfig { api_id: [REDACTED], api_key: [REDACTED], ... }
+println!("{:?}", config);
+```
+
+#### 🧪 **Production-Safe Debug Mode**
+- Debug mode can be safely enabled in production environments
+- Comprehensive logging without credential exposure
+- All sensitive information is automatically sanitized
+
+#### 🔄 **Backward Compatibility**
+- All existing code continues to work unchanged
+- No breaking changes to public APIs
+- Security improvements are transparent to users
+- Examples and documentation remain valid
+
+#### ✅ **Comprehensive Test Coverage**
+- 18+ security-focused tests ensure protection works correctly
+- Debug redaction verified for all credential types
+- Integration tests confirm secure credential handling
+- Continuous validation of security measures
+
+### Security Best Practices
+
+1. **Environment Variables**: Store credentials in environment variables, never in code
+2. **Debug Safety**: Debug mode is now production-safe with automatic redaction
+3. **Token Scopes**: Use minimum required scopes for GitLab and Veracode tokens
+4. **Regular Updates**: Keep dependencies updated for security patches
+5. **Access Control**: Limit access to systems with these credentials
 
 ## 🌍 Regional Support
 

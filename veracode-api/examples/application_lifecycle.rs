@@ -1,33 +1,31 @@
 use veracode_platform::{
-    VeracodeConfig, VeracodeClient, VeracodeError,
+    VeracodeClient, VeracodeConfig, VeracodeError,
     app::{
-        CreateApplicationRequest, CreateApplicationProfile, BusinessCriticality,
-        UpdateApplicationRequest, UpdateApplicationProfile
-    }
+        BusinessCriticality, CreateApplicationProfile, CreateApplicationRequest,
+        UpdateApplicationProfile, UpdateApplicationRequest,
+    },
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID")
-            .expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY")
-            .expect("VERACODE_API_KEY environment variable required"),
+        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
-    
+
     let client = VeracodeClient::new(config)?;
-    
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
     println!("🏗️  Application Lifecycle Example\n");
-    
+
     // Example 1: Create a new application
     println!("📦 Creating a new application...");
     let app_name = format!("Lifecycle Test App {timestamp}");
-    
+
     let create_request = CreateApplicationRequest {
         profile: CreateApplicationProfile {
             name: app_name.clone(),
@@ -44,9 +42,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let created_app = match client.create_application(create_request).await {
         Ok(app) => {
-            println!("✅ Created application: {} ({})", 
-                     app.profile.as_ref().unwrap().name, 
-                     app.guid);
+            println!(
+                "✅ Created application: {} ({})",
+                app.profile.as_ref().unwrap().name,
+                app.guid
+            );
             app
         }
         Err(e) => {
@@ -54,19 +54,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
-    
+
     // Example 2: Get/List applications to verify creation
     println!("\n📋 Listing applications to verify creation...");
     let search_results = client.search_applications_by_name(&app_name).await?;
-    
+
     if let Some(found_app) = search_results.first() {
-        println!("✅ Found created application: {} ({})", 
-                 found_app.profile.as_ref().unwrap().name, 
-                 found_app.guid);
+        println!(
+            "✅ Found created application: {} ({})",
+            found_app.profile.as_ref().unwrap().name,
+            found_app.guid
+        );
     } else {
         println!("⚠️  Created application not found in search results");
     }
-    
+
     // Example 3: Update the application
     println!("\n✏️  Updating application...");
     let update_request = UpdateApplicationRequest {
@@ -83,11 +85,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
-    let updated_app = match client.update_application(&created_app.guid, update_request).await {
+    let updated_app = match client
+        .update_application(&created_app.guid, update_request)
+        .await
+    {
         Ok(app) => {
-            println!("✅ Updated application: {} ({})", 
-                     app.profile.as_ref().unwrap().name, 
-                     app.guid);
+            println!(
+                "✅ Updated application: {} ({})",
+                app.profile.as_ref().unwrap().name,
+                app.guid
+            );
             app
         }
         Err(e) => {
@@ -97,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err(e.into());
         }
     };
-    
+
     // Example 4: Get the updated application to verify changes
     println!("\n🔍 Retrieving updated application to verify changes...");
     match client.get_application(&updated_app.guid).await {
@@ -105,15 +112,24 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let profile = retrieved_app.profile.as_ref().unwrap();
             println!("✅ Retrieved application details:");
             println!("   Name: {}", profile.name);
-            println!("   Description: {}", profile.description.as_ref().unwrap_or(&"None".to_string()));
-            println!("   Business Criticality: {:?}", profile.business_criticality);
-            println!("   Tags: {}", profile.tags.as_ref().unwrap_or(&"None".to_string()));
+            println!(
+                "   Description: {}",
+                profile.description.as_ref().unwrap_or(&"None".to_string())
+            );
+            println!(
+                "   Business Criticality: {:?}",
+                profile.business_criticality
+            );
+            println!(
+                "   Tags: {}",
+                profile.tags.as_ref().unwrap_or(&"None".to_string())
+            );
         }
         Err(e) => {
             eprintln!("❌ Failed to retrieve application: {e}");
         }
     }
-    
+
     // Example 5: List all applications (with pagination)
     println!("\n📋 Listing all applications (first page)...");
     match client.get_applications(None).await {
@@ -125,10 +141,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("✅ Found applications (total count not available)");
                 }
             }
-            
+
             if let Some(embedded) = &apps_response.embedded {
-                println!("   Showing {} applications on this page", embedded.applications.len());
-                
+                println!(
+                    "   Showing {} applications on this page",
+                    embedded.applications.len()
+                );
+
                 // Show first few applications
                 for (i, app) in embedded.applications.iter().take(3).enumerate() {
                     if let Some(profile) = &app.profile {
@@ -137,7 +156,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("   {}. [No profile] ({})", i + 1, app.guid);
                     }
                 }
-                
+
                 if embedded.applications.len() > 3 {
                     println!("   ... and {} more", embedded.applications.len() - 3);
                 }
@@ -149,11 +168,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("❌ Failed to list applications: {e}");
         }
     }
-    
+
     // Wait a moment before deletion
     println!("\n⏳ Waiting 3 seconds before cleanup...");
     tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
-    
+
     // Example 6: Delete the application
     println!("\n🗑️  Deleting the test application...");
     match client.delete_application(&updated_app.guid).await {
@@ -165,7 +184,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("   You may need to manually delete: {}", updated_app.guid);
         }
     }
-    
+
     // Example 7: Verify deletion
     println!("\n🔍 Verifying application deletion...");
     match client.get_application(&updated_app.guid).await {
@@ -179,7 +198,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("⚠️  Error checking deletion status: {e}");
         }
     }
-    
+
     println!("\n✅ Application lifecycle example completed!");
     println!("\nThis example demonstrated:");
     println!("  ✓ Creating a new application");
@@ -189,6 +208,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✓ Listing all applications");
     println!("  ✓ Deleting an application");
     println!("  ✓ Verifying deletion");
-    
+
     Ok(())
 }

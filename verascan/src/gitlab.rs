@@ -3,11 +3,11 @@
 //! This module provides functionality to export Veracode pipeline scan results
 //! in GitLab SAST report format, compatible with GitLab security dashboards.
 
+use crate::findings::AggregatedFindings;
+use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
-use chrono::{Utc};
 use uuid::Uuid;
-use crate::findings::AggregatedFindings;
 
 /// GitLab SAST report structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -207,26 +207,41 @@ impl GitLabExporter {
     }
 
     /// Export aggregated findings to GitLab SAST format
-    pub fn export_to_gitlab_sast(&self, aggregated: &AggregatedFindings, output_path: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn export_to_gitlab_sast(
+        &self,
+        aggregated: &AggregatedFindings,
+        output_path: &Path,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!("💾 Exporting aggregated findings to GitLab SAST format: {}", output_path.display());
+            println!(
+                "💾 Exporting aggregated findings to GitLab SAST format: {}",
+                output_path.display()
+            );
         }
 
         let gitlab_report = self.convert_to_gitlab_format(aggregated)?;
         let json_string = serde_json::to_string_pretty(&gitlab_report)?;
         std::fs::write(output_path, json_string)?;
 
-        println!("✅ GitLab SAST report exported to: {}", output_path.display());
+        println!(
+            "✅ GitLab SAST report exported to: {}",
+            output_path.display()
+        );
         Ok(())
     }
 
     /// Convert aggregated findings to GitLab SAST report format
-    fn convert_to_gitlab_format(&self, aggregated: &AggregatedFindings) -> Result<GitLabSASTReport, Box<dyn std::error::Error>> {
+    fn convert_to_gitlab_format(
+        &self,
+        aggregated: &AggregatedFindings,
+    ) -> Result<GitLabSASTReport, Box<dyn std::error::Error>> {
         let now = Utc::now();
         let start_time = now.format("%Y-%m-%dT%H:%M:%S").to_string();
         let end_time = now.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-        let vulnerabilities = aggregated.findings.iter()
+        let vulnerabilities = aggregated
+            .findings
+            .iter()
             .map(|finding_with_source| self.convert_finding_to_vulnerability(finding_with_source))
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -265,7 +280,10 @@ impl GitLabExporter {
     }
 
     /// Convert a Veracode finding to GitLab vulnerability format
-    fn convert_finding_to_vulnerability(&self, finding_with_source: &crate::findings::FindingWithSource) -> Result<GitLabVulnerability, Box<dyn std::error::Error>> {
+    fn convert_finding_to_vulnerability(
+        &self,
+        finding_with_source: &crate::findings::FindingWithSource,
+    ) -> Result<GitLabVulnerability, Box<dyn std::error::Error>> {
         let finding = &finding_with_source.finding;
         let source = &finding_with_source.source_scan;
 
@@ -277,14 +295,17 @@ impl GitLabExporter {
 
         // Create identifiers
         let mut identifiers = Vec::new();
-        
+
         // Add CWE identifier
         if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
             identifiers.push(GitLabIdentifier {
                 identifier_type: "cwe".to_string(),
                 name: format!("CWE-{}", finding.cwe_id),
                 value: finding.cwe_id.clone(),
-                url: Some(format!("https://cwe.mitre.org/data/definitions/{}.html", finding.cwe_id)),
+                url: Some(format!(
+                    "https://cwe.mitre.org/data/definitions/{}.html",
+                    finding.cwe_id
+                )),
             });
         }
 
@@ -323,7 +344,10 @@ impl GitLabExporter {
                     line_end: finding.files.source_file.line,
                     signatures: vec![GitLabSignature {
                         algorithm: "veracode_issue_signature".to_string(),
-                        value: format!("{}:{}:{}", source.scan_id, finding.issue_id, finding.files.source_file.line),
+                        value: format!(
+                            "{}:{}:{}",
+                            source.scan_id, finding.issue_id, finding.files.source_file.line
+                        ),
                     }],
                 }],
             })
@@ -334,12 +358,15 @@ impl GitLabExporter {
         // Create links if enabled
         let links = if self.config.include_links {
             let mut link_vec = Vec::new();
-            
+
             // Add CWE link if available
             if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
                 link_vec.push(GitLabLink {
                     name: format!("CWE-{} Details", finding.cwe_id),
-                    url: format!("https://cwe.mitre.org/data/definitions/{}.html", finding.cwe_id),
+                    url: format!(
+                        "https://cwe.mitre.org/data/definitions/{}.html",
+                        finding.cwe_id
+                    ),
                 });
             }
 
@@ -357,8 +384,7 @@ impl GitLabExporter {
             Some(format!(
                 "Review and remediate this {} vulnerability found in {}. \
                 Consider consulting Veracode documentation for specific remediation guidance for this issue type.",
-                finding.issue_type,
-                finding.files.source_file.file
+                finding.issue_type, finding.files.source_file.file
             ))
         } else {
             None
@@ -383,7 +409,12 @@ impl GitLabExporter {
                 finding.severity,
                 finding.files.source_file.file,
                 finding.files.source_file.line,
-                finding.files.source_file.function_name.as_deref().unwrap_or("N/A"),
+                finding
+                    .files
+                    .source_file
+                    .function_name
+                    .as_deref()
+                    .unwrap_or("N/A"),
                 source.scan_id,
                 source.project_name
             ),
@@ -427,15 +458,21 @@ impl GitLabExporter {
 mod tests {
     use super::*;
     use crate::findings::{FindingWithSource, ScanSource};
-    use veracode_platform::pipeline::{Finding, SourceFile, FindingFiles};
+    use veracode_platform::pipeline::{Finding, FindingFiles, SourceFile};
 
     #[test]
     fn test_severity_conversion() {
         let exporter = GitLabExporter::new(GitLabExportConfig::default(), false);
-        
-        assert!(matches!(exporter.convert_severity(5), GitLabSeverity::Critical));
+
+        assert!(matches!(
+            exporter.convert_severity(5),
+            GitLabSeverity::Critical
+        ));
         assert!(matches!(exporter.convert_severity(4), GitLabSeverity::High));
-        assert!(matches!(exporter.convert_severity(3), GitLabSeverity::Medium));
+        assert!(matches!(
+            exporter.convert_severity(3),
+            GitLabSeverity::Medium
+        ));
         assert!(matches!(exporter.convert_severity(2), GitLabSeverity::Low));
         assert!(matches!(exporter.convert_severity(1), GitLabSeverity::Low));
         assert!(matches!(exporter.convert_severity(0), GitLabSeverity::Info));
@@ -454,7 +491,7 @@ mod tests {
     #[test]
     fn test_convert_finding_to_vulnerability() {
         let exporter = GitLabExporter::new(GitLabExportConfig::default(), false);
-        
+
         let finding = Finding {
             issue_id: 123,
             cwe_id: "79".to_string(),
@@ -490,8 +527,10 @@ mod tests {
             source_scan: source,
         };
 
-        let vulnerability = exporter.convert_finding_to_vulnerability(&finding_with_source).unwrap();
-        
+        let vulnerability = exporter
+            .convert_finding_to_vulnerability(&finding_with_source)
+            .unwrap();
+
         assert_eq!(vulnerability.name, "Cross-Site Scripting vulnerability");
         assert!(matches!(vulnerability.severity, GitLabSeverity::High));
         assert_eq!(vulnerability.location.file, "src/main.js");

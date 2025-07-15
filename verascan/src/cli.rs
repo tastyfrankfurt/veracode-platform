@@ -3,14 +3,21 @@ use serde_json;
 
 #[derive(Parser)]
 #[command(name = "verascan")]
-#[command(about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting.")]
+#[command(
+    about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
+)]
 #[command(version = "0.1.0")]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
 
     /// Enable debug mode for detailed output
-    #[arg(long = "debug", short = 'd', help = "Enable debug mode for detailed diagnostic output", global = true)]
+    #[arg(
+        long = "debug",
+        short = 'd',
+        help = "Enable debug mode for detailed diagnostic output",
+        global = true
+    )]
     pub debug: bool,
 
     /// Veracode region (commercial, european, federal)
@@ -31,19 +38,38 @@ pub enum Commands {
     /// Submit files for Veracode Pipeline Scan
     Pipeline {
         /// Directory path to search in
-        #[arg(long = "filepath", short = 'f', help = "Path to the directory to search", default_value = ".")]
+        #[arg(
+            long = "filepath",
+            short = 'f',
+            help = "Path to the directory to search",
+            default_value = "."
+        )]
         filepath: String,
 
         /// File filter patterns (comma-separated)
-        #[arg(long = "filefilter", help = "File patterns to match (e.g., '*.jar,*.war,*.zip')", default_value = "*")]
+        #[arg(
+            long = "filefilter",
+            help = "File patterns to match (e.g., '*.jar,*.war,*.zip')",
+            default_value = "*"
+        )]
         filefilter: String,
 
         /// Enable recursive search
-        #[arg(long = "recursive", short = 'r', help = "Search recursively through subdirectories", default_value = "true")]
+        #[arg(
+            long = "recursive",
+            short = 'r',
+            help = "Search recursively through subdirectories",
+            default_value = "true"
+        )]
         recursive: bool,
 
         /// Validate file types by checking file headers
-        #[arg(long = "validate", short = 'v', help = "Validate file types using header signatures", default_value = "true")]
+        #[arg(
+            long = "validate",
+            short = 'v',
+            help = "Validate file types using header signatures",
+            default_value = "true"
+        )]
         validate: bool,
 
         /// Project name for pipeline scan
@@ -55,7 +81,12 @@ pub enum Commands {
         project_url: Option<String>,
 
         /// Timeout in minutes to wait for scan completion
-        #[arg(short = 't', long = "timeout", help = "Timeout in minutes to wait for scan completion", default_value = "30")]
+        #[arg(
+            short = 't',
+            long = "timeout",
+            help = "Timeout in minutes to wait for scan completion",
+            default_value = "30"
+        )]
         timeout: u32,
 
         /// Number of concurrent threads for file uploads
@@ -63,7 +94,11 @@ pub enum Commands {
         threads: usize,
 
         /// Export aggregated findings to a file
-        #[arg(long = "export-findings", help = "Export aggregated findings to specified file path (supports .json and .csv)", default_value = "results.json")]
+        #[arg(
+            long = "export-findings",
+            help = "Export aggregated findings to specified file path (supports .json and .csv)",
+            default_value = "results.json"
+        )]
         export_findings: String,
 
         /// Export format for findings
@@ -71,7 +106,10 @@ pub enum Commands {
         export_format: String,
 
         /// Show detailed findings in human-readable format
-        #[arg(long = "show-findings", help = "Display detailed findings in human-readable format to CLI")]
+        #[arg(
+            long = "show-findings",
+            help = "Display detailed findings in human-readable format to CLI"
+        )]
         show_findings: bool,
 
         /// Limit number of findings to display
@@ -83,11 +121,18 @@ pub enum Commands {
         min_severity: Option<String>,
 
         /// Project directory root for resolving relative file paths in GitLab permalinks
-        #[arg(long = "project-dir", help = "Project directory root for resolving file paths in GitLab permalinks", default_value = ".")]
+        #[arg(
+            long = "project-dir",
+            help = "Project directory root for resolving file paths in GitLab permalinks",
+            default_value = "."
+        )]
         project_dir: String,
 
         /// Create GitLab issues from findings
-        #[arg(long = "create-gitlab-issues", help = "Create GitLab issues from scan findings using CI environment variables")]
+        #[arg(
+            long = "create-gitlab-issues",
+            help = "Create GitLab issues from scan findings using CI environment variables"
+        )]
         create_gitlab_issues: bool,
 
         /// Baseline file for comparison with current scan results
@@ -103,7 +148,10 @@ pub enum Commands {
         policy_name: Option<String>,
 
         /// Filtered JSON output file for policy violations
-        #[arg(long = "filtered-json-output-file", help = "Filename (in the current directory) to save results that violate pass-fail criteria.")]
+        #[arg(
+            long = "filtered-json-output-file",
+            help = "Filename (in the current directory) to save results that violate pass-fail criteria."
+        )]
         filtered_json_output_file: Option<String>,
 
         /// Development stage for pipeline scan
@@ -122,19 +170,38 @@ pub enum Commands {
     /// Submit files for Veracode Assessment Scan (sandbox or policy)
     Assessment {
         /// Directory path to search in
-        #[arg(long = "filepath", short = 'f', help = "Path to the directory to search", default_value = ".")]
+        #[arg(
+            long = "filepath",
+            short = 'f',
+            help = "Path to the directory to search",
+            default_value = "."
+        )]
         filepath: String,
 
         /// File filter patterns (comma-separated)
-        #[arg(long = "filefilter", help = "File patterns to match (e.g., '*.jar,*.war,*.zip')", default_value = "*")]
+        #[arg(
+            long = "filefilter",
+            help = "File patterns to match (e.g., '*.jar,*.war,*.zip')",
+            default_value = "*"
+        )]
         filefilter: String,
 
         /// Enable recursive search
-        #[arg(long = "recursive", short = 'r', help = "Search recursively through subdirectories", default_value = "true")]
+        #[arg(
+            long = "recursive",
+            short = 'r',
+            help = "Search recursively through subdirectories",
+            default_value = "true"
+        )]
         recursive: bool,
 
         /// Validate file types by checking file headers
-        #[arg(long = "validate", short = 'v', help = "Validate file types using header signatures", default_value = "true")]
+        #[arg(
+            long = "validate",
+            short = 'v',
+            help = "Validate file types using header signatures",
+            default_value = "true"
+        )]
         validate: bool,
 
         /// Veracode application profile name to link the scan to an existing application
@@ -142,7 +209,12 @@ pub enum Commands {
         app_profile_name: String,
 
         /// Timeout in minutes to wait for scan completion
-        #[arg(short = 't', long = "timeout", help = "Timeout in minutes to wait for scan completion", default_value = "60")]
+        #[arg(
+            short = 't',
+            long = "timeout",
+            help = "Timeout in minutes to wait for scan completion",
+            default_value = "60"
+        )]
         timeout: u32,
 
         /// Number of concurrent threads for file uploads
@@ -150,7 +222,11 @@ pub enum Commands {
         threads: usize,
 
         /// Export assessment scan results to a file
-        #[arg(long = "export-results", help = "Export assessment scan results to specified file path (JSON format)", default_value = "assessment-results.json")]
+        #[arg(
+            long = "export-results",
+            help = "Export assessment scan results to specified file path (JSON format)",
+            default_value = "assessment-results.json"
+        )]
         export_results: String,
 
         /// Sandbox name for sandbox assessment scans
@@ -186,23 +262,33 @@ impl Args {
     /// Validate conditional requirements after parsing
     pub fn validate_conditional_requirements(&self) -> Result<(), String> {
         match &self.command {
-            Commands::Pipeline { baseline_file, export_findings, filtered_json_output_file, .. } => {
+            Commands::Pipeline {
+                baseline_file,
+                export_findings,
+                filtered_json_output_file,
+                ..
+            } => {
                 // Validate baseline file requirements for pipeline scans
                 if baseline_file.is_some() && export_findings.is_empty() {
-                    return Err("--baseline-file requires --export-findings to be specified".to_string());
+                    return Err(
+                        "--baseline-file requires --export-findings to be specified".to_string()
+                    );
                 }
                 if filtered_json_output_file.is_some() && baseline_file.is_none() {
-                    return Err("--filtered-json-output-file requires --baseline-file to be specified".to_string());
+                    return Err(
+                        "--filtered-json-output-file requires --baseline-file to be specified"
+                            .to_string(),
+                    );
                 }
-            },
+            }
             Commands::Assessment { .. } => {
                 // Assessment validation happens at the field level with required fields
-            },
+            }
             Commands::Policy { .. } => {
                 // Policy validation happens at the field level
-            },
+            }
         }
-        
+
         Ok(())
     }
 }
@@ -210,14 +296,21 @@ impl Args {
 /// Validate severity level input
 fn validate_severity_level(s: &str) -> Result<String, String> {
     const VALID_SEVERITIES: &[&str] = &[
-        "informational", "info",
-        "very-low", "verylow", "very_low", 
+        "informational",
+        "info",
+        "very-low",
+        "verylow",
+        "very_low",
         "low",
-        "medium", "med",
+        "medium",
+        "med",
         "high",
-        "very-high", "veryhigh", "very_high", "critical"
+        "very-high",
+        "veryhigh",
+        "very_high",
+        "critical",
     ];
-    
+
     let lower_input = s.to_lowercase();
     if VALID_SEVERITIES.contains(&lower_input.as_str()) {
         Ok(s.to_string())
@@ -232,7 +325,7 @@ fn validate_severity_level(s: &str) -> Result<String, String> {
 /// Validate export format input
 fn validate_export_format(s: &str) -> Result<String, String> {
     const VALID_FORMATS: &[&str] = &["json", "csv", "gitlab", "all"];
-    
+
     let lower_input = s.to_lowercase();
     if VALID_FORMATS.contains(&lower_input.as_str()) {
         Ok(s.to_string())
@@ -247,7 +340,7 @@ fn validate_export_format(s: &str) -> Result<String, String> {
 /// Validate region input
 fn validate_region(s: &str) -> Result<String, String> {
     const VALID_REGIONS: &[&str] = &["commercial", "european", "federal"];
-    
+
     let lower_input = s.to_lowercase();
     if VALID_REGIONS.contains(&lower_input.as_str()) {
         Ok(s.to_string())
@@ -299,22 +392,24 @@ fn validate_name_field(s: &str) -> Result<String, String> {
             s.len()
         ));
     }
-    
+
     // Check if empty
     if s.trim().is_empty() {
         return Err("Name cannot be empty".to_string());
     }
-    
+
     // Check for valid characters (alphanumeric, dash, underscore, space)
-    let is_valid = s.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ');
-    
+    let is_valid = s
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ');
+
     if !is_valid {
         return Err(format!(
             "Name can only contain alphanumeric characters, dashes (-), underscores (_), and spaces. Got: '{}'",
             s
         ));
     }
-    
+
     Ok(s.to_string())
 }
 
@@ -327,19 +422,19 @@ fn validate_project_url(s: &str) -> Result<String, String> {
             s.len()
         ));
     }
-    
+
     // Check if empty
     if s.trim().is_empty() {
         return Err("Project URL cannot be empty".to_string());
     }
-    
+
     // Check if certificate validation is disabled (allow http:// in that case)
     let cert_validation_disabled = std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok();
-    
+
     // Basic URI validation
     let valid_https = s.starts_with("https://");
     let valid_http_dev = cert_validation_disabled && s.starts_with("http://");
-    
+
     if !valid_https && !valid_http_dev {
         if cert_validation_disabled {
             return Err(format!(
@@ -353,7 +448,7 @@ fn validate_project_url(s: &str) -> Result<String, String> {
             ));
         }
     }
-    
+
     // Additional basic URI structure validation
     if !s.contains('.') && !s.contains(':') {
         return Err(format!(
@@ -361,37 +456,45 @@ fn validate_project_url(s: &str) -> Result<String, String> {
             s
         ));
     }
-    
+
     Ok(s.to_string())
 }
 
 /// Validate JSON file exists and is readable
 fn validate_json_file(s: &str, file_type: &str) -> Result<String, String> {
-    use std::path::Path;
     use std::fs;
-    
+    use std::path::Path;
+
     let path = Path::new(s);
-    
+
     // Check if file exists
     if !path.exists() {
         return Err(format!("{} file does not exist: '{}'", file_type, s));
     }
-    
+
     // Check if it's a file (not directory)
     if !path.is_file() {
         return Err(format!("{} file path is not a file: '{}'", file_type, s));
     }
-    
+
     // Try to read the file
     let content = fs::read_to_string(path).map_err(|e| {
-        format!("Cannot read {} file '{}': {}", file_type.to_lowercase(), s, e)
+        format!(
+            "Cannot read {} file '{}': {}",
+            file_type.to_lowercase(),
+            s,
+            e
+        )
     })?;
-    
+
     // Try to parse as JSON to validate format
     if let Err(e) = serde_json::from_str::<serde_json::Value>(&content) {
-        return Err(format!("{} file '{}' is not valid JSON: {}", file_type, s, e));
+        return Err(format!(
+            "{} file '{}' is not valid JSON: {}",
+            file_type, s, e
+        ));
     }
-    
+
     Ok(s.to_string())
 }
 
@@ -411,7 +514,7 @@ fn validate_policy_name(s: &str) -> Result<String, String> {
     if s.trim().is_empty() {
         return Err("Policy name cannot be empty".to_string());
     }
-    
+
     // Check length (reasonable limit)
     if s.len() > 100 {
         return Err(format!(
@@ -419,28 +522,35 @@ fn validate_policy_name(s: &str) -> Result<String, String> {
             s.len()
         ));
     }
-    
+
     // Check for valid characters (alphanumeric, dash, underscore, space, dot)
-    let is_valid = s.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.');
-    
+    let is_valid = s
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.');
+
     if !is_valid {
         return Err(format!(
             "Policy name can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.). Got: '{}'",
             s
         ));
     }
-    
+
     Ok(s.to_string())
 }
 
 /// Validate development stage input
 fn validate_development_stage(s: &str) -> Result<String, String> {
     const VALID_STAGES: &[&str] = &[
-        "development", "dev",
-        "testing", "test", 
-        "release", "rel", "production", "prod"
+        "development",
+        "dev",
+        "testing",
+        "test",
+        "release",
+        "rel",
+        "production",
+        "prod",
     ];
-    
+
     let lower_input = s.to_lowercase();
     if VALID_STAGES.contains(&lower_input.as_str()) {
         Ok(s.to_string())
@@ -455,21 +565,30 @@ fn validate_development_stage(s: &str) -> Result<String, String> {
 /// Validate fail-on-severity input (comma-separated severity levels)
 fn validate_fail_on_severity(s: &str) -> Result<String, String> {
     const VALID_SEVERITIES: &[&str] = &[
-        "informational", "info",
-        "very low", "very-low", "verylow", "very_low",
+        "informational",
+        "info",
+        "very low",
+        "very-low",
+        "verylow",
+        "very_low",
         "low",
-        "medium", "med",
+        "medium",
+        "med",
         "high",
-        "very high", "very-high", "veryhigh", "very_high", "critical"
+        "very high",
+        "very-high",
+        "veryhigh",
+        "very_high",
+        "critical",
     ];
-    
+
     if s.trim().is_empty() {
         return Err("Fail-on-severity list cannot be empty".to_string());
     }
-    
+
     // Split by comma and validate each severity
     let severities: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
-    
+
     for severity in &severities {
         let lower_severity = severity.to_lowercase();
         if !VALID_SEVERITIES.contains(&lower_severity.as_str()) {
@@ -479,7 +598,7 @@ fn validate_fail_on_severity(s: &str) -> Result<String, String> {
             ));
         }
     }
-    
+
     Ok(s.to_string())
 }
 
@@ -488,10 +607,10 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
     if s.trim().is_empty() {
         return Err("Fail-on-CWE list cannot be empty".to_string());
     }
-    
+
     // Split by comma and validate each CWE ID
     let cwes: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
-    
+
     for cwe in &cwes {
         // CWE should be numeric (with or without "CWE-" prefix)
         let cwe_number = if cwe.to_lowercase().starts_with("cwe-") {
@@ -499,7 +618,7 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
         } else {
             cwe
         };
-        
+
         if cwe_number.parse::<u32>().is_err() {
             return Err(format!(
                 "Invalid CWE ID '{}'. CWE IDs should be numeric (e.g., '89' or 'CWE-89')",
@@ -507,7 +626,7 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
             ));
         }
     }
-    
+
     Ok(s.to_string())
 }
 
@@ -516,25 +635,27 @@ fn validate_modules_list(s: &str) -> Result<String, String> {
     if s.trim().is_empty() {
         return Err("Modules list cannot be empty".to_string());
     }
-    
+
     // Split by comma and validate each module name
     let modules: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
-    
+
     for module in &modules {
         if module.is_empty() {
             return Err("Module names cannot be empty".to_string());
         }
-        
+
         // Check for valid characters (alphanumeric, dash, underscore, space, dot)
-        let is_valid = module.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.');
-        
+        let is_valid = module
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '.');
+
         if !is_valid {
             return Err(format!(
                 "Invalid module name '{}'. Module names can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.)",
                 module
             ));
         }
-        
+
         // Check length (reasonable limit)
         if module.len() > 100 {
             return Err(format!(
@@ -543,20 +664,25 @@ fn validate_modules_list(s: &str) -> Result<String, String> {
             ));
         }
     }
-    
+
     Ok(s.to_string())
 }
 
 /// Validate business criticality input
 fn validate_business_criticality(s: &str) -> Result<String, String> {
     const VALID_CRITICALITIES: &[&str] = &[
-        "very-high", "veryhigh", "very_high",
+        "very-high",
+        "veryhigh",
+        "very_high",
         "high",
-        "medium", "med",
+        "medium",
+        "med",
         "low",
-        "very-low", "verylow", "very_low"
+        "very-low",
+        "verylow",
+        "very_low",
     ];
-    
+
     let lower_input = s.to_lowercase();
     if VALID_CRITICALITIES.contains(&lower_input.as_str()) {
         Ok(s.to_string())
@@ -586,9 +712,11 @@ fn validate_delete_incomplete_scan(s: &str) -> Result<u8, String> {
 }
 
 /// Parse business criticality string to BusinessCriticality enum
-pub fn parse_business_criticality(criticality_str: &str) -> veracode_platform::app::BusinessCriticality {
+pub fn parse_business_criticality(
+    criticality_str: &str,
+) -> veracode_platform::app::BusinessCriticality {
     use veracode_platform::app::BusinessCriticality;
-    
+
     match criticality_str.to_lowercase().as_str() {
         "very-high" | "veryhigh" | "very_high" => BusinessCriticality::VeryHigh,
         "high" => BusinessCriticality::High,
@@ -597,7 +725,10 @@ pub fn parse_business_criticality(criticality_str: &str) -> veracode_platform::a
         "very-low" | "verylow" | "very_low" => BusinessCriticality::VeryLow,
         _ => {
             // This should not happen due to CLI validation, but provide a fallback
-            eprintln!("⚠️  Warning: Invalid business criticality '{}', defaulting to Medium", criticality_str);
+            eprintln!(
+                "⚠️  Warning: Invalid business criticality '{}', defaulting to Medium",
+                criticality_str
+            );
             BusinessCriticality::Medium
         }
     }
@@ -639,10 +770,14 @@ mod tests {
             api_id: None,
             api_key: None,
         };
-        
+
         let result = args.validate_conditional_requirements();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--baseline-file requires --export-findings"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("--baseline-file requires --export-findings")
+        );
     }
 
     #[test]
@@ -677,10 +812,14 @@ mod tests {
             api_id: None,
             api_key: None,
         };
-        
+
         let result = args.validate_conditional_requirements();
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("--filtered-json-output-file requires --baseline-file"));
+        assert!(
+            result
+                .unwrap_err()
+                .contains("--filtered-json-output-file requires --baseline-file")
+        );
     }
 
     #[test]
@@ -706,7 +845,7 @@ mod tests {
             api_id: None,
             api_key: None,
         };
-        
+
         let result = args.validate_conditional_requirements();
         assert!(result.is_ok());
     }
@@ -732,13 +871,28 @@ mod tests {
     #[test]
     fn test_parse_business_criticality() {
         use veracode_platform::app::BusinessCriticality;
-        
-        assert_eq!(parse_business_criticality("very-high"), BusinessCriticality::VeryHigh);
-        assert_eq!(parse_business_criticality("high"), BusinessCriticality::High);
-        assert_eq!(parse_business_criticality("medium"), BusinessCriticality::Medium);
+
+        assert_eq!(
+            parse_business_criticality("very-high"),
+            BusinessCriticality::VeryHigh
+        );
+        assert_eq!(
+            parse_business_criticality("high"),
+            BusinessCriticality::High
+        );
+        assert_eq!(
+            parse_business_criticality("medium"),
+            BusinessCriticality::Medium
+        );
         assert_eq!(parse_business_criticality("low"), BusinessCriticality::Low);
-        assert_eq!(parse_business_criticality("very-low"), BusinessCriticality::VeryLow);
-        assert_eq!(parse_business_criticality("invalid"), BusinessCriticality::Medium); // fallback
+        assert_eq!(
+            parse_business_criticality("very-low"),
+            BusinessCriticality::VeryLow
+        );
+        assert_eq!(
+            parse_business_criticality("invalid"),
+            BusinessCriticality::Medium
+        ); // fallback
     }
 
     #[test]

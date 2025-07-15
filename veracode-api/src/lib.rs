@@ -88,51 +88,52 @@
 //! This separation reflects the underlying Veracode API architecture where sandbox management
 //! uses the newer REST endpoints while scan operations use the legacy XML endpoints.
 
-pub mod client;
 pub mod app;
-pub mod sandbox;
-pub mod scan;
 pub mod build;
+pub mod client;
 pub mod identity;
 pub mod pipeline;
 pub mod policy;
+pub mod sandbox;
+pub mod scan;
 pub mod workflow;
 
-use std::fmt;
 use reqwest::Error as ReqwestError;
+use std::fmt;
 
 // Re-export common types for convenience
-pub use client::VeracodeClient;
-pub use app::{Application, ApplicationQuery, ApplicationsResponse, CreateApplicationRequest, UpdateApplicationRequest};
-pub use sandbox::{
-    SandboxApi, Sandbox, CreateSandboxRequest, UpdateSandboxRequest, 
-    SandboxListParams, SandboxError, SandboxScan, ApiErrorResponse, ApiError
-};
-pub use scan::{
-    ScanApi, UploadedFile, PreScanResults, ScanInfo, ScanModule, PreScanMessage,
-    UploadFileRequest, UploadLargeFileRequest, BeginPreScanRequest, BeginScanRequest, 
-    ScanError, UploadProgress, UploadProgressCallback
+pub use app::{
+    Application, ApplicationQuery, ApplicationsResponse, CreateApplicationRequest,
+    UpdateApplicationRequest,
 };
 pub use build::{
-    BuildApi, Build, BuildList, CreateBuildRequest, UpdateBuildRequest, DeleteBuildRequest,
-    GetBuildInfoRequest, GetBuildListRequest, DeleteBuildResult, BuildError
+    Build, BuildApi, BuildError, BuildList, CreateBuildRequest, DeleteBuildRequest,
+    DeleteBuildResult, GetBuildInfoRequest, GetBuildListRequest, UpdateBuildRequest,
 };
+pub use client::VeracodeClient;
 pub use identity::{
-    IdentityApi, User, UserType, Role, Team, BusinessUnit, ApiCredential,
-    CreateUserRequest, UpdateUserRequest, CreateTeamRequest, UpdateTeamRequest,
-    CreateApiCredentialRequest, UserQuery, IdentityError
+    ApiCredential, BusinessUnit, CreateApiCredentialRequest, CreateTeamRequest, CreateUserRequest,
+    IdentityApi, IdentityError, Role, Team, UpdateTeamRequest, UpdateUserRequest, User, UserQuery,
+    UserType,
 };
 pub use pipeline::{
-    PipelineApi, Finding, Scan, ScanResults, CreateScanRequest, ScanConfig,
-    DevStage, ScanStage, ScanStatus, Severity, FindingsSummary, SecurityStandards, PipelineError
+    CreateScanRequest, DevStage, Finding, FindingsSummary, PipelineApi, PipelineError, Scan,
+    ScanConfig, ScanResults, ScanStage, ScanStatus, SecurityStandards, Severity,
 };
 pub use policy::{
-    PolicyApi, SecurityPolicy, PolicyScanRequest, PolicyScanResult, PolicyComplianceResult,
-    PolicyComplianceStatus, ScanType, PolicyRule, PolicyThresholds, PolicyError
+    PolicyApi, PolicyComplianceResult, PolicyComplianceStatus, PolicyError, PolicyRule,
+    PolicyScanRequest, PolicyScanResult, PolicyThresholds, ScanType, SecurityPolicy,
 };
-pub use workflow::{
-    VeracodeWorkflow, WorkflowConfig, WorkflowError, WorkflowResultData
+pub use sandbox::{
+    ApiError, ApiErrorResponse, CreateSandboxRequest, Sandbox, SandboxApi, SandboxError,
+    SandboxListParams, SandboxScan, UpdateSandboxRequest,
 };
+pub use scan::{
+    BeginPreScanRequest, BeginScanRequest, PreScanMessage, PreScanResults, ScanApi, ScanError,
+    ScanInfo, ScanModule, UploadFileRequest, UploadLargeFileRequest, UploadProgress,
+    UploadProgressCallback, UploadedFile,
+};
+pub use workflow::{VeracodeWorkflow, WorkflowConfig, WorkflowError, WorkflowResultData};
 /// Custom error type for Veracode API operations.
 ///
 /// This enum represents all possible errors that can occur when interacting
@@ -251,18 +252,66 @@ impl From<serde_json::Error> for VeracodeError {
     }
 }
 
+/// Secure wrapper for Veracode API ID that prevents exposure in debug output
+#[derive(Clone)]
+pub struct SecureVeracodeApiId(String);
+
+/// Secure wrapper for Veracode API key that prevents exposure in debug output
+#[derive(Clone)]
+pub struct SecureVeracodeApiKey(String);
+
+impl SecureVeracodeApiId {
+    pub fn new(api_id: String) -> Self {
+        SecureVeracodeApiId(api_id)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl SecureVeracodeApiKey {
+    pub fn new(api_key: String) -> Self {
+        SecureVeracodeApiKey(api_key)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    pub fn into_string(self) -> String {
+        self.0
+    }
+}
+
+impl std::fmt::Debug for SecureVeracodeApiId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
+impl std::fmt::Debug for SecureVeracodeApiKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("[REDACTED]")
+    }
+}
+
 /// Configuration for the Veracode API client.
 ///
 /// This struct contains all the necessary configuration for connecting to
 /// the Veracode APIs, including authentication credentials and regional settings.
-/// It automatically manages both REST API (api.veracode.*) and XML API 
+/// It automatically manages both REST API (api.veracode.*) and XML API
 /// (analysiscenter.veracode.*) endpoints based on the selected region.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct VeracodeConfig {
-    /// Your Veracode API ID
-    pub api_id: String,
-    /// Your Veracode API key (should be kept secret)
-    pub api_key: String,
+    /// Your Veracode API ID (securely wrapped)
+    pub api_id: SecureVeracodeApiId,
+    /// Your Veracode API key (securely wrapped, should be kept secret)
+    pub api_key: SecureVeracodeApiKey,
     /// Base URL for the current client instance
     pub base_url: String,
     /// REST API base URL (api.veracode.*)
@@ -273,6 +322,21 @@ pub struct VeracodeConfig {
     pub region: VeracodeRegion,
     /// Whether to validate TLS certificates (default: true)
     pub validate_certificates: bool,
+}
+
+/// Custom Debug implementation for VeracodeConfig that redacts sensitive information
+impl std::fmt::Debug for VeracodeConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("VeracodeConfig")
+            .field("api_id", &self.api_id)
+            .field("api_key", &self.api_key)
+            .field("base_url", &self.base_url)
+            .field("rest_base_url", &self.rest_base_url)
+            .field("xml_base_url", &self.xml_base_url)
+            .field("region", &self.region)
+            .field("validate_certificates", &self.validate_certificates)
+            .finish()
+    }
 }
 
 /// Veracode regions for API access.
@@ -307,8 +371,8 @@ impl VeracodeConfig {
     /// A new `VeracodeConfig` instance configured for the Commercial region.
     pub fn new(api_id: String, api_key: String) -> Self {
         Self {
-            api_id,
-            api_key,
+            api_id: SecureVeracodeApiId::new(api_id),
+            api_key: SecureVeracodeApiKey::new(api_key),
             base_url: "https://api.veracode.com".to_string(),
             rest_base_url: "https://api.veracode.com".to_string(),
             xml_base_url: "https://analysiscenter.veracode.com".to_string(),
@@ -333,18 +397,18 @@ impl VeracodeConfig {
         let (rest_url, xml_url) = match region {
             VeracodeRegion::Commercial => (
                 "https://api.veracode.com",
-                "https://analysiscenter.veracode.com"
+                "https://analysiscenter.veracode.com",
             ),
             VeracodeRegion::European => (
                 "https://api.veracode.eu",
-                "https://analysiscenter.veracode.eu"
+                "https://analysiscenter.veracode.eu",
             ),
             VeracodeRegion::Federal => (
                 "https://api.veracode.us",
-                "https://analysiscenter.veracode.us"
+                "https://analysiscenter.veracode.us",
             ),
         };
-        
+
         self.region = region;
         self.rest_base_url = rest_url.to_string();
         self.xml_base_url = xml_url.to_string();
@@ -372,13 +436,10 @@ mod tests {
 
     #[test]
     fn test_config_creation() {
-        let config = VeracodeConfig::new(
-            "test_api_id".to_string(),
-            "test_api_key".to_string(),
-        );
-        
-        assert_eq!(config.api_id, "test_api_id");
-        assert_eq!(config.api_key, "test_api_key");
+        let config = VeracodeConfig::new("test_api_id".to_string(), "test_api_key".to_string());
+
+        assert_eq!(config.api_id.as_str(), "test_api_id");
+        assert_eq!(config.api_key.as_str(), "test_api_key");
         assert_eq!(config.base_url, "https://api.veracode.com");
         assert_eq!(config.rest_base_url, "https://api.veracode.com");
         assert_eq!(config.xml_base_url, "https://analysiscenter.veracode.com");
@@ -388,11 +449,9 @@ mod tests {
 
     #[test]
     fn test_european_region_config() {
-        let config = VeracodeConfig::new(
-            "test_api_id".to_string(),
-            "test_api_key".to_string(),
-        ).with_region(VeracodeRegion::European);
-        
+        let config = VeracodeConfig::new("test_api_id".to_string(), "test_api_key".to_string())
+            .with_region(VeracodeRegion::European);
+
         assert_eq!(config.base_url, "https://api.veracode.eu");
         assert_eq!(config.rest_base_url, "https://api.veracode.eu");
         assert_eq!(config.xml_base_url, "https://analysiscenter.veracode.eu");
@@ -401,11 +460,9 @@ mod tests {
 
     #[test]
     fn test_federal_region_config() {
-        let config = VeracodeConfig::new(
-            "test_api_id".to_string(),
-            "test_api_key".to_string(),
-        ).with_region(VeracodeRegion::Federal);
-        
+        let config = VeracodeConfig::new("test_api_id".to_string(), "test_api_key".to_string())
+            .with_region(VeracodeRegion::Federal);
+
         assert_eq!(config.base_url, "https://api.veracode.us");
         assert_eq!(config.rest_base_url, "https://api.veracode.us");
         assert_eq!(config.xml_base_url, "https://analysiscenter.veracode.us");
@@ -414,12 +471,82 @@ mod tests {
 
     #[test]
     fn test_certificate_validation_disabled() {
-        let config = VeracodeConfig::new(
-            "test_api_id".to_string(),
-            "test_api_key".to_string(),
-        ).with_certificate_validation_disabled();
-        
+        let config = VeracodeConfig::new("test_api_id".to_string(), "test_api_key".to_string())
+            .with_certificate_validation_disabled();
+
         assert!(!config.validate_certificates);
+    }
+
+    #[test]
+    fn test_secure_api_id_debug_redaction() {
+        let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
+        let debug_output = format!("{:?}", api_id);
+        assert_eq!(debug_output, "[REDACTED]");
+        assert!(!debug_output.contains("test_api_id_123"));
+    }
+
+    #[test]
+    fn test_secure_api_key_debug_redaction() {
+        let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
+        let debug_output = format!("{:?}", api_key);
+        assert_eq!(debug_output, "[REDACTED]");
+        assert!(!debug_output.contains("test_api_key_456"));
+    }
+
+    #[test]
+    fn test_veracode_config_debug_redaction() {
+        let config = VeracodeConfig::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+        let debug_output = format!("{:?}", config);
+
+        // Should show structure but redact actual values
+        assert!(debug_output.contains("VeracodeConfig"));
+        assert!(debug_output.contains("api_id"));
+        assert!(debug_output.contains("api_key"));
+        assert!(debug_output.contains("[REDACTED]"));
+
+        // Should not contain actual credential values
+        assert!(!debug_output.contains("test_api_id_123"));
+        assert!(!debug_output.contains("test_api_key_456"));
+    }
+
+    #[test]
+    fn test_secure_api_id_access_methods() {
+        let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
+
+        // Test as_str method
+        assert_eq!(api_id.as_str(), "test_api_id_123");
+
+        // Test into_string method
+        let string_value = api_id.into_string();
+        assert_eq!(string_value, "test_api_id_123");
+    }
+
+    #[test]
+    fn test_secure_api_key_access_methods() {
+        let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
+
+        // Test as_str method
+        assert_eq!(api_key.as_str(), "test_api_key_456");
+
+        // Test into_string method
+        let string_value = api_key.into_string();
+        assert_eq!(string_value, "test_api_key_456");
+    }
+
+    #[test]
+    fn test_secure_api_credentials_clone() {
+        let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
+        let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
+
+        let cloned_api_id = api_id.clone();
+        let cloned_api_key = api_key.clone();
+
+        // Both should have the same values
+        assert_eq!(api_id.as_str(), cloned_api_id.as_str());
+        assert_eq!(api_key.as_str(), cloned_api_key.as_str());
     }
 
     #[test]
@@ -437,7 +564,7 @@ mod tests {
         fn _test_conversion(error: reqwest::Error) -> VeracodeError {
             VeracodeError::from(error)
         }
-        
+
         // If this compiles, the From trait is implemented correctly
         assert!(true);
     }

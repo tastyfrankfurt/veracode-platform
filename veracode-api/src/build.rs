@@ -4,23 +4,23 @@
 //! allowing you to create, update, delete, and query builds for applications and sandboxes.
 //! These operations use the XML API endpoints (analysiscenter.veracode.com).
 
-use serde::{Deserialize, Serialize};
-use chrono::{DateTime, Utc, NaiveDate};
-use std::collections::HashMap;
+use chrono::{DateTime, NaiveDate, Utc};
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 use crate::{VeracodeClient, VeracodeError};
 
 /// Valid lifecycle stage values for Veracode builds
 pub const LIFECYCLE_STAGES: &[&str] = &[
     "In Development (pre-Alpha)",
-    "Internal or Alpha Testing", 
+    "Internal or Alpha Testing",
     "External or Beta Testing",
     "Deployed",
     "Maintenance",
     "Cannot Disclose",
-    "Not Specified"
+    "Not Specified",
 ];
 
 /// Validate if a lifecycle stage value is valid
@@ -98,7 +98,7 @@ impl BuildStatus {
     }
 
     /// Determine if a build is safe to delete based on its status and deletion policy
-    /// 
+    ///
     /// Deletion Policy Levels:
     /// - 0: Never delete builds
     /// - 1: Delete only "safe" builds (incomplete, failed, cancelled states)
@@ -108,22 +108,23 @@ impl BuildStatus {
             0 => false, // Never delete
             1 => {
                 // Delete only safe builds (incomplete, failed, cancelled states)
-                matches!(self,
-                    BuildStatus::Incomplete |
-                    BuildStatus::NotSubmitted |
-                    BuildStatus::PreScanFailed |
-                    BuildStatus::PreScanCancelled |
-                    BuildStatus::PrescanFailed |
-                    BuildStatus::PrescanCancelled |
-                    BuildStatus::ScanCancelled |
-                    BuildStatus::Failed |
-                    BuildStatus::Cancelled
+                matches!(
+                    self,
+                    BuildStatus::Incomplete
+                        | BuildStatus::NotSubmitted
+                        | BuildStatus::PreScanFailed
+                        | BuildStatus::PreScanCancelled
+                        | BuildStatus::PrescanFailed
+                        | BuildStatus::PrescanCancelled
+                        | BuildStatus::ScanCancelled
+                        | BuildStatus::Failed
+                        | BuildStatus::Cancelled
                 )
-            },
+            }
             2 => {
                 // Delete any build except Results Ready
                 !matches!(self, BuildStatus::ResultsReady)
-            },
+            }
             _ => false, // Invalid policy, default to never delete
         }
     }
@@ -134,7 +135,6 @@ impl std::fmt::Display for BuildStatus {
         write!(f, "{}", self.to_str())
     }
 }
-
 
 /// Represents a Veracode build
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,29 +352,32 @@ impl BuildApi {
     /// A `Result` containing the created build information or an error.
     pub async fn create_build(&self, request: CreateBuildRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/createbuild.do";
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(version) = &request.version {
             query_params.push(("version", version.as_str()));
         }
-        
+
         if let Some(lifecycle_stage) = &request.lifecycle_stage {
             query_params.push(("lifecycle_stage", lifecycle_stage.as_str()));
         }
-        
+
         if let Some(launch_date) = &request.launch_date {
             query_params.push(("launch_date", launch_date.as_str()));
         }
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
 
-        let response = self.client.post_with_query_params(endpoint, &query_params).await?;
-        
+        let response = self
+            .client
+            .post_with_query_params(endpoint, &query_params)
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -390,7 +393,9 @@ impl BuildApi {
             404 => Err(BuildError::ApplicationNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(BuildError::CreationFailed(format!("HTTP {status}: {error_text}")))
+                Err(BuildError::CreationFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -406,33 +411,36 @@ impl BuildApi {
     /// A `Result` containing the updated build information or an error.
     pub async fn update_build(&self, request: UpdateBuildRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/updatebuild.do";
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(build_id) = &request.build_id {
             query_params.push(("build_id", build_id.as_str()));
         }
-        
+
         if let Some(version) = &request.version {
             query_params.push(("version", version.as_str()));
         }
-        
+
         if let Some(lifecycle_stage) = &request.lifecycle_stage {
             query_params.push(("lifecycle_stage", lifecycle_stage.as_str()));
         }
-        
+
         if let Some(launch_date) = &request.launch_date {
             query_params.push(("launch_date", launch_date.as_str()));
         }
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
 
-        let response = self.client.post_with_query_params(endpoint, &query_params).await?;
-        
+        let response = self
+            .client
+            .post_with_query_params(endpoint, &query_params)
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -454,7 +462,9 @@ impl BuildApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(BuildError::UpdateFailed(format!("HTTP {status}: {error_text}")))
+                Err(BuildError::UpdateFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -468,19 +478,25 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the deletion result or an error.
-    pub async fn delete_build(&self, request: DeleteBuildRequest) -> Result<DeleteBuildResult, BuildError> {
+    pub async fn delete_build(
+        &self,
+        request: DeleteBuildRequest,
+    ) -> Result<DeleteBuildResult, BuildError> {
         let endpoint = "/api/5.0/deletebuild.do";
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
 
-        let response = self.client.post_with_query_params(endpoint, &query_params).await?;
-        
+        let response = self
+            .client
+            .post_with_query_params(endpoint, &query_params)
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -502,7 +518,9 @@ impl BuildApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(BuildError::DeletionFailed(format!("HTTP {status}: {error_text}")))
+                Err(BuildError::DeletionFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -518,21 +536,24 @@ impl BuildApi {
     /// A `Result` containing the build information or an error.
     pub async fn get_build_info(&self, request: GetBuildInfoRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/getbuildinfo.do";
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(build_id) = &request.build_id {
             query_params.push(("build_id", build_id.as_str()));
         }
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
 
-        let response = self.client.get_with_query_params(endpoint, &query_params).await?;
-        
+        let response = self
+            .client
+            .get_with_query_params(endpoint, &query_params)
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -554,7 +575,9 @@ impl BuildApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(BuildError::Api(VeracodeError::InvalidResponse(format!("HTTP {status}: {error_text}"))))
+                Err(BuildError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -568,19 +591,25 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build list or an error.
-    pub async fn get_build_list(&self, request: GetBuildListRequest) -> Result<BuildList, BuildError> {
+    pub async fn get_build_list(
+        &self,
+        request: GetBuildListRequest,
+    ) -> Result<BuildList, BuildError> {
         let endpoint = "/api/5.0/getbuildlist.do";
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
 
-        let response = self.client.get_with_query_params(endpoint, &query_params).await?;
-        
+        let response = self
+            .client
+            .get_with_query_params(endpoint, &query_params)
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -602,20 +631,21 @@ impl BuildApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(BuildError::Api(VeracodeError::InvalidResponse(format!("HTTP {status}: {error_text}"))))
+                Err(BuildError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
 
     /// Parse build info XML response
     fn parse_build_info(&self, xml: &str) -> Result<Build, BuildError> {
-        
         // Check if response contains an error element first
         if xml.contains("<error>") {
             let mut reader = Reader::from_str(xml);
             reader.config_mut().trim_text(true);
             let mut buf = Vec::new();
-            
+
             loop {
                 match reader.read_event_into(&mut buf) {
                     Ok(Event::Start(ref e)) if e.name().as_ref() == b"error" => {
@@ -624,10 +654,12 @@ impl BuildApi {
                             if error_msg.contains("Could not find a build") {
                                 return Err(BuildError::BuildNotFound);
                             } else {
-                                return Err(BuildError::Api(VeracodeError::InvalidResponse(error_msg.to_string())));
+                                return Err(BuildError::Api(VeracodeError::InvalidResponse(
+                                    error_msg.to_string(),
+                                )));
                             }
                         }
-                    },
+                    }
                     Ok(Event::Eof) => break,
                     Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
                     _ => {}
@@ -635,10 +667,10 @@ impl BuildApi {
                 buf.clear();
             }
         }
-        
+
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut build = Build {
             build_id: String::new(),
@@ -664,11 +696,10 @@ impl BuildApi {
         };
 
         let mut inside_build = false;
-        
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    
                     match e.name().as_ref() {
                         b"build" => {
                             inside_build = true;
@@ -676,22 +707,36 @@ impl BuildApi {
                                 if let Ok(attr) = attr {
                                     let key = String::from_utf8_lossy(attr.key.as_ref());
                                     let value = String::from_utf8_lossy(&attr.value);
-                                    
+
                                     match key.as_ref() {
                                         "build_id" => build.build_id = value.to_string(),
                                         "app_id" => build.app_id = value.to_string(),
                                         "version" => build.version = Some(value.to_string()),
                                         "app_name" => build.app_name = Some(value.to_string()),
                                         "sandbox_id" => build.sandbox_id = Some(value.to_string()),
-                                        "sandbox_name" => build.sandbox_name = Some(value.to_string()),
-                                        "lifecycle_stage" => build.lifecycle_stage = Some(value.to_string()),
+                                        "sandbox_name" => {
+                                            build.sandbox_name = Some(value.to_string())
+                                        }
+                                        "lifecycle_stage" => {
+                                            build.lifecycle_stage = Some(value.to_string())
+                                        }
                                         "submitter" => build.submitter = Some(value.to_string()),
                                         "platform" => build.platform = Some(value.to_string()),
-                                        "analysis_unit" => build.analysis_unit = Some(value.to_string()),
-                                        "policy_name" => build.policy_name = Some(value.to_string()),
-                                        "policy_version" => build.policy_version = Some(value.to_string()),
-                                        "policy_compliance_status" => build.policy_compliance_status = Some(value.to_string()),
-                                        "rules_status" => build.rules_status = Some(value.to_string()),
+                                        "analysis_unit" => {
+                                            build.analysis_unit = Some(value.to_string())
+                                        }
+                                        "policy_name" => {
+                                            build.policy_name = Some(value.to_string())
+                                        }
+                                        "policy_version" => {
+                                            build.policy_version = Some(value.to_string())
+                                        }
+                                        "policy_compliance_status" => {
+                                            build.policy_compliance_status = Some(value.to_string())
+                                        }
+                                        "rules_status" => {
+                                            build.rules_status = Some(value.to_string())
+                                        }
                                         "grace_period_expired" => {
                                             build.grace_period_expired = value.parse::<bool>().ok();
                                         }
@@ -702,17 +747,24 @@ impl BuildApi {
                                             build.legacy_scan_engine = value.parse::<bool>().ok();
                                         }
                                         "launch_date" => {
-                                            if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y") {
+                                            if let Ok(date) =
+                                                NaiveDate::parse_from_str(&value, "%m/%d/%Y")
+                                            {
                                                 build.launch_date = Some(date);
                                             }
                                         }
                                         "policy_updated_date" => {
-                                            if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(&value) {
-                                                build.policy_updated_date = Some(datetime.with_timezone(&Utc));
+                                            if let Ok(datetime) =
+                                                chrono::DateTime::parse_from_rfc3339(&value)
+                                            {
+                                                build.policy_updated_date =
+                                                    Some(datetime.with_timezone(&Utc));
                                             }
                                         }
                                         _ => {
-                                            build.attributes.insert(key.to_string(), value.to_string());
+                                            build
+                                                .attributes
+                                                .insert(key.to_string(), value.to_string());
                                         }
                                     }
                                 }
@@ -724,16 +776,21 @@ impl BuildApi {
                                 if let Ok(attr) = attr {
                                     let key = String::from_utf8_lossy(attr.key.as_ref());
                                     let value = String::from_utf8_lossy(&attr.value);
-                                    
+
                                     // Store all analysis_unit attributes, especially status
                                     match key.as_ref() {
                                         "status" => {
                                             // Store the analysis_unit status as the primary status
-                                            build.attributes.insert("status".to_string(), value.to_string());
+                                            build
+                                                .attributes
+                                                .insert("status".to_string(), value.to_string());
                                         }
                                         _ => {
                                             // Store other analysis_unit attributes with prefix
-                                            build.attributes.insert(format!("analysis_{}", key), value.to_string());
+                                            build.attributes.insert(
+                                                format!("analysis_{}", key),
+                                                value.to_string(),
+                                            );
                                         }
                                     }
                                 }
@@ -749,13 +806,17 @@ impl BuildApi {
                             if let Ok(attr) = attr {
                                 let key = String::from_utf8_lossy(attr.key.as_ref());
                                 let value = String::from_utf8_lossy(&attr.value);
-                                
+
                                 match key.as_ref() {
                                     "status" => {
-                                        build.attributes.insert("status".to_string(), value.to_string());
+                                        build
+                                            .attributes
+                                            .insert("status".to_string(), value.to_string());
                                     }
                                     _ => {
-                                        build.attributes.insert(format!("analysis_{}", key), value.to_string());
+                                        build
+                                            .attributes
+                                            .insert(format!("analysis_{}", key), value.to_string());
                                     }
                                 }
                             }
@@ -775,9 +836,10 @@ impl BuildApi {
         }
 
         if build.build_id.is_empty() {
-            return Err(BuildError::XmlParsingError("No build information found in response".to_string()));
+            return Err(BuildError::XmlParsingError(
+                "No build information found in response".to_string(),
+            ));
         }
-
 
         Ok(build)
     }
@@ -786,7 +848,7 @@ impl BuildApi {
     fn parse_build_list(&self, xml: &str) -> Result<BuildList, BuildError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut build_list = BuildList {
             account_id: None,
@@ -797,98 +859,109 @@ impl BuildApi {
 
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) => {
-                    match e.name().as_ref() {
-                        b"buildlist" => {
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    let key = String::from_utf8_lossy(attr.key.as_ref());
-                                    let value = String::from_utf8_lossy(&attr.value);
-                                    
-                                    match key.as_ref() {
-                                        "account_id" => build_list.account_id = Some(value.to_string()),
-                                        "app_id" => build_list.app_id = value.to_string(),
-                                        "app_name" => build_list.app_name = Some(value.to_string()),
-                                        _ => {}
-                                    }
-                                }
-                            }
-                        }
-                        b"build" => {
-                            let mut build = Build {
-                                build_id: String::new(),
-                                app_id: build_list.app_id.clone(),
-                                version: None,
-                                app_name: build_list.app_name.clone(),
-                                sandbox_id: None,
-                                sandbox_name: None,
-                                lifecycle_stage: None,
-                                launch_date: None,
-                                submitter: None,
-                                platform: None,
-                                analysis_unit: None,
-                                policy_name: None,
-                                policy_version: None,
-                                policy_compliance_status: None,
-                                rules_status: None,
-                                grace_period_expired: None,
-                                scan_overdue: None,
-                                policy_updated_date: None,
-                                legacy_scan_engine: None,
-                                attributes: HashMap::new(),
-                            };
+                Ok(Event::Start(ref e)) => match e.name().as_ref() {
+                    b"buildlist" => {
+                        for attr in e.attributes() {
+                            if let Ok(attr) = attr {
+                                let key = String::from_utf8_lossy(attr.key.as_ref());
+                                let value = String::from_utf8_lossy(&attr.value);
 
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    let key = String::from_utf8_lossy(attr.key.as_ref());
-                                    let value = String::from_utf8_lossy(&attr.value);
-                                    
-                                    match key.as_ref() {
-                                        "build_id" => build.build_id = value.to_string(),
-                                        "version" => build.version = Some(value.to_string()),
-                                        "sandbox_id" => build.sandbox_id = Some(value.to_string()),
-                                        "sandbox_name" => build.sandbox_name = Some(value.to_string()),
-                                        "lifecycle_stage" => build.lifecycle_stage = Some(value.to_string()),
-                                        "submitter" => build.submitter = Some(value.to_string()),
-                                        "platform" => build.platform = Some(value.to_string()),
-                                        "analysis_unit" => build.analysis_unit = Some(value.to_string()),
-                                        "policy_name" => build.policy_name = Some(value.to_string()),
-                                        "policy_version" => build.policy_version = Some(value.to_string()),
-                                        "policy_compliance_status" => build.policy_compliance_status = Some(value.to_string()),
-                                        "rules_status" => build.rules_status = Some(value.to_string()),
-                                        "grace_period_expired" => {
-                                            build.grace_period_expired = value.parse::<bool>().ok();
+                                match key.as_ref() {
+                                    "account_id" => build_list.account_id = Some(value.to_string()),
+                                    "app_id" => build_list.app_id = value.to_string(),
+                                    "app_name" => build_list.app_name = Some(value.to_string()),
+                                    _ => {}
+                                }
+                            }
+                        }
+                    }
+                    b"build" => {
+                        let mut build = Build {
+                            build_id: String::new(),
+                            app_id: build_list.app_id.clone(),
+                            version: None,
+                            app_name: build_list.app_name.clone(),
+                            sandbox_id: None,
+                            sandbox_name: None,
+                            lifecycle_stage: None,
+                            launch_date: None,
+                            submitter: None,
+                            platform: None,
+                            analysis_unit: None,
+                            policy_name: None,
+                            policy_version: None,
+                            policy_compliance_status: None,
+                            rules_status: None,
+                            grace_period_expired: None,
+                            scan_overdue: None,
+                            policy_updated_date: None,
+                            legacy_scan_engine: None,
+                            attributes: HashMap::new(),
+                        };
+
+                        for attr in e.attributes() {
+                            if let Ok(attr) = attr {
+                                let key = String::from_utf8_lossy(attr.key.as_ref());
+                                let value = String::from_utf8_lossy(&attr.value);
+
+                                match key.as_ref() {
+                                    "build_id" => build.build_id = value.to_string(),
+                                    "version" => build.version = Some(value.to_string()),
+                                    "sandbox_id" => build.sandbox_id = Some(value.to_string()),
+                                    "sandbox_name" => build.sandbox_name = Some(value.to_string()),
+                                    "lifecycle_stage" => {
+                                        build.lifecycle_stage = Some(value.to_string())
+                                    }
+                                    "submitter" => build.submitter = Some(value.to_string()),
+                                    "platform" => build.platform = Some(value.to_string()),
+                                    "analysis_unit" => {
+                                        build.analysis_unit = Some(value.to_string())
+                                    }
+                                    "policy_name" => build.policy_name = Some(value.to_string()),
+                                    "policy_version" => {
+                                        build.policy_version = Some(value.to_string())
+                                    }
+                                    "policy_compliance_status" => {
+                                        build.policy_compliance_status = Some(value.to_string())
+                                    }
+                                    "rules_status" => build.rules_status = Some(value.to_string()),
+                                    "grace_period_expired" => {
+                                        build.grace_period_expired = value.parse::<bool>().ok();
+                                    }
+                                    "scan_overdue" => {
+                                        build.scan_overdue = value.parse::<bool>().ok();
+                                    }
+                                    "legacy_scan_engine" => {
+                                        build.legacy_scan_engine = value.parse::<bool>().ok();
+                                    }
+                                    "launch_date" => {
+                                        if let Ok(date) =
+                                            NaiveDate::parse_from_str(&value, "%m/%d/%Y")
+                                        {
+                                            build.launch_date = Some(date);
                                         }
-                                        "scan_overdue" => {
-                                            build.scan_overdue = value.parse::<bool>().ok();
+                                    }
+                                    "policy_updated_date" => {
+                                        if let Ok(datetime) =
+                                            chrono::DateTime::parse_from_rfc3339(&value)
+                                        {
+                                            build.policy_updated_date =
+                                                Some(datetime.with_timezone(&Utc));
                                         }
-                                        "legacy_scan_engine" => {
-                                            build.legacy_scan_engine = value.parse::<bool>().ok();
-                                        }
-                                        "launch_date" => {
-                                            if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y") {
-                                                build.launch_date = Some(date);
-                                            }
-                                        }
-                                        "policy_updated_date" => {
-                                            if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(&value) {
-                                                build.policy_updated_date = Some(datetime.with_timezone(&Utc));
-                                            }
-                                        }
-                                        _ => {
-                                            build.attributes.insert(key.to_string(), value.to_string());
-                                        }
+                                    }
+                                    _ => {
+                                        build.attributes.insert(key.to_string(), value.to_string());
                                     }
                                 }
                             }
-                            
-                            if !build.build_id.is_empty() {
-                                build_list.builds.push(build);
-                            }
                         }
-                        _ => {}
+
+                        if !build.build_id.is_empty() {
+                            build_list.builds.push(build);
+                        }
                     }
-                }
+                    _ => {}
+                },
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
                 _ => {}
@@ -903,7 +976,7 @@ impl BuildApi {
     fn parse_delete_result(&self, xml: &str) -> Result<DeleteBuildResult, BuildError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut result = String::new();
 
@@ -928,7 +1001,9 @@ impl BuildApi {
         }
 
         if result.is_empty() {
-            return Err(BuildError::XmlParsingError("No result found in delete response".to_string()));
+            return Err(BuildError::XmlParsingError(
+                "No result found in delete response".to_string(),
+            ));
         }
 
         Ok(DeleteBuildResult { result })
@@ -947,7 +1022,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the created build information or an error.
-    pub async fn create_simple_build(&self, app_id: &str, version: Option<&str>) -> Result<Build, BuildError> {
+    pub async fn create_simple_build(
+        &self,
+        app_id: &str,
+        version: Option<&str>,
+    ) -> Result<Build, BuildError> {
         let request = CreateBuildRequest {
             app_id: app_id.to_string(),
             version: version.map(|s| s.to_string()),
@@ -955,7 +1034,7 @@ impl BuildApi {
             launch_date: None,
             sandbox_id: None,
         };
-        
+
         self.create_build(request).await
     }
 
@@ -970,7 +1049,12 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the created build information or an error.
-    pub async fn create_sandbox_build(&self, app_id: &str, sandbox_id: &str, version: Option<&str>) -> Result<Build, BuildError> {
+    pub async fn create_sandbox_build(
+        &self,
+        app_id: &str,
+        sandbox_id: &str,
+        version: Option<&str>,
+    ) -> Result<Build, BuildError> {
         let request = CreateBuildRequest {
             app_id: app_id.to_string(),
             version: version.map(|s| s.to_string()),
@@ -978,7 +1062,7 @@ impl BuildApi {
             launch_date: None,
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
+
         self.create_build(request).await
     }
 
@@ -996,7 +1080,7 @@ impl BuildApi {
             app_id: app_id.to_string(),
             sandbox_id: None,
         };
-        
+
         self.delete_build(request).await
     }
 
@@ -1010,12 +1094,16 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the deletion result or an error.
-    pub async fn delete_sandbox_build(&self, app_id: &str, sandbox_id: &str) -> Result<DeleteBuildResult, BuildError> {
+    pub async fn delete_sandbox_build(
+        &self,
+        app_id: &str,
+        sandbox_id: &str,
+    ) -> Result<DeleteBuildResult, BuildError> {
         let request = DeleteBuildRequest {
             app_id: app_id.to_string(),
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
+
         self.delete_build(request).await
     }
 
@@ -1034,7 +1122,7 @@ impl BuildApi {
             build_id: None,
             sandbox_id: None,
         };
-        
+
         self.get_build_info(request).await
     }
 
@@ -1048,13 +1136,17 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
-    pub async fn get_sandbox_build_info(&self, app_id: &str, sandbox_id: &str) -> Result<Build, BuildError> {
+    pub async fn get_sandbox_build_info(
+        &self,
+        app_id: &str,
+        sandbox_id: &str,
+    ) -> Result<Build, BuildError> {
         let request = GetBuildInfoRequest {
             app_id: app_id.to_string(),
             build_id: None,
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
+
         self.get_build_info(request).await
     }
 
@@ -1072,7 +1164,7 @@ impl BuildApi {
             app_id: app_id.to_string(),
             sandbox_id: None,
         };
-        
+
         self.get_build_list(request).await
     }
 
@@ -1086,12 +1178,16 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build list or an error.
-    pub async fn get_sandbox_builds(&self, app_id: &str, sandbox_id: &str) -> Result<BuildList, BuildError> {
+    pub async fn get_sandbox_builds(
+        &self,
+        app_id: &str,
+        sandbox_id: &str,
+    ) -> Result<BuildList, BuildError> {
         let request = GetBuildListRequest {
             app_id: app_id.to_string(),
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
+
         self.get_build_list(request).await
     }
 }
@@ -1110,10 +1206,13 @@ mod tests {
             launch_date: Some("12/31/2024".to_string()),
             sandbox_id: None,
         };
-        
+
         assert_eq!(request.app_id, "123");
         assert_eq!(request.version, Some("1.0.0".to_string()));
-        assert_eq!(request.lifecycle_stage, Some("In Development (pre-Alpha)".to_string()));
+        assert_eq!(
+            request.lifecycle_stage,
+            Some("In Development (pre-Alpha)".to_string())
+        );
     }
 
     #[test]
@@ -1126,7 +1225,7 @@ mod tests {
             launch_date: None,
             sandbox_id: Some("789".to_string()),
         };
-        
+
         assert_eq!(request.app_id, "123");
         assert_eq!(request.build_id, Some("456".to_string()));
         assert_eq!(request.sandbox_id, Some("789".to_string()));
@@ -1142,14 +1241,14 @@ mod tests {
         assert!(is_valid_lifecycle_stage("Maintenance"));
         assert!(is_valid_lifecycle_stage("Cannot Disclose"));
         assert!(is_valid_lifecycle_stage("Not Specified"));
-        
+
         // Test invalid lifecycle stages
         assert!(!is_valid_lifecycle_stage("In Development"));
         assert!(!is_valid_lifecycle_stage("Development"));
         assert!(!is_valid_lifecycle_stage("QA"));
         assert!(!is_valid_lifecycle_stage("Production"));
         assert!(!is_valid_lifecycle_stage(""));
-        
+
         // Test default
         assert_eq!(default_lifecycle_stage(), "In Development (pre-Alpha)");
         assert!(is_valid_lifecycle_stage(default_lifecycle_stage()));
@@ -1164,7 +1263,10 @@ mod tests {
         assert_eq!(error.to_string(), "Invalid parameter: Invalid app_id");
 
         let error = BuildError::CreationFailed("Build creation failed".to_string());
-        assert_eq!(error.to_string(), "Build creation failed: Build creation failed");
+        assert_eq!(
+            error.to_string(),
+            "Build creation failed: Build creation failed"
+        );
     }
 
     #[tokio::test]
@@ -1173,7 +1275,7 @@ mod tests {
             let config = VeracodeConfig::new("test".to_string(), "test".to_string());
             let client = VeracodeClient::new(config)?;
             let api = client.build_api();
-            
+
             // Test that the method signatures exist and compile
             let create_request = CreateBuildRequest {
                 app_id: "123".to_string(),
@@ -1182,7 +1284,7 @@ mod tests {
                 launch_date: None,
                 sandbox_id: None,
             };
-            
+
             // These calls won't actually execute due to test environment,
             // but they validate the method signatures exist
             let _: Result<Build, _> = api.create_build(create_request).await;
@@ -1191,10 +1293,10 @@ mod tests {
             let _: Result<DeleteBuildResult, _> = api.delete_app_build("123").await;
             let _: Result<Build, _> = api.get_app_build_info("123").await;
             let _: Result<BuildList, _> = api.get_app_builds("123").await;
-            
+
             Ok(())
         }
-        
+
         // If this compiles, the methods have correct signatures
         assert!(true);
     }
@@ -1202,9 +1304,18 @@ mod tests {
     #[test]
     fn test_build_status_from_str() {
         assert_eq!(BuildStatus::from_str("Incomplete"), BuildStatus::Incomplete);
-        assert_eq!(BuildStatus::from_str("Results Ready"), BuildStatus::ResultsReady);
-        assert_eq!(BuildStatus::from_str("Pre-Scan Failed"), BuildStatus::PreScanFailed);
-        assert_eq!(BuildStatus::from_str("Unknown Status"), BuildStatus::Unknown("Unknown Status".to_string()));
+        assert_eq!(
+            BuildStatus::from_str("Results Ready"),
+            BuildStatus::ResultsReady
+        );
+        assert_eq!(
+            BuildStatus::from_str("Pre-Scan Failed"),
+            BuildStatus::PreScanFailed
+        );
+        assert_eq!(
+            BuildStatus::from_str("Unknown Status"),
+            BuildStatus::Unknown("Unknown Status".to_string())
+        );
     }
 
     #[test]
@@ -1212,7 +1323,10 @@ mod tests {
         assert_eq!(BuildStatus::Incomplete.to_str(), "Incomplete");
         assert_eq!(BuildStatus::ResultsReady.to_str(), "Results Ready");
         assert_eq!(BuildStatus::PreScanFailed.to_str(), "Pre-Scan Failed");
-        assert_eq!(BuildStatus::Unknown("Custom".to_string()).to_str(), "Custom");
+        assert_eq!(
+            BuildStatus::Unknown("Custom".to_string()).to_str(),
+            "Custom"
+        );
     }
 
     #[test]
@@ -1231,7 +1345,7 @@ mod tests {
         assert!(BuildStatus::PreScanFailed.is_safe_to_delete(1));
         assert!(BuildStatus::Failed.is_safe_to_delete(1));
         assert!(BuildStatus::Cancelled.is_safe_to_delete(1));
-        
+
         // Should not delete active or successful builds
         assert!(!BuildStatus::ResultsReady.is_safe_to_delete(1));
         assert!(!BuildStatus::ScanInProcess.is_safe_to_delete(1));
@@ -1245,7 +1359,7 @@ mod tests {
         assert!(BuildStatus::Failed.is_safe_to_delete(2));
         assert!(BuildStatus::ScanInProcess.is_safe_to_delete(2));
         assert!(BuildStatus::PreScanSuccess.is_safe_to_delete(2));
-        
+
         // Should not delete Results Ready
         assert!(!BuildStatus::ResultsReady.is_safe_to_delete(2));
     }
@@ -1256,5 +1370,4 @@ mod tests {
         assert!(!BuildStatus::Incomplete.is_safe_to_delete(3));
         assert!(!BuildStatus::Failed.is_safe_to_delete(255));
     }
-
 }

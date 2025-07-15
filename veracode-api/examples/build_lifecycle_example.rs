@@ -17,13 +17,11 @@
 //! - "Cannot Disclose"
 //! - "Not Specified"
 
-use veracode_platform::{
-    VeracodeConfig, VeracodeClient, VeracodeRegion,
-    CreateBuildRequest, UpdateBuildRequest, DeleteBuildRequest,
-    GetBuildInfoRequest, GetBuildListRequest,
-    app::BusinessCriticality,
-};
 use std::env;
+use veracode_platform::{
+    CreateBuildRequest, DeleteBuildRequest, GetBuildInfoRequest, GetBuildListRequest,
+    UpdateBuildRequest, VeracodeClient, VeracodeConfig, VeracodeRegion, app::BusinessCriticality,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -31,14 +29,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("=========================================\n");
 
     // Check for required environment variables
-    let api_id = env::var("VERACODE_API_ID")
-        .expect("VERACODE_API_ID environment variable is required");
-    let api_key = env::var("VERACODE_API_KEY")
-        .expect("VERACODE_API_KEY environment variable is required");
+    let api_id =
+        env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable is required");
+    let api_key =
+        env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable is required");
 
     // Create configuration
-    let config = VeracodeConfig::new(api_id, api_key)
-        .with_region(VeracodeRegion::Commercial);
+    let config = VeracodeConfig::new(api_id, api_key).with_region(VeracodeRegion::Commercial);
 
     println!("🔧 Creating Veracode client...");
     let client = VeracodeClient::new(config)?;
@@ -52,58 +49,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("\n📱 Setting up test application and sandbox...");
     let workflow = client.workflow();
-    
-    match workflow.ensure_app_and_sandbox(
-        test_app_name,
-        test_sandbox_name,
-        BusinessCriticality::Low,
-    ).await {
+
+    match workflow
+        .ensure_app_and_sandbox(test_app_name, test_sandbox_name, BusinessCriticality::Low)
+        .await
+    {
         Ok((app, sandbox, app_id, sandbox_id)) => {
             println!("   ✅ Test environment ready:");
-            println!("      - App: {} (ID: {})", app.profile.as_ref().unwrap().name, app_id);
+            println!(
+                "      - App: {} (ID: {})",
+                app.profile.as_ref().unwrap().name,
+                app_id
+            );
             println!("      - Sandbox: {} (ID: {})", sandbox.name, sandbox_id);
 
             // Example 1: Create builds
             println!("\n🏗️  Example 1: Creating Builds");
             println!("=============================");
-            
+
             demonstrate_create_builds(&build_api, &app_id, &sandbox_id).await?;
 
             // Example 2: Get build information
             println!("\n📊 Example 2: Getting Build Information");
             println!("======================================");
-            
+
             demonstrate_get_build_info(&build_api, &app_id, &sandbox_id).await?;
 
             // Example 3: List builds
             println!("\n📋 Example 3: Listing Builds");
             println!("===========================");
-            
+
             demonstrate_list_builds(&build_api, &app_id, &sandbox_id).await?;
 
             // Example 4: Update builds
             println!("\n✏️  Example 4: Updating Builds");
             println!("=============================");
-            
+
             demonstrate_update_builds(&build_api, &app_id, &sandbox_id).await?;
 
             // Example 5: Delete builds
             println!("\n🗑️  Example 5: Deleting Builds");
             println!("=============================");
-            
+
             demonstrate_delete_builds(&build_api, &app_id, &sandbox_id).await?;
 
             // Example 6: Convenience methods
             println!("\n🛠️  Example 6: Convenience Methods");
             println!("=================================");
-            
-            demonstrate_convenience_methods(&build_api, &app_id, &sandbox_id).await?;
 
+            demonstrate_convenience_methods(&build_api, &app_id, &sandbox_id).await?;
         }
         Err(e) => {
             println!("   ⚠️  Could not create test environment: {e}");
             println!("   💡 Demonstrating with mock data instead...");
-            
+
             // Demonstrate API methods with mock data
             demonstrate_mock_scenarios(&build_api).await?;
         }
@@ -116,20 +115,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("     • create_build() - Create build with full options");
     println!("     • create_simple_build() - Create build with minimal parameters");
     println!("     • create_sandbox_build() - Create build in sandbox");
-    
+
     println!("\n  📊 Information Operations:");
     println!("     • get_build_info() - Get detailed build information");
     println!("     • get_app_build_info() - Get application build info");
     println!("     • get_sandbox_build_info() - Get sandbox build info");
-    
+
     println!("\n  📋 List Operations:");
     println!("     • get_build_list() - Get build list with options");
     println!("     • get_app_builds() - Get all application builds");
     println!("     • get_sandbox_builds() - Get all sandbox builds");
-    
+
     println!("\n  ✏️  Update Operations:");
     println!("     • update_build() - Update build with full options");
-    
+
     println!("\n  🗑️  Delete Operations:");
     println!("     • delete_build() - Delete build with options");
     println!("     • delete_app_build() - Delete application build");
@@ -161,15 +160,17 @@ async fn demonstrate_create_builds(
     app_id: &str,
     sandbox_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   🏗️  Creating application build...");
-    
+
     // Create a simple application build
     match build_api.create_simple_build(app_id, Some("1.0.0")).await {
         Ok(build) => {
             println!("   ✅ Application build created successfully:");
             println!("      - Build ID: {}", build.build_id);
-            println!("      - Version: {}", build.version.unwrap_or("None".to_string()));
+            println!(
+                "      - Version: {}",
+                build.version.unwrap_or("None".to_string())
+            );
             println!("      - App ID: {}", build.app_id);
             if let Some(submitter) = build.submitter {
                 println!("      - Submitter: {}", submitter);
@@ -182,7 +183,7 @@ async fn demonstrate_create_builds(
     }
 
     println!("\n   🧪 Creating sandbox build...");
-    
+
     // Create a sandbox build with more options
     let create_request = CreateBuildRequest {
         app_id: app_id.to_string(),
@@ -196,9 +197,18 @@ async fn demonstrate_create_builds(
         Ok(build) => {
             println!("   ✅ Sandbox build created successfully:");
             println!("      - Build ID: {}", build.build_id);
-            println!("      - Version: {}", build.version.unwrap_or("None".to_string()));
-            println!("      - Sandbox ID: {}", build.sandbox_id.unwrap_or("None".to_string()));
-            println!("      - Lifecycle Stage: {}", build.lifecycle_stage.unwrap_or("None".to_string()));
+            println!(
+                "      - Version: {}",
+                build.version.unwrap_or("None".to_string())
+            );
+            println!(
+                "      - Sandbox ID: {}",
+                build.sandbox_id.unwrap_or("None".to_string())
+            );
+            println!(
+                "      - Lifecycle Stage: {}",
+                build.lifecycle_stage.unwrap_or("None".to_string())
+            );
         }
         Err(e) => {
             println!("   ⚠️  Sandbox build creation: {e}");
@@ -207,13 +217,19 @@ async fn demonstrate_create_builds(
     }
 
     println!("\n   🔧 Testing convenience method...");
-    
+
     // Test convenience method
-    match build_api.create_sandbox_build(app_id, sandbox_id, Some("convenience-1.0")).await {
+    match build_api
+        .create_sandbox_build(app_id, sandbox_id, Some("convenience-1.0"))
+        .await
+    {
         Ok(build) => {
             println!("   ✅ Convenience method build created:");
             println!("      - Build ID: {}", build.build_id);
-            println!("      - Version: {}", build.version.unwrap_or("None".to_string()));
+            println!(
+                "      - Version: {}",
+                build.version.unwrap_or("None".to_string())
+            );
         }
         Err(e) => {
             println!("   ⚠️  Convenience method: {e}");
@@ -229,9 +245,8 @@ async fn demonstrate_get_build_info(
     app_id: &str,
     sandbox_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   📊 Getting application build info...");
-    
+
     // Get application build info
     match build_api.get_app_build_info(app_id).await {
         Ok(build) => {
@@ -260,13 +275,16 @@ async fn demonstrate_get_build_info(
     }
 
     println!("\n   🧪 Getting sandbox build info...");
-    
+
     // Get sandbox build info
     match build_api.get_sandbox_build_info(app_id, sandbox_id).await {
         Ok(build) => {
             println!("   ✅ Sandbox build info retrieved:");
             println!("      - Build ID: {}", build.build_id);
-            println!("      - Sandbox ID: {}", build.sandbox_id.unwrap_or("None".to_string()));
+            println!(
+                "      - Sandbox ID: {}",
+                build.sandbox_id.unwrap_or("None".to_string())
+            );
             if let Some(version) = build.version {
                 println!("      - Version: {}", version);
             }
@@ -283,7 +301,7 @@ async fn demonstrate_get_build_info(
     }
 
     println!("\n   🎯 Getting specific build info...");
-    
+
     // Get specific build info with full request
     let get_request = GetBuildInfoRequest {
         app_id: app_id.to_string(),
@@ -296,7 +314,7 @@ async fn demonstrate_get_build_info(
             println!("   ✅ Specific build info retrieved:");
             println!("      - Build ID: {}", build.build_id);
             println!("      - Attributes count: {}", build.attributes.len());
-            
+
             // Show additional attributes if any
             if !build.attributes.is_empty() {
                 println!("      - Additional attributes:");
@@ -319,18 +337,23 @@ async fn demonstrate_list_builds(
     app_id: &str,
     sandbox_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   📋 Listing application builds...");
-    
+
     // List application builds
     match build_api.get_app_builds(app_id).await {
         Ok(build_list) => {
             println!("   ✅ Application builds retrieved:");
-            println!("      - Account ID: {}", build_list.account_id.unwrap_or("None".to_string()));
+            println!(
+                "      - Account ID: {}",
+                build_list.account_id.unwrap_or("None".to_string())
+            );
             println!("      - App ID: {}", build_list.app_id);
-            println!("      - App Name: {}", build_list.app_name.unwrap_or("None".to_string()));
+            println!(
+                "      - App Name: {}",
+                build_list.app_name.unwrap_or("None".to_string())
+            );
             println!("      - Total builds: {}", build_list.builds.len());
-            
+
             // Show first few builds
             for (i, build) in build_list.builds.iter().take(3).enumerate() {
                 println!("      Build {}:", i + 1);
@@ -349,20 +372,23 @@ async fn demonstrate_list_builds(
     }
 
     println!("\n   🧪 Listing sandbox builds...");
-    
+
     // List sandbox builds
     match build_api.get_sandbox_builds(app_id, sandbox_id).await {
         Ok(build_list) => {
             println!("   ✅ Sandbox builds retrieved:");
             println!("      - App ID: {}", build_list.app_id);
             println!("      - Total sandbox builds: {}", build_list.builds.len());
-            
+
             // Show sandbox-specific builds
             for (i, build) in build_list.builds.iter().take(3).enumerate() {
                 if build.sandbox_id.is_some() {
                     println!("      Sandbox Build {}:", i + 1);
                     println!("        - Build ID: {}", build.build_id);
-                    println!("        - Sandbox ID: {}", build.sandbox_id.as_ref().unwrap());
+                    println!(
+                        "        - Sandbox ID: {}",
+                        build.sandbox_id.as_ref().unwrap()
+                    );
                     if let Some(version) = &build.version {
                         println!("        - Version: {}", version);
                     }
@@ -375,7 +401,7 @@ async fn demonstrate_list_builds(
     }
 
     println!("\n   🎯 Custom build list request...");
-    
+
     // Custom build list request
     let list_request = GetBuildListRequest {
         app_id: app_id.to_string(),
@@ -386,11 +412,19 @@ async fn demonstrate_list_builds(
         Ok(build_list) => {
             println!("   ✅ Custom build list retrieved:");
             println!("      - Total builds (all): {}", build_list.builds.len());
-            
+
             // Categorize builds
-            let app_builds = build_list.builds.iter().filter(|b| b.sandbox_id.is_none()).count();
-            let sandbox_builds = build_list.builds.iter().filter(|b| b.sandbox_id.is_some()).count();
-            
+            let app_builds = build_list
+                .builds
+                .iter()
+                .filter(|b| b.sandbox_id.is_none())
+                .count();
+            let sandbox_builds = build_list
+                .builds
+                .iter()
+                .filter(|b| b.sandbox_id.is_some())
+                .count();
+
             println!("      - Application builds: {}", app_builds);
             println!("      - Sandbox builds: {}", sandbox_builds);
         }
@@ -408,9 +442,8 @@ async fn demonstrate_update_builds(
     app_id: &str,
     sandbox_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   ✏️  Updating application build...");
-    
+
     // Update application build
     let update_request = UpdateBuildRequest {
         app_id: app_id.to_string(),
@@ -425,10 +458,19 @@ async fn demonstrate_update_builds(
         Ok(build) => {
             println!("   ✅ Application build updated successfully:");
             println!("      - Build ID: {}", build.build_id);
-            println!("      - New Version: {}", build.version.unwrap_or("None".to_string()));
-            println!("      - New Lifecycle: {}", build.lifecycle_stage.unwrap_or("None".to_string()));
+            println!(
+                "      - New Version: {}",
+                build.version.unwrap_or("None".to_string())
+            );
+            println!(
+                "      - New Lifecycle: {}",
+                build.lifecycle_stage.unwrap_or("None".to_string())
+            );
             if let Some(launch_date) = build.launch_date {
-                println!("      - New Launch Date: {}", launch_date.format("%m/%d/%Y"));
+                println!(
+                    "      - New Launch Date: {}",
+                    launch_date.format("%m/%d/%Y")
+                );
             }
         }
         Err(e) => {
@@ -438,7 +480,7 @@ async fn demonstrate_update_builds(
     }
 
     println!("\n   🧪 Updating sandbox build...");
-    
+
     // Update sandbox build
     let sandbox_update_request = UpdateBuildRequest {
         app_id: app_id.to_string(),
@@ -453,9 +495,18 @@ async fn demonstrate_update_builds(
         Ok(build) => {
             println!("   ✅ Sandbox build updated successfully:");
             println!("      - Build ID: {}", build.build_id);
-            println!("      - New Version: {}", build.version.unwrap_or("None".to_string()));
-            println!("      - Sandbox ID: {}", build.sandbox_id.unwrap_or("None".to_string()));
-            println!("      - New Lifecycle: {}", build.lifecycle_stage.unwrap_or("None".to_string()));
+            println!(
+                "      - New Version: {}",
+                build.version.unwrap_or("None".to_string())
+            );
+            println!(
+                "      - Sandbox ID: {}",
+                build.sandbox_id.unwrap_or("None".to_string())
+            );
+            println!(
+                "      - New Lifecycle: {}",
+                build.lifecycle_stage.unwrap_or("None".to_string())
+            );
         }
         Err(e) => {
             println!("   ⚠️  Sandbox build update: {e}");
@@ -472,9 +523,8 @@ async fn demonstrate_delete_builds(
     app_id: &str,
     sandbox_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   🗑️  Deleting sandbox build...");
-    
+
     // Delete sandbox build first (safer)
     match build_api.delete_sandbox_build(app_id, sandbox_id).await {
         Ok(result) => {
@@ -488,7 +538,7 @@ async fn demonstrate_delete_builds(
     }
 
     println!("\n   🗑️  Testing application build deletion...");
-    
+
     // Test application build deletion (be careful in real scenarios)
     let delete_request = DeleteBuildRequest {
         app_id: app_id.to_string(),
@@ -515,42 +565,53 @@ async fn demonstrate_convenience_methods(
     app_id: &str,
     sandbox_id: &str,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   🛠️  Testing convenience methods:");
-    
+
     println!("      📦 Simple build creation...");
-    match build_api.create_simple_build(app_id, Some("convenience-test")).await {
+    match build_api
+        .create_simple_build(app_id, Some("convenience-test"))
+        .await
+    {
         Ok(_) => println!("         ✅ Simple build creation works"),
         Err(e) => println!("         ⚠️  Simple build creation: {e}"),
     }
-    
+
     println!("      📦 Sandbox build creation...");
-    match build_api.create_sandbox_build(app_id, sandbox_id, Some("sandbox-convenience")).await {
+    match build_api
+        .create_sandbox_build(app_id, sandbox_id, Some("sandbox-convenience"))
+        .await
+    {
         Ok(_) => println!("         ✅ Sandbox build creation works"),
         Err(e) => println!("         ⚠️  Sandbox build creation: {e}"),
     }
-    
+
     println!("      📊 App build info retrieval...");
     match build_api.get_app_build_info(app_id).await {
         Ok(_) => println!("         ✅ App build info retrieval works"),
         Err(e) => println!("         ⚠️  App build info retrieval: {e}"),
     }
-    
+
     println!("      📊 Sandbox build info retrieval...");
     match build_api.get_sandbox_build_info(app_id, sandbox_id).await {
         Ok(_) => println!("         ✅ Sandbox build info retrieval works"),
         Err(e) => println!("         ⚠️  Sandbox build info retrieval: {e}"),
     }
-    
+
     println!("      📋 App builds listing...");
     match build_api.get_app_builds(app_id).await {
-        Ok(builds) => println!("         ✅ App builds listing works ({} builds)", builds.builds.len()),
+        Ok(builds) => println!(
+            "         ✅ App builds listing works ({} builds)",
+            builds.builds.len()
+        ),
         Err(e) => println!("         ⚠️  App builds listing: {e}"),
     }
-    
+
     println!("      📋 Sandbox builds listing...");
     match build_api.get_sandbox_builds(app_id, sandbox_id).await {
-        Ok(builds) => println!("         ✅ Sandbox builds listing works ({} builds)", builds.builds.len()),
+        Ok(builds) => println!(
+            "         ✅ Sandbox builds listing works ({} builds)",
+            builds.builds.len()
+        ),
         Err(e) => println!("         ⚠️  Sandbox builds listing: {e}"),
     }
 
@@ -561,9 +622,8 @@ async fn demonstrate_convenience_methods(
 async fn demonstrate_mock_scenarios(
     _build_api: &veracode_platform::BuildApi,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    
     println!("   🎭 Mock scenarios (API structure validation):");
-    
+
     // Show that all the methods exist and have correct signatures
     println!("      ✅ create_build() - Available");
     println!("      ✅ create_simple_build() - Available");
@@ -578,7 +638,7 @@ async fn demonstrate_mock_scenarios(
     println!("      ✅ get_build_list() - Available");
     println!("      ✅ get_app_builds() - Available");
     println!("      ✅ get_sandbox_builds() - Available");
-    
+
     println!("\n   📋 XML API Capabilities:");
     println!("      • Full buildinfo XML schema support");
     println!("      • Comprehensive build metadata parsing");

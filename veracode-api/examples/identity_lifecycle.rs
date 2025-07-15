@@ -1,30 +1,28 @@
 use veracode_platform::{
-    VeracodeConfig, VeracodeClient,
+    VeracodeClient, VeracodeConfig,
     identity::{
-        CreateUserRequest, UpdateUserRequest, CreateTeamRequest,
-        CreateApiCredentialRequest, UserType, UserQuery, IdentityError
-    }
+        CreateApiCredentialRequest, CreateTeamRequest, CreateUserRequest, IdentityError,
+        UpdateUserRequest, UserQuery, UserType,
+    },
 };
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID")
-            .expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY")
-            .expect("VERACODE_API_KEY environment variable required"),
+        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
-    
+
     let client = VeracodeClient::new(config)?;
     let identity_api = client.identity_api();
-    
+
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_secs();
 
     println!("🏗️  Identity Management Lifecycle Example\n");
-    
+
     // Example 1: List all roles to understand available permissions
     println!("📋 Listing all available roles...");
     let available_roles = match identity_api.list_roles().await {
@@ -46,7 +44,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Vec::new()
         }
     };
-    
+
     // Example 2: List existing teams
     println!("\n📋 Listing existing teams...");
     match identity_api.list_teams().await {
@@ -66,11 +64,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("❌ Failed to list teams: {e}");
         }
     }
-    
+
     // Example 3: Create a new team
     println!("\n📦 Creating a new team...");
     let team_name = format!("Test Team {timestamp}");
-    
+
     let team_request = CreateTeamRequest {
         team_name: team_name.clone(),
         team_description: Some("A test team created for demonstration purposes".to_string()),
@@ -97,39 +95,63 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
-    
+
     // Example 4: Create a new user
     println!("\n👤 Creating a new user...");
     let user_email = format!("testuser{timestamp}@example.com");
-    
+
     let username = format!("testuser{timestamp}");
-    
+
     // Find the submitter role specifically (human-only role)
     let user_role_ids = if !available_roles.is_empty() {
         // Look specifically for submitter role by description (with debug info)
-        println!("🔍 Searching for Submitter role in {} available roles...", available_roles.len());
-        
+        println!(
+            "🔍 Searching for Submitter role in {} available roles...",
+            available_roles.len()
+        );
+
         // First, let's specifically look for extsubmitter
-        if let Some(extsubmitter_role) = available_roles.iter().find(|r| 
-            r.role_name == "extsubmitter"
-        ) {
-            println!("📝 Found extsubmitter role for test user: {} ({})", 
-                     extsubmitter_role.role_name, 
-                     extsubmitter_role.role_description.as_ref().unwrap_or(&"No description".to_string()));
+        if let Some(extsubmitter_role) = available_roles
+            .iter()
+            .find(|r| r.role_name == "extsubmitter")
+        {
+            println!(
+                "📝 Found extsubmitter role for test user: {} ({})",
+                extsubmitter_role.role_name,
+                extsubmitter_role
+                    .role_description
+                    .as_ref()
+                    .unwrap_or(&"No description".to_string())
+            );
             Some(vec![extsubmitter_role.role_id.clone()])
-        } else if let Some(submitter_role) = available_roles.iter().find(|r| 
-            r.role_description.as_ref().is_some_and(|desc| desc.trim() == "Submitter")
-        ) {
-            println!("📝 Found submitter role for test user: {} ({})", submitter_role.role_name, submitter_role.role_description.as_ref().unwrap_or(&"No description".to_string()));
+        } else if let Some(submitter_role) = available_roles.iter().find(|r| {
+            r.role_description
+                .as_ref()
+                .is_some_and(|desc| desc.trim() == "Submitter")
+        }) {
+            println!(
+                "📝 Found submitter role for test user: {} ({})",
+                submitter_role.role_name,
+                submitter_role
+                    .role_description
+                    .as_ref()
+                    .unwrap_or(&"No description".to_string())
+            );
             Some(vec![submitter_role.role_id.clone()])
         } else {
             // Debug: show first few role descriptions to help troubleshoot
-            println!("⚠️  Neither extsubmitter nor Submitter role found. First 25 role descriptions:");
+            println!(
+                "⚠️  Neither extsubmitter nor Submitter role found. First 25 role descriptions:"
+            );
             for (i, role) in available_roles.iter().take(25).enumerate() {
-                println!("   {}. {} - Description: '{}'", 
-                         i + 1, 
-                         role.role_name, 
-                         role.role_description.as_ref().unwrap_or(&"None".to_string()));
+                println!(
+                    "   {}. {} - Description: '{}'",
+                    i + 1,
+                    role.role_name,
+                    role.role_description
+                        .as_ref()
+                        .unwrap_or(&"None".to_string())
+                );
             }
             println!("⚠️  Using default role assignment.");
             None
@@ -137,7 +159,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     } else {
         None
     };
-    
+
     let user_request = CreateUserRequest {
         email_address: user_email.clone(),
         first_name: "Test".to_string(),
@@ -145,15 +167,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         user_name: Some(username),
         user_type: Some(UserType::Human),
         send_email_invitation: Some(false), // Don't send real emails in demo
-        role_ids: user_role_ids.clone(), // Use submitter role specifically
+        role_ids: user_role_ids.clone(),    // Use submitter role specifically
         team_ids: created_team.as_ref().map(|t| vec![t.team_id.clone()]),
         permissions: None, // Will use default permissions for human users
     };
 
     let created_user = match identity_api.create_user(user_request).await {
         Ok(user) => {
-            println!("✅ Created user: {} {} ({})", 
-                     user.first_name, user.last_name, user.user_id);
+            println!(
+                "✅ Created user: {} {} ({})",
+                user.first_name, user.last_name, user.user_id
+            );
             println!("   Email: {}", user.email_address);
             println!("   Username: {}", user.user_name);
             Some(user)
@@ -172,37 +196,37 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             None
         }
     };
-    
+
     // Example 4b: Create a Security Lead user (can work without team assignment) - DISABLED
     // println!("\n👤 Creating a Security Lead user (ignore team restrictions)...");
     // let admin_user_email = format!("SecurityLead{}@example.com", timestamp);
     // let admin_username = format!("SecurityLead{}", timestamp);
-    // 
+    //
     // // Find the Security Lead role which has ignore_team_restrictions: true
     // let admin_role_ids = if !available_roles.is_empty() {
     //     // Look specifically for the Security Lead role
-    //     if let Some(securitylead_role) = available_roles.iter().find(|r| 
-    //         r.role_name == "extseclead" || 
+    //     if let Some(securitylead_role) = available_roles.iter().find(|r|
+    //         r.role_name == "extseclead" ||
     //         r.role_description.as_ref().map_or(false, |desc| desc.trim() == "Security Lead")
     //     ) {
-    //         println!("📝 Found Security Lead role: {} ({})", 
-    //                  securitylead_role.role_name, 
+    //         println!("📝 Found Security Lead role: {} ({})",
+    //                  securitylead_role.role_name,
     //                  securitylead_role.role_description.as_ref().unwrap_or(&"No description".to_string()));
     //         println!("   This role has ignore_team_restrictions: {:?}", securitylead_role.ignore_team_restrictions);
-    //         
+    //
     //         // Show all available roles that ignore team restrictions for reference
     //         let team_restriction_roles: Vec<_> = available_roles.iter()
     //             .filter(|r| r.ignore_team_restrictions == Some(true) && r.is_api != Some(true))
     //             .collect();
-    //         
+    //
     //         if team_restriction_roles.len() > 1 {
     //             println!("   Other available roles that ignore team restrictions:");
     //             for other_role in team_restriction_roles.iter().filter(|r| r.role_name != securitylead_role.role_name) {
-    //                 println!("   - {} ({})", other_role.role_name, 
+    //                 println!("   - {} ({})", other_role.role_name,
     //                          other_role.role_description.as_ref().unwrap_or(&"No description".to_string()));
     //             }
     //         }
-    //         
+    //
     //         Some(vec![securitylead_role.role_id.clone()])
     //     } else {
     //         println!("⚠️  Security Lead role not found. Using regular submitter role with team assignment.");
@@ -211,7 +235,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // } else {
     //     None
     // };
-    // 
+    //
     // let admin_user_request = CreateUserRequest {
     //     email_address: admin_user_email.clone(),
     //     first_name: "Security Lead".to_string(),
@@ -220,7 +244,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     user_type: Some(UserType::Human),
     //     send_email_invitation: Some(false),
     //     role_ids: admin_role_ids.clone(),
-    //     team_ids: if admin_role_ids.is_some() && available_roles.iter().any(|r| 
+    //     team_ids: if admin_role_ids.is_some() && available_roles.iter().any(|r|
     //         r.ignore_team_restrictions == Some(true) && r.is_api != Some(true)
     //     ) {
     //         None // Users with ignore_team_restrictions roles can be created without team assignment
@@ -232,7 +256,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // let created_admin_user = match identity_api.create_user(admin_user_request).await {
     //     Ok(user) => {
-    //         println!("✅ Created Security Lead user: {} {} ({})", 
+    //         println!("✅ Created Security Lead user: {} {} ({})",
     //                  user.first_name, user.last_name, user.user_id);
     //         println!("   Email: {}", user.email_address);
     //         println!("   This user can work without team assignment due to ignore_team_restrictions");
@@ -247,38 +271,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //         None
     //     }
     // };
-    
+
     println!("⏭️  Skipping Security Lead user creation...");
     //let created_admin_user: Option<veracode_api::identity::User> = None;
-    
+
     // Example 5: Search for users
     println!("\n🔍 Searching for users...");
     let query = UserQuery::new()
         .with_user_type(UserType::Human)
         .with_pagination(0, 10);
-    
+
     match identity_api.list_users(Some(query)).await {
         Ok(users) => {
             println!("✅ Found {} users (showing first 5):", users.len());
             for (i, user) in users.iter().take(5).enumerate() {
-                println!("   {}. {} {} - {}", 
-                         i + 1, user.first_name, user.last_name, user.email_address);
-                println!("      Active: {:?}, Type: {:?}", user.active, user.user_type);
+                println!(
+                    "   {}. {} {} - {}",
+                    i + 1,
+                    user.first_name,
+                    user.last_name,
+                    user.email_address
+                );
+                println!(
+                    "      Active: {:?}, Type: {:?}",
+                    user.active, user.user_type
+                );
             }
         }
         Err(e) => {
             eprintln!("❌ Failed to search users: {e}");
         }
     }
-    
+
     // Example 5.5: Search for teams
     println!("\n🔍 Searching for teams...");
     match identity_api.list_teams().await {
         Ok(teams) => {
             println!("✅ Found {} teams (showing first 5):", teams.len());
             for (i, team) in teams.iter().take(5).enumerate() {
-                println!("   {}. {} ({})", 
-                         i + 1, team.team_name, team.team_id);
+                println!("   {}. {} ({})", i + 1, team.team_name, team.team_id);
                 if let Some(desc) = &team.team_description {
                     println!("      Description: {desc}");
                 }
@@ -291,14 +322,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("❌ Failed to search teams: {e}");
         }
     }
-    
+
     // Example 6: Find a specific user by email
     if let Some(ref user) = created_user {
         println!("\n🔍 Finding user by email...");
         match identity_api.find_user_by_email(&user.email_address).await {
             Ok(Some(found_user)) => {
-                println!("✅ Found user: {} {} ({})", 
-                         found_user.first_name, found_user.last_name, found_user.user_id);
+                println!(
+                    "✅ Found user: {} {} ({})",
+                    found_user.first_name, found_user.last_name, found_user.user_id
+                );
             }
             Ok(None) => {
                 println!("⚠️  User not found by email search");
@@ -308,31 +341,41 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     // Example 7: Update user information
     if let Some(ref user) = created_user {
         println!("\n✏️  Updating user information...");
         // Get current user's roles or use default roles
-        let current_roles = user.roles.as_ref()
+        let current_roles = user
+            .roles
+            .as_ref()
             .map(|roles| roles.iter().map(|r| r.role_id.clone()).collect())
             .unwrap_or_else(|| {
                 // Fallback to submitter role if user has no roles (by description)
-                available_roles.iter()
-                    .find(|r| r.role_description.as_ref().is_some_and(|desc| desc == "Submitter"))
+                available_roles
+                    .iter()
+                    .find(|r| {
+                        r.role_description
+                            .as_ref()
+                            .is_some_and(|desc| desc == "Submitter")
+                    })
                     .map(|r| vec![r.role_id.clone()])
                     .unwrap_or_default()
             });
-        
+
         // Get current user's teams or use the created team
-        let current_teams = user.teams.as_ref()
+        let current_teams = user
+            .teams
+            .as_ref()
             .map(|teams| teams.iter().map(|t| t.team_id.clone()).collect())
             .unwrap_or_else(|| {
                 // Use the team that was assigned during creation
-                created_team.as_ref()
+                created_team
+                    .as_ref()
                     .map(|t| vec![t.team_id.clone()])
                     .unwrap_or_default()
             });
-        
+
         let update_request = UpdateUserRequest {
             email_address: user.email_address.clone(),
             user_name: user.user_name.clone(),
@@ -343,11 +386,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             team_ids: current_teams,
         };
 
-        match identity_api.update_user(&user.user_id, update_request).await {
+        match identity_api
+            .update_user(&user.user_id, update_request)
+            .await
+        {
             Ok(updated_user) => {
-                println!("✅ Updated user: {} {} -> {} {}", 
-                         user.first_name, user.last_name,
-                         updated_user.first_name, updated_user.last_name);
+                println!(
+                    "✅ Updated user: {} {} -> {} {}",
+                    user.first_name,
+                    user.last_name,
+                    updated_user.first_name,
+                    updated_user.last_name
+                );
             }
             Err(IdentityError::PermissionDenied(msg)) => {
                 println!("⚠️  Permission denied to update user: {msg}");
@@ -357,54 +407,60 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     // Example 8: Create API service account
     println!("\n🔑 Creating API service account...");
     let service_email = format!("serviceaccount{timestamp}@example.com");
-    
+
     // Find API roles for the service account - specifically look for apisubmitanyscan and noteamrestrictionapi
     let api_role_ids = if !available_roles.is_empty() {
         let mut api_roles: Vec<String> = Vec::new();
-        
+
         // Find apisubmitanyscan role
-        if let Some(submit_role) = available_roles.iter().find(|r| 
-            r.role_name.to_lowercase() == "apisubmitanyscan" && r.is_api == Some(true)
-        ) {
+        if let Some(submit_role) = available_roles
+            .iter()
+            .find(|r| r.role_name.to_lowercase() == "apisubmitanyscan" && r.is_api == Some(true))
+        {
             api_roles.push(submit_role.role_id.clone());
         }
-        
+
         // Find noteamrestrictionapi role
-        if let Some(noteam_role) = available_roles.iter().find(|r| 
+        if let Some(noteam_role) = available_roles.iter().find(|r| {
             r.role_name.to_lowercase() == "noteamrestrictionapi" && r.is_api == Some(true)
-        ) {
+        }) {
             api_roles.push(noteam_role.role_id.clone());
         }
-        
+
         api_roles
     } else {
         vec![]
     };
-    
+
     let service_username = format!("serviceaccount{timestamp}");
-    match identity_api.create_api_service_account(
-        &service_email,
-        &service_username,
-        "API",
-        "Service",
-        api_role_ids,
-        created_team.as_ref().map(|t| vec![t.team_id.clone()]), // Assign to test team
-    ).await {
+    match identity_api
+        .create_api_service_account(
+            &service_email,
+            &service_username,
+            "API",
+            "Service",
+            api_role_ids,
+            created_team.as_ref().map(|t| vec![t.team_id.clone()]), // Assign to test team
+        )
+        .await
+    {
         Ok(service_user) => {
-            println!("✅ Created API service account: {} ({})", 
-                     service_user.email_address, service_user.user_id);
-            
+            println!(
+                "✅ Created API service account: {} ({})",
+                service_user.email_address, service_user.user_id
+            );
+
             // Example 9: Create API credentials for the service account
             println!("\n🔐 Creating API credentials...");
             let creds_request = CreateApiCredentialRequest {
                 user_id: Some(service_user.user_id.clone()),
                 expiration_ts: None,
             };
-            
+
             match identity_api.create_api_credentials(creds_request).await {
                 Ok(credentials) => {
                     println!("✅ Created API credentials:");
@@ -413,10 +469,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("   API Key: {api_key}");
                     }
                     println!("   Active: {:?}", credentials.active);
-                    
+
                     // Clean up: Revoke the API credentials
                     println!("\n🗑️  Revoking API credentials...");
-                    match identity_api.revoke_api_credentials(&credentials.api_id).await {
+                    match identity_api
+                        .revoke_api_credentials(&credentials.api_id)
+                        .await
+                    {
                         Ok(_) => {
                             println!("✅ Successfully revoked API credentials");
                         }
@@ -432,7 +491,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     eprintln!("❌ Failed to create API credentials: {e}");
                 }
             }
-            
+
             // Clean up: Delete the service account
             println!("\n🗑️  Deleting API service account...");
             match identity_api.delete_user(&service_user.user_id).await {
@@ -454,7 +513,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("❌ Failed to create API service account: {e}");
         }
     }
-    
+
     // Clean up: Delete the test user
     if let Some(ref user) = created_user {
         println!("\n🗑️  Deleting test user...");
@@ -470,7 +529,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     // Clean up: Delete the Security Lead test user (DISABLED)
     // if let Some(ref user) = created_admin_user {
     //     println!("\n🗑️  Deleting Security Lead test user...");
@@ -486,7 +545,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //         }
     //     }
     // }
-    
+
     // Clean up: Delete the test team
     if let Some(ref team) = created_team {
         println!("\n🗑️  Deleting test team...");
@@ -505,15 +564,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
     }
-    
+
     // Final cleanup: Delete all teams that start with "Test Team "
     println!("\n🧹 Final cleanup: Deleting all teams starting with 'Test Team '...");
     match identity_api.list_teams().await {
         Ok(teams) => {
-            let test_teams: Vec<_> = teams.iter()
+            let test_teams: Vec<_> = teams
+                .iter()
                 .filter(|team| team.team_name.starts_with("Test Team "))
                 .collect();
-            
+
             if test_teams.is_empty() {
                 println!("✅ No test teams found to clean up");
             } else {
@@ -521,10 +581,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for team in &test_teams {
                     println!("   - {} ({})", team.team_name, team.team_id);
                 }
-                
+
                 let mut deleted_count = 0;
                 let mut failed_count = 0;
-                
+
                 for team in test_teams {
                     match identity_api.delete_team(&team.team_id).await {
                         Ok(_) => {
@@ -544,7 +604,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                     }
                 }
-                
+
                 println!("📊 Cleanup summary: {deleted_count} deleted, {failed_count} failed");
             }
         }
@@ -552,7 +612,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             eprintln!("❌ Failed to list teams for cleanup: {e}");
         }
     }
-    
+
     println!("\n✅ Identity lifecycle example completed!");
     println!("\nThis example demonstrated:");
     println!("  ✓ Listing roles and teams");
@@ -567,6 +627,6 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("  ✓ Final cleanup of all test teams");
     println!("\nNote: Some operations may fail with permission errors");
     println!("      if your API credentials don't have administrator privileges.");
-    
+
     Ok(())
 }
