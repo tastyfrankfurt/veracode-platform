@@ -763,10 +763,7 @@ impl VeracodeWorkflow {
         version: Option<&str>,
         deletion_policy: u8,
     ) -> WorkflowResult<Build> {
-        println!(
-            "🔍 Checking if build exists (deletion policy: {})...",
-            deletion_policy
-        );
+        println!("🔍 Checking if build exists (deletion policy: {deletion_policy})...");
 
         let build_api = self.client.build_api();
 
@@ -781,7 +778,7 @@ impl VeracodeWorkflow {
             Ok(build) => {
                 println!("   📋 Build already exists: {}", build.build_id);
                 if let Some(build_version) = &build.version {
-                    println!("      Existing Version: {}", build_version);
+                    println!("      Existing Version: {build_version}");
                 }
 
                 // Parse build status from attributes
@@ -793,8 +790,8 @@ impl VeracodeWorkflow {
                     .map(|s| s.as_str())
                     .unwrap_or("Unknown");
 
-                let build_status = crate::build::BuildStatus::from_str(build_status_str);
-                println!("      Build Status: {}", build_status);
+                let build_status = crate::build::BuildStatus::from_string(build_status_str);
+                println!("      Build Status: {build_status}");
 
                 // Check deletion policy
                 if deletion_policy == 0 {
@@ -815,8 +812,7 @@ impl VeracodeWorkflow {
                 // Check if build is safe to delete according to policy
                 else if build_status.is_safe_to_delete(deletion_policy) {
                     println!(
-                        "   🗑️  Build is safe to delete according to policy {}. Deleting...",
-                        deletion_policy
+                        "   🗑️  Build is safe to delete according to policy {deletion_policy}. Deleting..."
                     );
 
                     // Delete the existing build
@@ -885,7 +881,7 @@ impl VeracodeWorkflow {
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
                 .as_secs();
-            format!("build-{}", timestamp)
+            format!("build-{timestamp}")
         });
 
         let create_request = crate::build::CreateBuildRequest {
@@ -899,7 +895,7 @@ impl VeracodeWorkflow {
         match build_api.create_build(create_request).await {
             Ok(build) => {
                 println!("   ✅ Build created successfully: {}", build.build_id);
-                println!("      Version: {}", build_version);
+                println!("      Version: {build_version}");
                 if sandbox_id.is_some() {
                     println!("      Type: Sandbox build");
                 } else {
@@ -939,11 +935,11 @@ impl VeracodeWorkflow {
         version: Option<&str>,
     ) -> WorkflowResult<crate::scan::UploadedFile> {
         println!("🚀 Starting large file upload with build management");
-        println!("   File: {}", file_path);
+        println!("   File: {file_path}");
         if let Some(sandbox_id) = sandbox_id {
-            println!("   Target: Sandbox {}", sandbox_id);
+            println!("   Target: Sandbox {sandbox_id}");
         } else {
-            println!("   Target: Application {}", app_id);
+            println!("   Target: Application {app_id}");
         }
 
         // Step 1: Ensure build exists
@@ -1007,7 +1003,7 @@ impl VeracodeWorkflow {
         F: Fn(u64, u64, f64) + Send + Sync,
     {
         println!("🚀 Starting large file upload with progress tracking and build management");
-        println!("   File: {}", file_path);
+        println!("   File: {file_path}");
 
         // Step 1: Ensure build exists
         let _build = self
@@ -1065,14 +1061,13 @@ impl VeracodeWorkflow {
         version: Option<&str>,
     ) -> WorkflowResult<crate::scan::UploadedFile> {
         // Check file size to determine upload strategy
-        let file_metadata = std::fs::metadata(file_path).map_err(|e| {
-            WorkflowError::Workflow(format!("Cannot access file {}: {}", file_path, e))
-        })?;
+        let file_metadata = std::fs::metadata(file_path)
+            .map_err(|e| WorkflowError::Workflow(format!("Cannot access file {file_path}: {e}")))?;
 
         let file_size = file_metadata.len();
         const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024; // 100MB
 
-        println!("🔍 File size: {} bytes", file_size);
+        println!("🔍 File size: {file_size} bytes");
 
         if file_size > LARGE_FILE_THRESHOLD {
             println!("📦 Using large file upload (uploadlargefile.do) with build management");

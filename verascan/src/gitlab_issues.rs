@@ -153,7 +153,7 @@ impl GitLabIssuesClient {
 
         if debug {
             println!("🌐 Testing GitLab API connectivity...");
-            println!("   GET {}", test_url);
+            println!("   GET {test_url}");
         }
 
         let response = client.get(&test_url).send().await?;
@@ -168,7 +168,7 @@ impl GitLabIssuesClient {
 
             println!("✅ GitLab connectivity validated successfully!");
             if debug {
-                println!("   Project: {} ({})", project_name, project_path);
+                println!("   Project: {project_name} ({project_path})");
                 println!("   API access: ✅ Authenticated");
             }
 
@@ -193,7 +193,7 @@ impl GitLabIssuesClient {
                 .unwrap_or_else(|_| "Unknown error".to_string());
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
-                message: format!("Project access failed: {}", error_text),
+                message: format!("Project access failed: {error_text}"),
             })
         }
     }
@@ -236,7 +236,7 @@ impl GitLabIssuesClient {
             println!("   Project ID: {}", config.project_id);
             println!("   GitLab URL: {}", config.gitlab_url);
             if let Some(ref pipeline_id) = config.pipeline_id {
-                println!("   Pipeline ID: {}", pipeline_id);
+                println!("   Pipeline ID: {pipeline_id}");
             }
         }
 
@@ -332,11 +332,11 @@ impl GitLabIssuesClient {
         }
 
         if skipped_count > 0 {
-            println!("ℹ️  Skipped {} informational findings", skipped_count);
+            println!("ℹ️  Skipped {skipped_count} informational findings");
         }
 
         if duplicate_count > 0 {
-            println!("⏭️  Skipped {} duplicate issues", duplicate_count);
+            println!("⏭️  Skipped {duplicate_count} duplicate issues");
         }
 
         println!("✅ Created {} GitLab issues", created_issues.len());
@@ -355,19 +355,19 @@ impl GitLabIssuesClient {
         );
 
         if self.debug {
-            println!("🌐 POST {}", url);
+            println!("🌐 POST {url}");
             println!("📤 Issue payload:");
             println!("   Title: {}", payload.title);
             if let Some(ref labels) = payload.labels {
-                println!("   Labels: '{}'", labels);
+                println!("   Labels: '{labels}'");
             } else {
                 println!("   Labels: None");
             }
 
             // Print full JSON payload
             match serde_json::to_string_pretty(payload) {
-                Ok(json) => println!("   Full JSON payload:\n{}", json),
-                Err(e) => println!("   Failed to serialize payload: {}", e),
+                Ok(json) => println!("   Full JSON payload:\n{json}"),
+                Err(e) => println!("   Failed to serialize payload: {e}"),
             }
         }
 
@@ -380,7 +380,7 @@ impl GitLabIssuesClient {
 
             if self.debug {
                 println!("📥 GitLab API Response:");
-                println!("   Status: {}", status);
+                println!("   Status: {status}");
                 println!("   Issue ID: {}", issue.id);
                 println!("   Issue IID: {}", issue.iid);
                 println!("   Title: {}", issue.title);
@@ -388,8 +388,8 @@ impl GitLabIssuesClient {
 
                 // Print full JSON response
                 match serde_json::to_string_pretty(&issue) {
-                    Ok(json) => println!("   Full JSON response:\n{}", json),
-                    Err(e) => println!("   Failed to serialize response: {}", e),
+                    Ok(json) => println!("   Full JSON response:\n{json}"),
+                    Err(e) => println!("   Failed to serialize response: {e}"),
                 }
             }
 
@@ -401,8 +401,8 @@ impl GitLabIssuesClient {
                 .unwrap_or_else(|_| "Unknown error".to_string());
             if self.debug {
                 println!("❌ GitLab API Error:");
-                println!("   Status: {}", status);
-                println!("   Error: {}", error_text);
+                println!("   Status: {status}");
+                println!("   Error: {error_text}");
             }
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
@@ -421,8 +421,8 @@ impl GitLabIssuesClient {
         );
 
         if self.debug {
-            println!("🔍 Searching for existing issue: {}", title);
-            println!("🌐 GET {}", url);
+            println!("🔍 Searching for existing issue: {title}");
+            println!("🌐 GET {url}");
         }
 
         let response = self.client.get(&url).send().await?;
@@ -449,7 +449,7 @@ impl GitLabIssuesClient {
                 .unwrap_or_else(|_| "Unknown error".to_string());
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
-                message: format!("Failed to search for existing issues: {}", error_text),
+                message: format!("Failed to search for existing issues: {error_text}"),
             })
         }
     }
@@ -480,13 +480,13 @@ impl GitLabIssuesClient {
             println!("   Line number: {}", finding.files.source_file.line);
             if let Some(ref function_name) = finding.files.source_file.function_name {
                 if !function_name.is_empty() && function_name != "UNKNOWN" {
-                    println!("   Function: '{}'", function_name);
+                    println!("   Function: '{function_name}'");
                 }
             }
             // Debug flaw details link
             match &finding.flaw_details_link {
                 Some(link) if !link.is_empty() => {
-                    println!("   Flaw Details Link: '{}'", link);
+                    println!("   Flaw Details Link: '{link}'");
                 }
                 Some(_) => {
                     println!("   Flaw Details Link: (empty)");
@@ -501,7 +501,7 @@ impl GitLabIssuesClient {
         let resolved_file_path = self.resolve_file_path(&finding.files.source_file.file);
 
         if self.debug {
-            println!("   Resolved file path: '{}'", resolved_file_path);
+            println!("   Resolved file path: '{resolved_file_path}'");
         }
 
         // Create concise title with CWE, function (or issue type), filename, line number and path hash
@@ -579,7 +579,7 @@ impl GitLabIssuesClient {
             .project_name
             .as_deref()
             .unwrap_or(&source.project_name);
-        println!("{}", project_name);
+        println!("{project_name}");
         hasher.update(project_name.as_bytes());
         hasher.update(b"|");
 
@@ -606,7 +606,7 @@ impl GitLabIssuesClient {
         // File_Path (resolved file path)
         hasher.update(resolved_file_path.as_bytes());
         hasher.update(b"|");
-        println!("{}", resolved_file_path);
+        println!("{resolved_file_path}");
         // Line_Number
         hasher.update(finding.files.source_file.line.to_string().as_bytes());
         hasher.update(b"|");
@@ -626,29 +626,29 @@ impl GitLabIssuesClient {
         let short_hash = &payload_hash[..8]; // Use first 8 characters
 
         // Create final title with hash
-        let title = format!("{} ({})", base_title, short_hash);
+        let title = format!("{base_title} ({short_hash})");
 
         if self.debug {
             println!("   Title components:");
-            println!("     Severity: '{}'", severity_name);
-            println!("     CWE ID: '{}'", cwe_id);
-            println!("     Function/Issue: '{}'", function_or_issue);
-            println!("     Filename: '{}'", filename);
+            println!("     Severity: '{severity_name}'");
+            println!("     CWE ID: '{cwe_id}'");
+            println!("     Function/Issue: '{function_or_issue}'");
+            println!("     Filename: '{filename}'");
             println!("     Line: {}", finding.files.source_file.line);
             println!("   Hash input fields:");
-            println!("     Project_Name: '{}'", project_name);
+            println!("     Project_Name: '{project_name}'");
             println!("     Source_File: '{}'", finding.files.source_file.file);
-            println!("     CWE_ID: '{}'", cwe_id);
+            println!("     CWE_ID: '{cwe_id}'");
             println!("     Issue_Type: '{}'", finding.issue_type);
             println!("     Title: '{}'", finding.title);
             println!("     Severity: '{}'", finding.severity);
-            println!("     File_Path: '{}'", resolved_file_path);
+            println!("     File_Path: '{resolved_file_path}'");
             println!("     Line_Number: '{}'", finding.files.source_file.line);
-            println!("     Function_Name: '{}'", function_name);
-            println!("     Generated hash: '{}' (first 8 chars)", short_hash);
-            println!("   Final issue title: '{}'", title);
+            println!("     Function_Name: '{function_name}'");
+            println!("     Generated hash: '{short_hash}' (first 8 chars)");
+            println!("   Final issue title: '{title}'");
             if let Some(ref labels_str) = labels_string {
-                println!("   Labels string for API: '{}'", labels_str);
+                println!("   Labels string for API: '{labels_str}'");
             }
         }
 
@@ -683,7 +683,7 @@ impl GitLabIssuesClient {
     /// Resolve file path relative to project directory
     fn resolve_file_path(&self, file_path: &str) -> String {
         if self.debug {
-            println!("🔍 DEBUG: Resolving file path: '{}'", file_path);
+            println!("🔍 DEBUG: Resolving file path: '{file_path}'");
         }
 
         // If no project directory is set, return the original path
@@ -718,13 +718,11 @@ impl GitLabIssuesClient {
             if let Ok(relative_path) = file_path_buf.strip_prefix(project_dir) {
                 let result = relative_path.to_string_lossy().to_string();
                 if self.debug {
-                    println!("   ✅ Stripped project prefix, result: '{}'", result);
+                    println!("   ✅ Stripped project prefix, result: '{result}'");
                 }
                 return result;
-            } else {
-                if self.debug {
-                    println!("   ⚠️  Cannot strip project prefix from absolute path");
-                }
+            } else if self.debug {
+                println!("   ⚠️  Cannot strip project prefix from absolute path");
             }
         }
 
@@ -739,7 +737,7 @@ impl GitLabIssuesClient {
         // Try to find the file by its full relative path first
         if let Some(found_path) = self.find_file_by_relative_path(project_dir, file_path) {
             if self.debug {
-                println!("   ✅ Found by relative path search: '{}'", found_path);
+                println!("   ✅ Found by relative path search: '{found_path}'");
             }
             return found_path;
         }
@@ -747,11 +745,11 @@ impl GitLabIssuesClient {
         // If that fails, try to find by filename only
         if let Some(filename) = file_path_buf.file_name().and_then(|n| n.to_str()) {
             if self.debug {
-                println!("   🔍 Searching by filename only: '{}'", filename);
+                println!("   🔍 Searching by filename only: '{filename}'");
             }
             if let Some(found_path) = self.find_file_in_project(project_dir, filename) {
                 if self.debug {
-                    println!("   ✅ Found by filename search: '{}'", found_path);
+                    println!("   ✅ Found by filename search: '{found_path}'");
                 }
                 return found_path;
             }
@@ -759,10 +757,7 @@ impl GitLabIssuesClient {
 
         // Last resort: return the original path
         if self.debug {
-            println!(
-                "   ❌ Could not resolve path, returning original: '{}'",
-                file_path
-            );
+            println!("   ❌ Could not resolve path, returning original: '{file_path}'");
         }
         file_path.to_string()
     }
@@ -776,7 +771,7 @@ impl GitLabIssuesClient {
         relative_path: &str,
     ) -> Option<String> {
         if self.debug {
-            println!("   🔍 Searching for relative path: '{}'", relative_path);
+            println!("   🔍 Searching for relative path: '{relative_path}'");
         }
 
         // Common Java source directory patterns to search
@@ -818,14 +813,13 @@ impl GitLabIssuesClient {
                             if let Ok(result) = candidate_path.strip_prefix(project_dir) {
                                 let result_str = result.to_string_lossy().to_string();
                                 if self.debug {
-                                    println!("     ✅ Found exact path match at: {}", result_str);
+                                    println!("     ✅ Found exact path match at: {result_str}");
                                 }
                                 return Some(result_str);
                             }
                         } else if self.debug {
                             println!(
-                                "     ⚠️  Path ends with target but not at boundary: {}",
-                                normalized_candidate
+                                "     ⚠️  Path ends with target but not at boundary: {normalized_candidate}"
                             );
                         }
                     }
@@ -848,7 +842,7 @@ impl GitLabIssuesClient {
             if let Ok(result) = direct_path.strip_prefix(project_dir) {
                 let result_str = result.to_string_lossy().to_string();
                 if self.debug {
-                    println!("     ✅ Found exact direct match: {}", result_str);
+                    println!("     ✅ Found exact direct match: {result_str}");
                 }
                 return Some(result_str);
             }
@@ -863,18 +857,13 @@ impl GitLabIssuesClient {
     /// Find a file by name within the project directory tree
     fn find_file_in_project(&self, project_dir: &Path, filename: &str) -> Option<String> {
         if self.debug {
-            println!("   🔍 Recursive search for filename: '{}'", filename);
+            println!("   🔍 Recursive search for filename: '{filename}'");
         }
-        self.search_for_file(project_dir, filename, project_dir)
+        Self::search_for_file(project_dir, filename, project_dir)
     }
 
     /// Recursively search for a file by name and return its path relative to project root
-    fn search_for_file(
-        &self,
-        current_dir: &Path,
-        filename: &str,
-        project_root: &Path,
-    ) -> Option<String> {
+    fn search_for_file(current_dir: &Path, filename: &str, project_root: &Path) -> Option<String> {
         if let Ok(entries) = std::fs::read_dir(current_dir) {
             for entry in entries.flatten() {
                 let entry_path = entry.path();
@@ -890,7 +879,8 @@ impl GitLabIssuesClient {
                     }
                 } else if entry_path.is_dir() {
                     // Recursively search subdirectories
-                    if let Some(found) = self.search_for_file(&entry_path, filename, project_root) {
+                    if let Some(found) = Self::search_for_file(&entry_path, filename, project_root)
+                    {
                         return Some(found);
                     }
                 }
@@ -951,7 +941,7 @@ impl GitLabIssuesClient {
         ));
         // Create file link with line number (using pre-resolved path)
         let file_link = self.create_file_link(resolved_file_path, finding.files.source_file.line);
-        description.push_str(&format!("| **File** | {} |\n", file_link));
+        description.push_str(&format!("| **File** | {file_link} |\n"));
         description.push_str(&format!(
             "| **Line** | {} |\n",
             finding.files.source_file.line
@@ -959,7 +949,7 @@ impl GitLabIssuesClient {
 
         if let Some(ref function_name) = finding.files.source_file.function_name {
             if !function_name.is_empty() && function_name != "UNKNOWN" {
-                description.push_str(&format!("| **Function** | `{}` |\n", function_name));
+                description.push_str(&format!("| **Function** | `{function_name}` |\n"));
             }
         }
 
@@ -970,24 +960,16 @@ impl GitLabIssuesClient {
         if let Some(ref flaw_details_link) = finding.flaw_details_link {
             if !flaw_details_link.is_empty() {
                 description.push_str(&format!(
-                    "| **Flaw Details** | [View in Veracode]({}) |\n",
-                    flaw_details_link
+                    "| **Flaw Details** | [View in Veracode]({flaw_details_link}) |\n"
                 ));
                 if self.debug {
-                    println!(
-                        "   Added flaw details link to GitLab issue: {}",
-                        flaw_details_link
-                    );
+                    println!("   Added flaw details link to GitLab issue: {flaw_details_link}");
                 }
-            } else {
-                if self.debug {
-                    println!("   Flaw details link is empty, not adding to GitLab issue");
-                }
+            } else if self.debug {
+                println!("   Flaw details link is empty, not adding to GitLab issue");
             }
-        } else {
-            if self.debug {
-                println!("   No flaw details link available for this finding");
-            }
+        } else if self.debug {
+            println!("   No flaw details link available for this finding");
         }
 
         description.push('\n');
@@ -1002,7 +984,7 @@ impl GitLabIssuesClient {
                 resolved_file_path,
                 finding.files.source_file.line
             );
-            description.push_str(&format!("### 📁 Source Code\n\n"));
+            description.push_str("### 📁 Source Code\n\n");
             description.push_str(&format!(
                 "🔗 **[View code at line {}]({})**\n\n",
                 finding.files.source_file.line, file_url
@@ -1021,7 +1003,7 @@ impl GitLabIssuesClient {
                 self.config.project_id,
                 pipeline_id
             );
-            links_section.push_str(&format!("- [Pipeline Run]({})\n", pipeline_url));
+            links_section.push_str(&format!("- [Pipeline Run]({pipeline_url})\n"));
             has_links = true;
         }
 
@@ -1029,25 +1011,19 @@ impl GitLabIssuesClient {
         if let Some(ref flaw_details_link) = finding.flaw_details_link {
             if !flaw_details_link.is_empty() {
                 links_section.push_str(&format!(
-                    "- [Detailed Vulnerability Information (Veracode)]({})\n",
-                    flaw_details_link
+                    "- [Detailed Vulnerability Information (Veracode)]({flaw_details_link})\n"
                 ));
                 has_links = true;
                 if self.debug {
                     println!(
-                        "   Added flaw details link to Related Links section: {}",
-                        flaw_details_link
+                        "   Added flaw details link to Related Links section: {flaw_details_link}"
                     );
                 }
-            } else {
-                if self.debug {
-                    println!("   Flaw details link is empty, not adding to Related Links");
-                }
+            } else if self.debug {
+                println!("   Flaw details link is empty, not adding to Related Links");
             }
-        } else {
-            if self.debug {
-                println!("   No flaw details link available for Related Links section");
-            }
+        } else if self.debug {
+            println!("   No flaw details link available for Related Links section");
         }
 
         // Add the links section if we have any links
@@ -1109,16 +1085,14 @@ impl GitLabIssuesClient {
             let branch_or_commit = self.config.commit_sha.as_deref().unwrap_or("main");
 
             // Create permalink format: /project/-/blob/branch/file#Lnumber
-            let file_url = format!(
-                "{}/-/blob/{}/{}#L{}",
-                base_url, branch_or_commit, file_path, line_number
-            );
+            let file_url =
+                format!("{base_url}/-/blob/{branch_or_commit}/{file_path}#L{line_number}");
 
             // Return as markdown link with both filename and line number
-            format!("[`{}`]({})", file_path, file_url)
+            format!("[`{file_path}`]({file_url})")
         } else {
             // Fallback to just the filename in code format if no URL available
-            format!("`{}`", file_path)
+            format!("`{file_path}`")
         }
     }
 
@@ -1133,7 +1107,7 @@ impl GitLabIssuesClient {
         if let Some(ref project_path) = self.config.project_path_with_namespace {
             if self.config.gitlab_url.contains("/api/v4/projects/") {
                 let web_base = self.config.gitlab_url.replace("/api/v4/projects/", "/");
-                return Some(format!("{}{}", web_base, project_path));
+                return Some(format!("{web_base}{project_path}"));
             }
         }
 
@@ -1288,7 +1262,7 @@ mod tests {
         ];
 
         // Just verify the patterns are reasonable (this is more of a documentation test)
-        assert!(test_patterns.len() > 0);
+        assert!(!test_patterns.is_empty());
         assert!(test_patterns.contains(&"src/main/java")); // Most common Java pattern
     }
 
@@ -1337,7 +1311,7 @@ mod tests {
     #[test]
     fn test_labels_format() {
         // Test that labels are correctly formatted as comma-separated string
-        let labels = vec![
+        let labels = [
             "security::veracode".to_string(),
             "security::sast".to_string(),
             "security::severity::high".to_string(),
@@ -1400,14 +1374,11 @@ mod tests {
         );
 
         // Test title format with hash
-        let final_title = format!(
-            "[High] CWE-89: executeQuery @ UserController.java:45 ({})",
-            hash1
-        );
+        let final_title = format!("[High] CWE-89: executeQuery @ UserController.java:45 ({hash1})");
         assert!(final_title.contains("CWE-89"));
         assert!(final_title.contains("executeQuery"));
         assert!(final_title.contains(":45"));
-        assert!(final_title.contains(&format!("({})", hash1)));
+        assert!(final_title.contains(&format!("({hash1})")));
 
         // Test filename extraction
         let full_path = "src/main/java/com/example/vulnerable/CryptoUtils.java";
@@ -1538,12 +1509,12 @@ mod tests {
         let token = SecureToken::new("super-secret-token-12345".to_string());
 
         // Test Debug formatting
-        let debug_output = format!("{:?}", token);
+        let debug_output = format!("{token:?}");
         assert_eq!(debug_output, "[REDACTED]");
         assert!(!debug_output.contains("super-secret-token"));
 
         // Test Display formatting
-        let display_output = format!("{}", token);
+        let display_output = format!("{token}");
         assert_eq!(display_output, "[REDACTED]");
         assert!(!display_output.contains("super-secret-token"));
 
@@ -1566,7 +1537,7 @@ mod tests {
             project_dir: None,
         };
 
-        let debug_output = format!("{:?}", config);
+        let debug_output = format!("{config:?}");
 
         // Verify the token is redacted
         assert!(debug_output.contains("api_token: \"[REDACTED]\""));

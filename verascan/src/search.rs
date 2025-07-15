@@ -26,12 +26,12 @@ pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
     let finder = FileFinder::new();
     let config = FileFinder::parse_config(filepath, filefilter, recursive, validate, args.debug)
         .map_err(|e| {
-            eprintln!("Error: {}", e);
+            eprintln!("Error: {e}");
             1
         })?;
 
     let matched_files = finder.search(&config).map_err(|e| {
-        eprintln!("Error: {}", e);
+        eprintln!("Error: {e}");
         1
     })?;
 
@@ -57,24 +57,19 @@ fn display_search_results(
             Commands::Pipeline { .. } => {
                 eprintln!("❌ No files found for pipeline scan upload");
                 eprintln!(
-                    "💡 Ensure files matching the pattern '{}' exist in the specified directory",
-                    filefilter
+                    "💡 Ensure files matching the pattern '{filefilter}' exist in the specified directory"
                 );
                 return Err(1);
             }
             Commands::Assessment { .. } => {
                 eprintln!("❌ No files found for assessment scan upload");
                 eprintln!(
-                    "💡 Ensure files matching the pattern '{}' exist in the specified directory",
-                    filefilter
+                    "💡 Ensure files matching the pattern '{filefilter}' exist in the specified directory"
                 );
                 return Err(1);
             }
             Commands::Policy { .. } => {
-                println!(
-                    "No files found {} matching the patterns: {}",
-                    search_type, filefilter
-                );
+                println!("No files found {search_type} matching the patterns: {filefilter}");
                 return Ok(());
             }
         }

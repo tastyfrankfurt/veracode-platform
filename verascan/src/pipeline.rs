@@ -1,5 +1,5 @@
 use sha2::{Digest, Sha256};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinSet;
 use veracode_platform::pipeline::{CreateScanRequest, DevStage, ScanConfig};
@@ -17,11 +17,11 @@ pub enum PipelineError {
 impl std::fmt::Display for PipelineError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            PipelineError::VeracodeError(e) => write!(f, "Veracode API error: {}", e),
-            PipelineError::PlatformPipelineError(e) => write!(f, "Pipeline API error: {}", e),
+            PipelineError::VeracodeError(e) => write!(f, "Veracode API error: {e}"),
+            PipelineError::PlatformPipelineError(e) => write!(f, "Pipeline API error: {e}"),
             PipelineError::NoValidFiles => write!(f, "No valid files found for scanning"),
-            PipelineError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
-            PipelineError::ScanError(msg) => write!(f, "Scan error: {}", msg),
+            PipelineError::ConfigError(msg) => write!(f, "Configuration error: {msg}"),
+            PipelineError::ScanError(msg) => write!(f, "Scan error: {msg}"),
         }
     }
 }
@@ -125,9 +125,9 @@ impl PipelineSubmitter {
 
         if self.config.debug {
             println!("📊 File Information:");
-            println!("   Binary Name: {}", binary_name);
-            println!("   Binary Size: {} bytes", file_size);
-            println!("   Binary Hash: {}", binary_hash);
+            println!("   Binary Name: {binary_name}");
+            println!("   Binary Size: {file_size} bytes");
+            println!("   Binary Hash: {binary_hash}");
         }
 
         // Convert selected modules to comma-separated string
@@ -160,7 +160,7 @@ impl PipelineSubmitter {
             println!("   Dev Stage: {:?}", scan_request.dev_stage);
             println!("   Timeout: {:?} minutes", scan_request.scan_timeout);
             if let Some(ref modules) = scan_request.include_modules {
-                println!("   Selected Modules: {}", modules);
+                println!("   Selected Modules: {modules}");
             } else {
                 println!("   Modules: All available modules");
             }
@@ -178,7 +178,7 @@ impl PipelineSubmitter {
         // Use app lookup if app_profile_name is provided
         let scan_result = if let Some(ref app_name) = self.config.app_profile_name {
             if self.config.debug {
-                println!("🔍 Looking up application profile: {}", app_name);
+                println!("🔍 Looking up application profile: {app_name}");
             }
             pipeline_api
                 .create_scan_with_app_lookup(scan_request, Some(app_name))
@@ -189,7 +189,7 @@ impl PipelineSubmitter {
 
         match scan_result {
             Ok(scan_result) => {
-                println!("✅ Pipeline scan created for file: {}", binary_name);
+                println!("✅ Pipeline scan created for file: {binary_name}");
                 if self.config.debug {
                     println!(
                         "✅ Pipeline scan created with scan id: {}",
@@ -200,7 +200,7 @@ impl PipelineSubmitter {
 
                 if let Some(upload_uri) = &scan_result.upload_uri {
                     if self.config.debug {
-                        println!("🔍 Upload URI: {}", upload_uri);
+                        println!("🔍 Upload URI: {upload_uri}");
                         println!("🔍 Expected segments: {:?}", scan_result.expected_segments);
                     }
 
@@ -246,20 +246,20 @@ impl PipelineSubmitter {
                                 .await
                             {
                                 Ok(_) => {
-                                    println!("✅ Scan started: {}", binary_name);
+                                    println!("✅ Scan started: {binary_name}");
                                     if self.config.debug {
                                         println!("✅ Scan started: {}", scan_result.scan_id);
                                     }
                                     Ok(scan_result.scan_id)
                                 }
                                 Err(e) => {
-                                    eprintln!("❌ Failed to start scan: {}", e);
+                                    eprintln!("❌ Failed to start scan: {e}");
                                     Err(PipelineError::from(e))
                                 }
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ Failed to upload file: {}", e);
+                            eprintln!("❌ Failed to upload file: {e}");
                             Err(PipelineError::from(e))
                         }
                     }
@@ -270,15 +270,15 @@ impl PipelineSubmitter {
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to create pipeline scan: {}", e);
+                eprintln!("❌ Failed to create pipeline scan: {e}");
                 Err(PipelineError::from(e))
             }
         }
     }
 
     /// Submit a single file for pipeline scanning
-    pub async fn submit_single_file(&self, file: &PathBuf) -> Result<String, PipelineError> {
-        self.submit_files(&[file.clone()]).await
+    pub async fn submit_single_file(&self, file: &Path) -> Result<String, PipelineError> {
+        self.submit_files(&[file.to_path_buf()]).await
     }
 
     /// Submit files and wait for results
@@ -293,11 +293,8 @@ impl PipelineSubmitter {
         let timeout_seconds = timeout_minutes * 60;
 
         if self.config.debug {
-            println!(
-                "⏳ Waiting for scan to complete (timeout: {} minutes)...",
-                timeout_minutes
-            );
-            println!("🔍 Polling scan status for ID: {}", scan_id);
+            println!("⏳ Waiting for scan to complete (timeout: {timeout_minutes} minutes)...");
+            println!("🔍 Polling scan status for ID: {scan_id}");
         } else {
             print!("⏳ Waiting for scan to complete");
             std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
@@ -309,7 +306,7 @@ impl PipelineSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Poll attempt {}/{}", poll_count, max_polls);
+                println!("🔄 Poll attempt {poll_count}/{max_polls}");
             }
 
             // First check scan status without trying to get findings
@@ -317,9 +314,9 @@ impl PipelineSubmitter {
                 Ok(scan) => {
                     if scan.scan_status.is_successful() {
                         if self.config.debug {
-                            println!("✅ Scan {} completed successfully!", scan_id);
+                            println!("✅ Scan {scan_id} completed successfully!");
                         } else {
-                            println!("\n✅ Scan completed: {}", scan_id);
+                            println!("\n✅ Scan completed: {scan_id}");
                         }
                         // Now that scan is complete, get the full results with findings
                         return pipeline_api
@@ -334,8 +331,7 @@ impl PipelineSubmitter {
                     } else if scan.scan_status.is_in_progress() {
                         if self.config.debug {
                             println!(
-                                "⏳ Scan {} in progress, waiting {} seconds...",
-                                scan_id, poll_interval
+                                "⏳ Scan {scan_id} in progress, waiting {poll_interval} seconds..."
                             );
                         } else {
                             print!(".");
@@ -356,10 +352,7 @@ impl PipelineSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!(
-                            "⚠️  Error getting scan status for {}: {}, retrying...",
-                            scan_id, e
-                        );
+                        println!("⚠️  Error getting scan status for {scan_id}: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -368,8 +361,7 @@ impl PipelineSubmitter {
         }
 
         Err(PipelineError::ScanError(format!(
-            "Scan timed out after {} minutes",
-            timeout_minutes
+            "Scan timed out after {timeout_minutes} minutes"
         )))
     }
 
@@ -379,7 +371,7 @@ impl PipelineSubmitter {
         scan_id: &str,
     ) -> Result<veracode_platform::pipeline::ScanResults, PipelineError> {
         if self.config.debug {
-            println!("📊 Retrieving results for scan ID: {}", scan_id);
+            println!("📊 Retrieving results for scan ID: {scan_id}");
         }
 
         let pipeline_api = self.client.pipeline_api_with_debug(self.config.debug);
@@ -421,7 +413,7 @@ impl PipelineSubmitter {
         }
 
         if let Some(project_uri) = &results.scan.project_uri {
-            println!("   Project URI: {}", project_uri);
+            println!("   Project URI: {project_uri}");
         }
     }
 
@@ -437,7 +429,7 @@ impl PipelineSubmitter {
         let num_threads = std::cmp::min(self.config.threads, files.len());
         println!("🚀 Starting {} concurrent pipeline scans", files.len());
         if self.config.debug {
-            println!("   Using {} threads", num_threads);
+            println!("   Using {num_threads} threads");
         }
 
         // Create a semaphore to limit concurrent operations
@@ -465,9 +457,9 @@ impl PipelineSubmitter {
                     Ok(scan_id) => {
                         let filename = file_clone.file_name().unwrap_or_default().to_string_lossy();
                         if submitter_clone.config.debug {
-                            println!("✅ Scan submitted: {} - ID: {}", filename, scan_id);
+                            println!("✅ Scan submitted: {filename} - ID: {scan_id}");
                         } else {
-                            println!("✅ Scan submitted: {}", filename);
+                            println!("✅ Scan submitted: {filename}");
                         }
                         Ok((index, scan_id))
                     }
@@ -496,7 +488,7 @@ impl PipelineSubmitter {
                     errors.push((index, error));
                 }
                 Err(join_error) => {
-                    eprintln!("❌ Task join error: {}", join_error);
+                    eprintln!("❌ Task join error: {join_error}");
                 }
             }
         }
@@ -567,14 +559,14 @@ impl PipelineSubmitter {
                 {
                     Ok(results) => {
                         if submitter_clone.config.debug {
-                            println!("✅ Scan completed: {}", scan_id_clone);
+                            println!("✅ Scan completed: {scan_id_clone}");
                         } else {
                             println!("✅ Scan completed");
                         }
                         Ok((index, results))
                     }
                     Err(e) => {
-                        eprintln!("❌ Scan failed: {} - {}", scan_id_clone, e);
+                        eprintln!("❌ Scan failed: {scan_id_clone} - {e}");
                         Err((index, e))
                     }
                 }
@@ -594,7 +586,7 @@ impl PipelineSubmitter {
                     errors.push((index, error));
                 }
                 Err(join_error) => {
-                    eprintln!("❌ Task join error: {}", join_error);
+                    eprintln!("❌ Task join error: {join_error}");
                 }
             }
         }
@@ -631,10 +623,7 @@ impl PipelineSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!(
-                    "🔄 Scan {}: Poll attempt {}/{}",
-                    scan_id, poll_count, max_polls
-                );
+                println!("🔄 Scan {scan_id}: Poll attempt {poll_count}/{max_polls}");
             }
 
             // First check scan status without trying to get findings
@@ -642,7 +631,7 @@ impl PipelineSubmitter {
                 Ok(scan) => {
                     if scan.scan_status.is_successful() {
                         if self.config.debug {
-                            println!("✅ Scan {} completed successfully!", scan_id);
+                            println!("✅ Scan {scan_id} completed successfully!");
                         }
                         // Only get full results when scan status is SUCCESS
                         return pipeline_api
@@ -657,8 +646,7 @@ impl PipelineSubmitter {
                     } else if scan.scan_status.is_in_progress() {
                         if self.config.debug {
                             println!(
-                                "⏳ Scan {} in progress, waiting {} seconds...",
-                                scan_id, poll_interval
+                                "⏳ Scan {scan_id} in progress, waiting {poll_interval} seconds..."
                             );
                         } else {
                             print!(".");
@@ -679,10 +667,7 @@ impl PipelineSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!(
-                            "⚠️  Error getting scan status for {}: {}, retrying...",
-                            scan_id, e
-                        );
+                        println!("⚠️  Error getting scan status for {scan_id}: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -691,8 +676,7 @@ impl PipelineSubmitter {
         }
 
         Err(PipelineError::ScanError(format!(
-            "Scan {} timed out after {} minutes",
-            scan_id, timeout_minutes
+            "Scan {scan_id} timed out after {timeout_minutes} minutes"
         )))
     }
 }

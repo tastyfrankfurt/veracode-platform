@@ -288,7 +288,7 @@ async fn demonstrate_error_handling(
 
     match scan_api.upload_large_file(missing_file_request).await {
         Err(veracode_platform::ScanError::FileNotFound(path)) => {
-            println!("         ✅ Correctly caught FileNotFound: {}", path);
+            println!("         ✅ Correctly caught FileNotFound: {path}");
         }
         Err(e) => println!("         ⚠️  Unexpected error: {e}"),
         Ok(_) => println!("         ⚠️  Unexpected success"),
@@ -364,7 +364,7 @@ async fn demonstrate_convenience_methods(
             sandbox_id,
             Some("convenience_progress.jar"),
             |bytes, total, pct| {
-                println!("            Progress: {:.1}% ({}/{})", pct, bytes, total);
+                println!("            Progress: {pct:.1}% ({bytes}/{total})");
             },
         )
         .await

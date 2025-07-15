@@ -23,7 +23,7 @@ pub fn create_finding_hash(finding: &Finding) -> String {
 
 /// Extract hash from finding_id (format: "cwe_id:file:line:hash")
 pub fn extract_hash_from_finding_id(finding_id: &str) -> String {
-    finding_id.split(':').last().unwrap_or("").to_string()
+    finding_id.split(':').next_back().unwrap_or("").to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,7 +197,7 @@ impl FindingsAggregator {
                 }
 
                 let finding_with_source = FindingWithSource {
-                    finding_id: self.generate_finding_id(&finding),
+                    finding_id: self.generate_finding_id(finding),
                     finding: finding.clone(),
                     source_scan: ScanSource {
                         scan_id: results.scan.scan_id.clone(),
@@ -523,14 +523,14 @@ impl FindingsAggregator {
                 escape_csv(&finding.files.source_file.file),
                 finding.files.source_file.line,
                 escape_csv(
-                    &finding
+                    finding
                         .files
                         .source_file
                         .function_name
                         .as_deref()
                         .unwrap_or("N/A")
                 ),
-                escape_csv(&finding.flaw_details_link.as_deref().unwrap_or("N/A"))
+                escape_csv(finding.flaw_details_link.as_deref().unwrap_or("N/A"))
             ));
         }
 
@@ -577,7 +577,7 @@ impl FindingsAggregator {
 
             if let Some(ref function_name) = finding.files.source_file.function_name {
                 if !function_name.is_empty() {
-                    println!("   ├─ Function: {}", function_name);
+                    println!("   ├─ Function: {function_name}");
                 }
             }
 
@@ -770,7 +770,7 @@ impl FindingsAggregator {
                     metadata.scan_id, metadata.scan_status
                 );
                 if let Some(ref uri) = metadata.project_uri {
-                    println!("      URI: {}", uri);
+                    println!("      URI: {uri}");
                 }
             }
         }

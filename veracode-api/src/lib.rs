@@ -480,7 +480,7 @@ mod tests {
     #[test]
     fn test_secure_api_id_debug_redaction() {
         let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
-        let debug_output = format!("{:?}", api_id);
+        let debug_output = format!("{api_id:?}");
         assert_eq!(debug_output, "[REDACTED]");
         assert!(!debug_output.contains("test_api_id_123"));
     }
@@ -488,7 +488,7 @@ mod tests {
     #[test]
     fn test_secure_api_key_debug_redaction() {
         let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
-        let debug_output = format!("{:?}", api_key);
+        let debug_output = format!("{api_key:?}");
         assert_eq!(debug_output, "[REDACTED]");
         assert!(!debug_output.contains("test_api_key_456"));
     }
@@ -499,7 +499,7 @@ mod tests {
             "test_api_id_123".to_string(),
             "test_api_key_456".to_string(),
         );
-        let debug_output = format!("{:?}", config);
+        let debug_output = format!("{config:?}");
 
         // Should show structure but redact actual values
         assert!(debug_output.contains("VeracodeConfig"));
@@ -566,6 +566,6 @@ mod tests {
         }
 
         // If this compiles, the From trait is implemented correctly
-        assert!(true);
+        // Test passes if no panic occurs
     }
 }

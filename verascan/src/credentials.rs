@@ -72,14 +72,14 @@ impl SecureApiCredentials {
         }
     }
 
-    pub fn extract_credentials(&self) -> Result<(String, String), ()> {
+    pub fn extract_credentials(&self) -> Result<(String, String), Box<dyn std::error::Error>> {
         match (&self.api_id, &self.api_key) {
             (Some(id), Some(key)) => Ok((id.as_str().to_string(), key.as_str().to_string())),
             _ => {
                 eprintln!("❌ Pipeline scan requires Veracode API credentials");
                 eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
                 eprintln!("💡 API credentials must contain only alphanumeric characters");
-                Err(())
+                Err("Missing API credentials".into())
             }
         }
     }
@@ -87,13 +87,12 @@ impl SecureApiCredentials {
 
 pub fn validate_api_credential(value: &str, field_name: &str) -> Result<(), String> {
     if value.is_empty() {
-        return Err(format!("{} cannot be empty", field_name));
+        return Err(format!("{field_name} cannot be empty"));
     }
 
     if !value.chars().all(|c| c.is_alphanumeric()) {
         return Err(format!(
-            "{} must contain only alphanumeric characters",
-            field_name
+            "{field_name} must contain only alphanumeric characters"
         ));
     }
 
@@ -104,7 +103,7 @@ pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     args.api_id = match std::env::var("VERACODE_API_ID") {
         Ok(id) => {
             if let Err(e) = validate_api_credential(&id, "VERACODE_API_ID") {
-                eprintln!("❌ Invalid VERACODE_API_ID: {}", e);
+                eprintln!("❌ Invalid VERACODE_API_ID: {e}");
                 return Err(1);
             }
             Some(id)
@@ -115,7 +114,7 @@ pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     args.api_key = match std::env::var("VERACODE_API_KEY") {
         Ok(key) => {
             if let Err(e) = validate_api_credential(&key, "VERACODE_API_KEY") {
-                eprintln!("❌ Invalid VERACODE_API_KEY: {}", e);
+                eprintln!("❌ Invalid VERACODE_API_KEY: {e}");
                 return Err(1);
             }
             Some(key)
@@ -131,7 +130,7 @@ pub fn load_secure_api_credentials() -> Result<SecureApiCredentials, i32> {
     let api_id = match std::env::var("VERACODE_API_ID") {
         Ok(id) => {
             if let Err(e) = validate_api_credential(&id, "VERACODE_API_ID") {
-                eprintln!("❌ Invalid VERACODE_API_ID: {}", e);
+                eprintln!("❌ Invalid VERACODE_API_ID: {e}");
                 return Err(1);
             }
             Some(id)
@@ -142,7 +141,7 @@ pub fn load_secure_api_credentials() -> Result<SecureApiCredentials, i32> {
     let api_key = match std::env::var("VERACODE_API_KEY") {
         Ok(key) => {
             if let Err(e) = validate_api_credential(&key, "VERACODE_API_KEY") {
-                eprintln!("❌ Invalid VERACODE_API_KEY: {}", e);
+                eprintln!("❌ Invalid VERACODE_API_KEY: {e}");
                 return Err(1);
             }
             Some(key)
@@ -153,14 +152,16 @@ pub fn load_secure_api_credentials() -> Result<SecureApiCredentials, i32> {
     Ok(SecureApiCredentials::new(api_id, api_key))
 }
 
-pub fn check_pipeline_credentials(args: &Args) -> Result<(String, String), ()> {
+pub fn check_pipeline_credentials(
+    args: &Args,
+) -> Result<(String, String), Box<dyn std::error::Error>> {
     match (&args.api_id, &args.api_key) {
         (Some(id), Some(key)) => Ok((id.clone(), key.clone())),
         _ => {
             eprintln!("❌ Pipeline scan requires Veracode API credentials");
             eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
             eprintln!("💡 API credentials must contain only alphanumeric characters");
-            Err(())
+            Err("Missing API credentials".into())
         }
     }
 }
@@ -168,7 +169,7 @@ pub fn check_pipeline_credentials(args: &Args) -> Result<(String, String), ()> {
 /// Check pipeline credentials using secure wrapper
 pub fn check_secure_pipeline_credentials(
     secure_creds: &SecureApiCredentials,
-) -> Result<(String, String), ()> {
+) -> Result<(String, String), Box<dyn std::error::Error>> {
     secure_creds.extract_credentials()
 }
 
@@ -179,7 +180,7 @@ mod tests {
     #[test]
     fn test_secure_api_id_debug_redaction() {
         let api_id = SecureApiId::new("test_api_id_123".to_string());
-        let debug_output = format!("{:?}", api_id);
+        let debug_output = format!("{api_id:?}");
         assert_eq!(debug_output, "[REDACTED]");
         assert!(!debug_output.contains("test_api_id_123"));
     }
@@ -187,7 +188,7 @@ mod tests {
     #[test]
     fn test_secure_api_key_debug_redaction() {
         let api_key = SecureApiKey::new("test_api_key_456".to_string());
-        let debug_output = format!("{:?}", api_key);
+        let debug_output = format!("{api_key:?}");
         assert_eq!(debug_output, "[REDACTED]");
         assert!(!debug_output.contains("test_api_key_456"));
     }
@@ -198,7 +199,7 @@ mod tests {
             Some("test_api_id_123".to_string()),
             Some("test_api_key_456".to_string()),
         );
-        let debug_output = format!("{:?}", creds);
+        let debug_output = format!("{creds:?}");
 
         // Should show structure but redact actual values
         assert!(debug_output.contains("SecureApiCredentials"));

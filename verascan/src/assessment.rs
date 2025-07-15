@@ -80,9 +80,9 @@ fn format_bytes(bytes: u64) -> String {
     }
 
     if unit_index == 0 {
-        format!("{} {}", bytes, UNITS[unit_index])
+        format!("{bytes} {}", UNITS[unit_index])
     } else {
-        format!("{:.1} {}", size, UNITS[unit_index])
+        format!("{size:.1} {}", UNITS[unit_index])
     }
 }
 
@@ -100,13 +100,13 @@ pub enum AssessmentError {
 impl std::fmt::Display for AssessmentError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            AssessmentError::VeracodeError(e) => write!(f, "Veracode API error: {}", e),
+            AssessmentError::VeracodeError(e) => write!(f, "Veracode API error: {e}"),
             AssessmentError::NoValidFiles => write!(f, "No valid files found for scanning"),
-            AssessmentError::ConfigError(msg) => write!(f, "Configuration error: {}", msg),
-            AssessmentError::ScanError(msg) => write!(f, "Scan error: {}", msg),
-            AssessmentError::UploadError(msg) => write!(f, "Upload error: {}", msg),
-            AssessmentError::SandboxError(msg) => write!(f, "Sandbox error: {}", msg),
-            AssessmentError::PolicyError(msg) => write!(f, "Policy error: {}", msg),
+            AssessmentError::ConfigError(msg) => write!(f, "Configuration error: {msg}"),
+            AssessmentError::ScanError(msg) => write!(f, "Scan error: {msg}"),
+            AssessmentError::UploadError(msg) => write!(f, "Upload error: {msg}"),
+            AssessmentError::SandboxError(msg) => write!(f, "Sandbox error: {msg}"),
+            AssessmentError::PolicyError(msg) => write!(f, "Policy error: {msg}"),
         }
     }
 }
@@ -135,6 +135,7 @@ pub struct AssessmentScanConfig {
     pub timeout: u32,
     pub threads: usize,
     pub debug: bool,
+    pub skip_prescan: bool,
     pub autoscan: bool,
     pub export_results_path: String,
     pub deleteincompletescan: u8,
@@ -151,6 +152,7 @@ impl Default for AssessmentScanConfig {
             timeout: 60, // 60 minutes default for assessment scans
             threads: 4,  // 4 threads default for assessment uploads
             debug: false,
+            skip_prescan: false,
             autoscan: true, // Enable autoscan by default
             export_results_path: "assessment-results.json".to_string(),
             deleteincompletescan: 1, // Default to policy 1 (delete safe builds only)
@@ -188,8 +190,7 @@ impl AssessmentSubmitter {
                 if let Some(ref sandbox_name) = self.config.sandbox_name {
                     if self.config.debug {
                         println!(
-                            "🔍 Ensuring sandbox exists and getting legacy ID: {}",
-                            sandbox_name
+                            "🔍 Ensuring sandbox exists and getting legacy ID: {sandbox_name}"
                         );
                     }
 
@@ -200,14 +201,14 @@ impl AssessmentSubmitter {
                     {
                         Ok(Some(sandbox)) => {
                             if self.config.debug {
-                                println!("✅ Sandbox already exists: {}", sandbox_name);
+                                println!("✅ Sandbox already exists: {sandbox_name}");
                             }
                             sandbox
                         }
                         Ok(None) | Err(_) => {
                             // Sandbox doesn't exist, create it
                             if self.config.debug {
-                                println!("📦 Creating new sandbox: {}", sandbox_name);
+                                println!("📦 Creating new sandbox: {sandbox_name}");
                             }
 
                             match sandbox_api
@@ -215,14 +216,13 @@ impl AssessmentSubmitter {
                                 .await
                             {
                                 Ok(created_sandbox) => {
-                                    println!("✅ Sandbox created: {}", sandbox_name);
+                                    println!("✅ Sandbox created: {sandbox_name}");
                                     created_sandbox
                                 }
                                 Err(e) => {
-                                    eprintln!("❌ Failed to create sandbox: {}", e);
+                                    eprintln!("❌ Failed to create sandbox: {e}");
                                     return Err(AssessmentError::SandboxError(format!(
-                                        "Failed to create sandbox {}: {}",
-                                        sandbox_name, e
+                                        "Failed to create sandbox {sandbox_name}: {e}"
                                     )));
                                 }
                             }
@@ -289,10 +289,9 @@ impl AssessmentSubmitter {
                 Ok(build.build_id)
             }
             Err(e) => {
-                eprintln!("❌ Failed to ensure build exists: {}", e);
+                eprintln!("❌ Failed to ensure build exists: {e}");
                 Err(AssessmentError::ScanError(format!(
-                    "Failed to ensure build exists: {}",
-                    e
+                    "Failed to ensure build exists: {e}"
                 )))
             }
         }
@@ -369,10 +368,7 @@ impl AssessmentSubmitter {
             match self.config.scan_type {
                 ScanType::Sandbox => {
                     if let Some(ref sandbox_name) = self.config.sandbox_name {
-                        println!(
-                            "   Sandbox: {} (Legacy ID: {:?})",
-                            sandbox_name, sandbox_legacy_id
-                        );
+                        println!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
                     }
                 }
                 ScanType::Policy => {
@@ -405,11 +401,11 @@ impl AssessmentSubmitter {
                         .and_then(|name| name.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    println!("✅ File uploaded: {}", file_name);
+                    println!("✅ File uploaded: {file_name}");
                     uploaded_files.push(file_name);
                 }
                 Err(e) => {
-                    eprintln!("❌ Failed to upload file: {}", e);
+                    eprintln!("❌ Failed to upload file: {e}");
                     return Err(e);
                 }
             }
@@ -437,7 +433,7 @@ impl AssessmentSubmitter {
         if self.config.debug {
             println!("🚀 Starting concurrent file upload for assessment scan");
             println!("📁 Files to upload: {}", files.len());
-            println!("   Using {} threads", num_threads);
+            println!("   Using {num_threads} threads");
             println!("   App Profile: {}", self.config.app_profile_name);
             println!(
                 "   App ID: {} (GUID: {})",
@@ -447,10 +443,7 @@ impl AssessmentSubmitter {
             match self.config.scan_type {
                 ScanType::Sandbox => {
                     if let Some(ref sandbox_name) = self.config.sandbox_name {
-                        println!(
-                            "   Sandbox: {} (Legacy ID: {:?})",
-                            sandbox_name, sandbox_legacy_id
-                        );
+                        println!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
                     }
                 }
                 ScanType::Policy => {
@@ -509,7 +502,7 @@ impl AssessmentSubmitter {
                                 file_name
                             );
                         } else {
-                            println!("✅ File uploaded: {}", file_name);
+                            println!("✅ File uploaded: {file_name}");
                         }
                         Ok((index, file_name))
                     }
@@ -547,7 +540,7 @@ impl AssessmentSubmitter {
                 Err(join_error) => {
                     has_error = true;
                     if first_error.is_none() {
-                        first_error = Some(format!("Task join error: {}", join_error));
+                        first_error = Some(format!("Task join error: {join_error}"));
                     }
                 }
             }
@@ -601,15 +594,14 @@ impl AssessmentSubmitter {
             Ok(metadata) => metadata.len(),
             Err(e) => {
                 return Err(AssessmentError::UploadError(format!(
-                    "Failed to get file size for {}: {}",
-                    file_name, e
+                    "Failed to get file size for {file_name}: {e}"
                 )));
             }
         };
 
         if self.config.debug {
             let size_mb = file_size as f64 / (1024.0 * 1024.0);
-            println!("📁 File: {} ({:.2} MB)", file_name, size_mb);
+            println!("📁 File: {file_name} ({size_mb:.2} MB)");
 
             if file_size > SIZE_THRESHOLD {
                 println!("   Using large file upload (>100MB)");
@@ -717,8 +709,7 @@ impl AssessmentSubmitter {
         match upload_result {
             Ok(_) => Ok(()),
             Err(e) => Err(AssessmentError::UploadError(format!(
-                "Failed to upload {}: {}",
-                file_name, e
+                "Failed to upload {file_name}: {e}"
             ))),
         }
     }
@@ -777,17 +768,16 @@ impl AssessmentSubmitter {
 
         match prescan_result {
             Ok(build_id) => {
-                println!("✅ Prescan started with build ID: {}", build_id);
+                println!("✅ Prescan started with build ID: {build_id}");
                 if self.config.debug {
-                    println!("🔍 Prescan build ID: {}", build_id);
+                    println!("🔍 Prescan build ID: {build_id}");
                 }
                 Ok(build_id)
             }
             Err(e) => {
-                eprintln!("❌ Failed to start prescan: {}", e);
+                eprintln!("❌ Failed to start prescan: {e}");
                 Err(AssessmentError::ScanError(format!(
-                    "Failed to start prescan: {}",
-                    e
+                    "Failed to start prescan: {e}"
                 )))
             }
         }
@@ -802,7 +792,7 @@ impl AssessmentSubmitter {
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
             println!("🚀 Starting scan analysis...");
-            println!("   Build ID: {}", build_id);
+            println!("   Build ID: {build_id}");
         }
 
         let scan_api = self.client.scan_api();
@@ -874,15 +864,14 @@ impl AssessmentSubmitter {
             Ok(_) => {
                 println!("✅ Scan started successfully");
                 if self.config.debug {
-                    println!("🔍 Scan initiated for build: {}", build_id);
+                    println!("🔍 Scan initiated for build: {build_id}");
                 }
                 Ok(())
             }
             Err(e) => {
-                eprintln!("❌ Failed to start scan: {}", e);
+                eprintln!("❌ Failed to start scan: {e}");
                 Err(AssessmentError::ScanError(format!(
-                    "Failed to start scan: {}",
-                    e
+                    "Failed to start scan: {e}"
                 )))
             }
         }
@@ -912,10 +901,8 @@ impl AssessmentSubmitter {
             if self.config.debug {
                 println!("🔄 Autoscan disabled, will manually start scan after prescan completes");
             }
-        } else {
-            if self.config.debug {
-                println!("🤖 Autoscan enabled, scan will start automatically after prescan");
-            }
+        } else if self.config.debug {
+            println!("🤖 Autoscan enabled, scan will start automatically after prescan");
         }
 
         // Use two-phase monitoring approach matching Java implementation
@@ -965,7 +952,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Prescan poll attempt {}/{}", poll_count, max_polls);
+                println!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1012,7 +999,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting prescan status: {}, retrying...", e);
+                        println!("⚠️  Error getting prescan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1021,8 +1008,7 @@ impl AssessmentSubmitter {
         }
 
         Err(AssessmentError::ScanError(format!(
-            "Prescan timed out after {} minutes",
-            timeout_minutes
+            "Prescan timed out after {timeout_minutes} minutes"
         )))
     }
 
@@ -1044,7 +1030,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Scan poll attempt {}/{}", poll_count, max_polls);
+                println!("🔄 Scan poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1061,9 +1047,9 @@ impl AssessmentSubmitter {
                     let status = &build_info.status;
 
                     if self.config.debug {
-                        println!("📊 Scan status: {}", status);
+                        println!("📊 Scan status: {status}");
                         if let Some(progress) = build_info.scan_progress_percentage {
-                            println!("📈 Progress: {}%", progress);
+                            println!("📈 Progress: {progress}%");
                         }
                     }
 
@@ -1078,8 +1064,7 @@ impl AssessmentSubmitter {
                         "Scan In Progress" | "Submitted to Engine" | "Pre-Scan Success" => {
                             if self.config.debug {
                                 println!(
-                                    "⏳ Scan status: {}, waiting {} seconds...",
-                                    status, poll_interval
+                                    "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             } else {
                                 print!(".");
@@ -1095,15 +1080,13 @@ impl AssessmentSubmitter {
                                 || status.contains("Cancelled") =>
                         {
                             return Err(AssessmentError::ScanError(format!(
-                                "Scan failed with status: {}",
-                                status
+                                "Scan failed with status: {status}"
                             )));
                         }
                         _ => {
                             if self.config.debug {
                                 println!(
-                                    "⏳ Scan status: {}, waiting {} seconds...",
-                                    status, poll_interval
+                                    "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             } else {
                                 print!(".");
@@ -1117,7 +1100,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting scan status: {}, retrying...", e);
+                        println!("⚠️  Error getting scan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1126,8 +1109,7 @@ impl AssessmentSubmitter {
         }
 
         Err(AssessmentError::ScanError(format!(
-            "Scan timed out after {} minutes",
-            timeout_minutes
+            "Scan timed out after {timeout_minutes} minutes"
         )))
     }
 
@@ -1190,7 +1172,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Prescan poll attempt {}/{}", poll_count, max_polls);
+                println!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1219,12 +1201,11 @@ impl AssessmentSubmitter {
                                 prescan_results.status
                             )));
                         }
-                        "Pre-Scan Submitted" | _ => {
+                        _ => {
                             // Continue polling for other statuses (including "Pre-Scan Submitted")
                             if self.config.debug {
                                 println!(
-                                    "⏳ Prescan in progress, waiting {} seconds...",
-                                    poll_interval
+                                    "⏳ Prescan in progress, waiting {poll_interval} seconds..."
                                 );
                             } else {
                                 print!(".");
@@ -1238,7 +1219,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting prescan status: {}, retrying...", e);
+                        println!("⚠️  Error getting prescan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1247,8 +1228,7 @@ impl AssessmentSubmitter {
         }
 
         Err(AssessmentError::ScanError(format!(
-            "Prescan phase timed out after {} minutes",
-            timeout_minutes
+            "Prescan phase timed out after {timeout_minutes} minutes"
         )))
     }
 
@@ -1270,7 +1250,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Build status poll attempt {}/{}", poll_count, max_polls);
+                println!("🔄 Build status poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1286,7 +1266,7 @@ impl AssessmentSubmitter {
                     if self.config.debug {
                         println!("📊 Build status: {}", build_info.status);
                         if let Some(progress) = build_info.scan_progress_percentage {
-                            println!("📈 Progress: {}%", progress);
+                            println!("📈 Progress: {progress}%");
                         }
                     }
 
@@ -1301,10 +1281,7 @@ impl AssessmentSubmitter {
                         | "Pre-Scan Success" => {
                             // Continue polling for active scan states
                             if self.config.debug {
-                                println!(
-                                    "⏳ Scan in progress, waiting {} seconds...",
-                                    poll_interval
-                                );
+                                println!("⏳ Scan in progress, waiting {poll_interval} seconds...");
                             } else {
                                 print!(".");
                             }
@@ -1319,8 +1296,7 @@ impl AssessmentSubmitter {
                                 || status.contains("Cancelled") =>
                         {
                             return Err(AssessmentError::ScanError(format!(
-                                "Scan failed with status: {}",
-                                status
+                                "Scan failed with status: {status}"
                             )));
                         }
                         _ => {
@@ -1342,7 +1318,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting build status: {}, retrying...", e);
+                        println!("⚠️  Error getting build status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1351,8 +1327,7 @@ impl AssessmentSubmitter {
         }
 
         Err(AssessmentError::ScanError(format!(
-            "Build monitoring phase timed out after {} minutes",
-            timeout_minutes
+            "Build monitoring phase timed out after {timeout_minutes} minutes"
         )))
     }
 
@@ -1434,26 +1409,23 @@ impl AssessmentSubmitter {
                                     self.config.export_results_path, e
                                 );
                                 Err(AssessmentError::UploadError(format!(
-                                    "Failed to write results: {}",
-                                    e
+                                    "Failed to write results: {e}"
                                 )))
                             }
                         }
                     }
                     Err(e) => {
-                        eprintln!("❌ Failed to serialize results: {}", e);
+                        eprintln!("❌ Failed to serialize results: {e}");
                         Err(AssessmentError::UploadError(format!(
-                            "Failed to serialize results: {}",
-                            e
+                            "Failed to serialize results: {e}"
                         )))
                     }
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to retrieve results: {}", e);
+                eprintln!("❌ Failed to retrieve results: {e}");
                 Err(AssessmentError::ScanError(format!(
-                    "Failed to retrieve results: {}",
-                    e
+                    "Failed to retrieve results: {e}"
                 )))
             }
         }
@@ -1468,7 +1440,7 @@ impl AssessmentSubmitter {
         println!("   App Profile: {}", self.config.app_profile_name);
         println!("   Scan Type: {:?}", self.config.scan_type);
         if let Some(ref sandbox_name) = self.config.sandbox_name {
-            println!("   Sandbox: {}", sandbox_name);
+            println!("   Sandbox: {sandbox_name}");
         }
         println!("   Auto-recreate Sandbox: enabled");
         println!(
@@ -1530,6 +1502,7 @@ mod tests {
             timeout: 90,
             threads: 8,
             debug: true,
+            skip_prescan: false,
             autoscan: false,
             export_results_path: "custom-results.json".to_string(),
             deleteincompletescan: 2,

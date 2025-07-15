@@ -56,7 +56,7 @@ pub enum BuildStatus {
 
 impl BuildStatus {
     /// Parse a build status string from the Veracode API
-    pub fn from_str(status: &str) -> Self {
+    pub fn from_string(status: &str) -> Self {
         match status {
             "Incomplete" => BuildStatus::Incomplete,
             "Not Submitted" => BuildStatus::NotSubmitted,
@@ -703,210 +703,15 @@ impl BuildApi {
                     match e.name().as_ref() {
                         b"build" => {
                             inside_build = true;
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    let key = String::from_utf8_lossy(attr.key.as_ref());
-                                    let value = String::from_utf8_lossy(&attr.value);
-
-                                    match key.as_ref() {
-                                        "build_id" => build.build_id = value.to_string(),
-                                        "app_id" => build.app_id = value.to_string(),
-                                        "version" => build.version = Some(value.to_string()),
-                                        "app_name" => build.app_name = Some(value.to_string()),
-                                        "sandbox_id" => build.sandbox_id = Some(value.to_string()),
-                                        "sandbox_name" => {
-                                            build.sandbox_name = Some(value.to_string())
-                                        }
-                                        "lifecycle_stage" => {
-                                            build.lifecycle_stage = Some(value.to_string())
-                                        }
-                                        "submitter" => build.submitter = Some(value.to_string()),
-                                        "platform" => build.platform = Some(value.to_string()),
-                                        "analysis_unit" => {
-                                            build.analysis_unit = Some(value.to_string())
-                                        }
-                                        "policy_name" => {
-                                            build.policy_name = Some(value.to_string())
-                                        }
-                                        "policy_version" => {
-                                            build.policy_version = Some(value.to_string())
-                                        }
-                                        "policy_compliance_status" => {
-                                            build.policy_compliance_status = Some(value.to_string())
-                                        }
-                                        "rules_status" => {
-                                            build.rules_status = Some(value.to_string())
-                                        }
-                                        "grace_period_expired" => {
-                                            build.grace_period_expired = value.parse::<bool>().ok();
-                                        }
-                                        "scan_overdue" => {
-                                            build.scan_overdue = value.parse::<bool>().ok();
-                                        }
-                                        "legacy_scan_engine" => {
-                                            build.legacy_scan_engine = value.parse::<bool>().ok();
-                                        }
-                                        "launch_date" => {
-                                            if let Ok(date) =
-                                                NaiveDate::parse_from_str(&value, "%m/%d/%Y")
-                                            {
-                                                build.launch_date = Some(date);
-                                            }
-                                        }
-                                        "policy_updated_date" => {
-                                            if let Ok(datetime) =
-                                                chrono::DateTime::parse_from_rfc3339(&value)
-                                            {
-                                                build.policy_updated_date =
-                                                    Some(datetime.with_timezone(&Utc));
-                                            }
-                                        }
-                                        _ => {
-                                            build
-                                                .attributes
-                                                .insert(key.to_string(), value.to_string());
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        b"analysis_unit" if inside_build => {
-                            // Parse analysis_unit element nested inside build (primary source for build status)
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    let key = String::from_utf8_lossy(attr.key.as_ref());
-                                    let value = String::from_utf8_lossy(&attr.value);
-
-                                    // Store all analysis_unit attributes, especially status
-                                    match key.as_ref() {
-                                        "status" => {
-                                            // Store the analysis_unit status as the primary status
-                                            build
-                                                .attributes
-                                                .insert("status".to_string(), value.to_string());
-                                        }
-                                        _ => {
-                                            // Store other analysis_unit attributes with prefix
-                                            build.attributes.insert(
-                                                format!("analysis_{}", key),
-                                                value.to_string(),
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(Event::Empty(ref e)) => {
-                    // Handle self-closing elements like <analysis_unit ... />
-                    if e.name().as_ref() == b"analysis_unit" && inside_build {
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                let key = String::from_utf8_lossy(attr.key.as_ref());
-                                let value = String::from_utf8_lossy(&attr.value);
-
-                                match key.as_ref() {
-                                    "status" => {
-                                        build
-                                            .attributes
-                                            .insert("status".to_string(), value.to_string());
-                                    }
-                                    _ => {
-                                        build
-                                            .attributes
-                                            .insert(format!("analysis_{}", key), value.to_string());
-                                    }
-                                }
-                            }
-                        }
-                    }
-                }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == b"build" {
-                        inside_build = false;
-                    }
-                }
-                Ok(Event::Eof) => break,
-                Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
-                _ => {}
-            }
-            buf.clear();
-        }
-
-        if build.build_id.is_empty() {
-            return Err(BuildError::XmlParsingError(
-                "No build information found in response".to_string(),
-            ));
-        }
-
-        Ok(build)
-    }
-
-    /// Parse build list XML response
-    fn parse_build_list(&self, xml: &str) -> Result<BuildList, BuildError> {
-        let mut reader = Reader::from_str(xml);
-        reader.config_mut().trim_text(true);
-
-        let mut buf = Vec::new();
-        let mut build_list = BuildList {
-            account_id: None,
-            app_id: String::new(),
-            app_name: None,
-            builds: Vec::new(),
-        };
-
-        loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) => match e.name().as_ref() {
-                    b"buildlist" => {
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                let key = String::from_utf8_lossy(attr.key.as_ref());
-                                let value = String::from_utf8_lossy(&attr.value);
-
-                                match key.as_ref() {
-                                    "account_id" => build_list.account_id = Some(value.to_string()),
-                                    "app_id" => build_list.app_id = value.to_string(),
-                                    "app_name" => build_list.app_name = Some(value.to_string()),
-                                    _ => {}
-                                }
-                            }
-                        }
-                    }
-                    b"build" => {
-                        let mut build = Build {
-                            build_id: String::new(),
-                            app_id: build_list.app_id.clone(),
-                            version: None,
-                            app_name: build_list.app_name.clone(),
-                            sandbox_id: None,
-                            sandbox_name: None,
-                            lifecycle_stage: None,
-                            launch_date: None,
-                            submitter: None,
-                            platform: None,
-                            analysis_unit: None,
-                            policy_name: None,
-                            policy_version: None,
-                            policy_compliance_status: None,
-                            rules_status: None,
-                            grace_period_expired: None,
-                            scan_overdue: None,
-                            policy_updated_date: None,
-                            legacy_scan_engine: None,
-                            attributes: HashMap::new(),
-                        };
-
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
+                            for attr in e.attributes().flatten() {
                                 let key = String::from_utf8_lossy(attr.key.as_ref());
                                 let value = String::from_utf8_lossy(&attr.value);
 
                                 match key.as_ref() {
                                     "build_id" => build.build_id = value.to_string(),
+                                    "app_id" => build.app_id = value.to_string(),
                                     "version" => build.version = Some(value.to_string()),
+                                    "app_name" => build.app_name = Some(value.to_string()),
                                     "sandbox_id" => build.sandbox_id = Some(value.to_string()),
                                     "sandbox_name" => build.sandbox_name = Some(value.to_string()),
                                     "lifecycle_stage" => {
@@ -955,6 +760,177 @@ impl BuildApi {
                                 }
                             }
                         }
+                        b"analysis_unit" if inside_build => {
+                            // Parse analysis_unit element nested inside build (primary source for build status)
+                            for attr in e.attributes().flatten() {
+                                let key = String::from_utf8_lossy(attr.key.as_ref());
+                                let value = String::from_utf8_lossy(&attr.value);
+
+                                // Store all analysis_unit attributes, especially status
+                                match key.as_ref() {
+                                    "status" => {
+                                        // Store the analysis_unit status as the primary status
+                                        build
+                                            .attributes
+                                            .insert("status".to_string(), value.to_string());
+                                    }
+                                    _ => {
+                                        // Store other analysis_unit attributes with prefix
+                                        build
+                                            .attributes
+                                            .insert(format!("analysis_{key}"), value.to_string());
+                                    }
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing elements like <analysis_unit ... />
+                    if e.name().as_ref() == b"analysis_unit" && inside_build {
+                        for attr in e.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            match key.as_ref() {
+                                "status" => {
+                                    build
+                                        .attributes
+                                        .insert("status".to_string(), value.to_string());
+                                }
+                                _ => {
+                                    build
+                                        .attributes
+                                        .insert(format!("analysis_{key}"), value.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"build" {
+                        inside_build = false;
+                    }
+                }
+                Ok(Event::Eof) => break,
+                Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
+                _ => {}
+            }
+            buf.clear();
+        }
+
+        if build.build_id.is_empty() {
+            return Err(BuildError::XmlParsingError(
+                "No build information found in response".to_string(),
+            ));
+        }
+
+        Ok(build)
+    }
+
+    /// Parse build list XML response
+    fn parse_build_list(&self, xml: &str) -> Result<BuildList, BuildError> {
+        let mut reader = Reader::from_str(xml);
+        reader.config_mut().trim_text(true);
+
+        let mut buf = Vec::new();
+        let mut build_list = BuildList {
+            account_id: None,
+            app_id: String::new(),
+            app_name: None,
+            builds: Vec::new(),
+        };
+
+        loop {
+            match reader.read_event_into(&mut buf) {
+                Ok(Event::Start(ref e)) => match e.name().as_ref() {
+                    b"buildlist" => {
+                        for attr in e.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            match key.as_ref() {
+                                "account_id" => build_list.account_id = Some(value.to_string()),
+                                "app_id" => build_list.app_id = value.to_string(),
+                                "app_name" => build_list.app_name = Some(value.to_string()),
+                                _ => {}
+                            }
+                        }
+                    }
+                    b"build" => {
+                        let mut build = Build {
+                            build_id: String::new(),
+                            app_id: build_list.app_id.clone(),
+                            version: None,
+                            app_name: build_list.app_name.clone(),
+                            sandbox_id: None,
+                            sandbox_name: None,
+                            lifecycle_stage: None,
+                            launch_date: None,
+                            submitter: None,
+                            platform: None,
+                            analysis_unit: None,
+                            policy_name: None,
+                            policy_version: None,
+                            policy_compliance_status: None,
+                            rules_status: None,
+                            grace_period_expired: None,
+                            scan_overdue: None,
+                            policy_updated_date: None,
+                            legacy_scan_engine: None,
+                            attributes: HashMap::new(),
+                        };
+
+                        for attr in e.attributes().flatten() {
+                            let key = String::from_utf8_lossy(attr.key.as_ref());
+                            let value = String::from_utf8_lossy(&attr.value);
+
+                            match key.as_ref() {
+                                "build_id" => build.build_id = value.to_string(),
+                                "version" => build.version = Some(value.to_string()),
+                                "sandbox_id" => build.sandbox_id = Some(value.to_string()),
+                                "sandbox_name" => build.sandbox_name = Some(value.to_string()),
+                                "lifecycle_stage" => {
+                                    build.lifecycle_stage = Some(value.to_string())
+                                }
+                                "submitter" => build.submitter = Some(value.to_string()),
+                                "platform" => build.platform = Some(value.to_string()),
+                                "analysis_unit" => build.analysis_unit = Some(value.to_string()),
+                                "policy_name" => build.policy_name = Some(value.to_string()),
+                                "policy_version" => build.policy_version = Some(value.to_string()),
+                                "policy_compliance_status" => {
+                                    build.policy_compliance_status = Some(value.to_string())
+                                }
+                                "rules_status" => build.rules_status = Some(value.to_string()),
+                                "grace_period_expired" => {
+                                    build.grace_period_expired = value.parse::<bool>().ok();
+                                }
+                                "scan_overdue" => {
+                                    build.scan_overdue = value.parse::<bool>().ok();
+                                }
+                                "legacy_scan_engine" => {
+                                    build.legacy_scan_engine = value.parse::<bool>().ok();
+                                }
+                                "launch_date" => {
+                                    if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y")
+                                    {
+                                        build.launch_date = Some(date);
+                                    }
+                                }
+                                "policy_updated_date" => {
+                                    if let Ok(datetime) =
+                                        chrono::DateTime::parse_from_rfc3339(&value)
+                                    {
+                                        build.policy_updated_date =
+                                            Some(datetime.with_timezone(&Utc));
+                                    }
+                                }
+                                _ => {
+                                    build.attributes.insert(key.to_string(), value.to_string());
+                                }
+                            }
+                        }
 
                         if !build.build_id.is_empty() {
                             build_list.builds.push(build);
@@ -985,11 +961,8 @@ impl BuildApi {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == b"result" {
                         // Read the text content of the result element
-                        match reader.read_event_into(&mut buf) {
-                            Ok(Event::Text(e)) => {
-                                result = String::from_utf8_lossy(&e).to_string();
-                            }
-                            _ => {}
+                        if let Ok(Event::Text(e)) = reader.read_event_into(&mut buf) {
+                            result = String::from_utf8_lossy(&e).to_string();
                         }
                     }
                 }
@@ -1298,22 +1271,25 @@ mod tests {
         }
 
         // If this compiles, the methods have correct signatures
-        assert!(true);
+        // Test passes if no panic occurs
     }
 
     #[test]
     fn test_build_status_from_str() {
-        assert_eq!(BuildStatus::from_str("Incomplete"), BuildStatus::Incomplete);
         assert_eq!(
-            BuildStatus::from_str("Results Ready"),
+            BuildStatus::from_string("Incomplete"),
+            BuildStatus::Incomplete
+        );
+        assert_eq!(
+            BuildStatus::from_string("Results Ready"),
             BuildStatus::ResultsReady
         );
         assert_eq!(
-            BuildStatus::from_str("Pre-Scan Failed"),
+            BuildStatus::from_string("Pre-Scan Failed"),
             BuildStatus::PreScanFailed
         );
         assert_eq!(
-            BuildStatus::from_str("Unknown Status"),
+            BuildStatus::from_string("Unknown Status"),
             BuildStatus::Unknown("Unknown Status".to_string())
         );
     }

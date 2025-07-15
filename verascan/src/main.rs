@@ -13,7 +13,7 @@ fn main() {
 
     // Validate conditional requirements
     if let Err(e) = args.validate_conditional_requirements() {
-        eprintln!("❌ {}", e);
+        eprintln!("❌ {e}");
         std::process::exit(1);
     }
 

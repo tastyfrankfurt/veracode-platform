@@ -889,8 +889,7 @@ impl VeracodeClient {
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
         if file_size > MAX_FILE_SIZE {
             return Err(VeracodeError::InvalidConfig(format!(
-                "File size ({} bytes) exceeds maximum limit of {} bytes",
-                file_size, MAX_FILE_SIZE
+                "File size ({file_size} bytes) exceeds maximum limit of {MAX_FILE_SIZE} bytes"
             )));
         }
 

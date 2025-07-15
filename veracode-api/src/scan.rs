@@ -380,8 +380,7 @@ impl ScanApi {
 
         if file_size > MAX_FILE_SIZE {
             return Err(ScanError::FileTooLarge(format!(
-                "File size {} bytes exceeds 2GB limit",
-                file_size
+                "File size {file_size} bytes exceeds 2GB limit"
             )));
         }
 
@@ -477,8 +476,7 @@ impl ScanApi {
 
         if file_size > MAX_FILE_SIZE {
             return Err(ScanError::FileTooLarge(format!(
-                "File size {} bytes exceeds 2GB limit",
-                file_size
+                "File size {file_size} bytes exceeds 2GB limit"
             )));
         }
 
@@ -1047,12 +1045,9 @@ impl ScanApi {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == b"file" {
                         // Extract file_id from attributes
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                if attr.key.as_ref() == b"file_id" {
-                                    file_id =
-                                        Some(String::from_utf8_lossy(&attr.value).to_string());
-                                }
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"file_id" {
+                                file_id = Some(String::from_utf8_lossy(&attr.value).to_string());
                             }
                         }
                     }
@@ -1105,12 +1100,10 @@ impl ScanApi {
                     match e.name().as_ref() {
                         b"buildinfo" | b"build" => {
                             // Extract build_id from attributes
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    if attr.key.as_ref() == b"build_id" {
-                                        build_id =
-                                            Some(String::from_utf8_lossy(&attr.value).to_string());
-                                    }
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"build_id" {
+                                    build_id =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string());
                                 }
                             }
                         }
@@ -1167,16 +1160,10 @@ impl ScanApi {
                         b"prescanresults" => {
                             has_prescan_results = true;
                             // Extract build_id from prescanresults attributes if present
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    match attr.key.as_ref() {
-                                        b"build_id" => {
-                                            build_id = Some(
-                                                String::from_utf8_lossy(&attr.value).to_string(),
-                                            );
-                                        }
-                                        _ => {}
-                                    }
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"build_id" {
+                                    build_id =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string());
                                 }
                             }
                         }
@@ -1191,46 +1178,37 @@ impl ScanApi {
                                 platform: None,
                             };
 
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    match attr.key.as_ref() {
-                                        b"id" => {
-                                            module.id =
-                                                String::from_utf8_lossy(&attr.value).to_string()
-                                        }
-                                        b"name" => {
-                                            module.name =
-                                                String::from_utf8_lossy(&attr.value).to_string()
-                                        }
-                                        b"type" => {
-                                            module.module_type =
-                                                String::from_utf8_lossy(&attr.value).to_string()
-                                        }
-                                        b"isfatal" => {
-                                            module.is_fatal = attr.value.as_ref() == b"true"
-                                        }
-                                        b"selected" => {
-                                            module.selected = attr.value.as_ref() == b"true"
-                                        }
-                                        b"has_fatal_errors" => {
-                                            if attr.value.as_ref() == b"true" {
-                                                has_fatal_errors = true;
-                                            }
-                                        }
-                                        b"size" => {
-                                            if let Ok(size_str) =
-                                                String::from_utf8(attr.value.to_vec())
-                                            {
-                                                module.size = size_str.parse().ok();
-                                            }
-                                        }
-                                        b"platform" => {
-                                            module.platform = Some(
-                                                String::from_utf8_lossy(&attr.value).to_string(),
-                                            )
-                                        }
-                                        _ => {}
+                            for attr in e.attributes().flatten() {
+                                match attr.key.as_ref() {
+                                    b"id" => {
+                                        module.id = String::from_utf8_lossy(&attr.value).to_string()
                                     }
+                                    b"name" => {
+                                        module.name =
+                                            String::from_utf8_lossy(&attr.value).to_string()
+                                    }
+                                    b"type" => {
+                                        module.module_type =
+                                            String::from_utf8_lossy(&attr.value).to_string()
+                                    }
+                                    b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
+                                    b"selected" => module.selected = attr.value.as_ref() == b"true",
+                                    b"has_fatal_errors" => {
+                                        if attr.value.as_ref() == b"true" {
+                                            has_fatal_errors = true;
+                                        }
+                                    }
+                                    b"size" => {
+                                        if let Ok(size_str) = String::from_utf8(attr.value.to_vec())
+                                        {
+                                            module.size = size_str.parse().ok();
+                                        }
+                                    }
+                                    b"platform" => {
+                                        module.platform =
+                                            Some(String::from_utf8_lossy(&attr.value).to_string())
+                                    }
+                                    _ => {}
                                 }
                             }
                             modules.push(module);
@@ -1292,33 +1270,29 @@ impl ScanApi {
                             md5: None,
                         };
 
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                match attr.key.as_ref() {
-                                    b"file_id" => {
-                                        file.file_id =
-                                            String::from_utf8_lossy(&attr.value).to_string()
-                                    }
-                                    b"file_name" => {
-                                        file.file_name =
-                                            String::from_utf8_lossy(&attr.value).to_string()
-                                    }
-                                    b"file_size" => {
-                                        if let Ok(size_str) = String::from_utf8(attr.value.to_vec())
-                                        {
-                                            file.file_size = size_str.parse().unwrap_or(0);
-                                        }
-                                    }
-                                    b"file_status" => {
-                                        file.file_status =
-                                            String::from_utf8_lossy(&attr.value).to_string()
-                                    }
-                                    b"md5" => {
-                                        file.md5 =
-                                            Some(String::from_utf8_lossy(&attr.value).to_string())
-                                    }
-                                    _ => {}
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"file_id" => {
+                                    file.file_id = String::from_utf8_lossy(&attr.value).to_string()
                                 }
+                                b"file_name" => {
+                                    file.file_name =
+                                        String::from_utf8_lossy(&attr.value).to_string()
+                                }
+                                b"file_size" => {
+                                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
+                                        file.file_size = size_str.parse().unwrap_or(0);
+                                    }
+                                }
+                                b"file_status" => {
+                                    file.file_status =
+                                        String::from_utf8_lossy(&attr.value).to_string()
+                                }
+                                b"md5" => {
+                                    file.md5 =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string())
+                                }
+                                _ => {}
                             }
                         }
                         files.push(file);
@@ -1368,44 +1342,39 @@ impl ScanApi {
                     match e.name().as_ref() {
                         b"buildinfo" => {
                             // Parse buildinfo attributes
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    match attr.key.as_ref() {
-                                        b"build_id" => {
-                                            scan_info.build_id =
-                                                String::from_utf8_lossy(&attr.value).to_string()
-                                        }
-                                        b"analysis_unit" => {
-                                            // Fallback status from buildinfo (older API format)
-                                            if scan_info.status == "Unknown" {
-                                                scan_info.status =
-                                                    String::from_utf8_lossy(&attr.value)
-                                                        .to_string();
-                                            }
-                                        }
-                                        b"analysis_unit_id" => {
-                                            scan_info.analysis_unit_id = Some(
-                                                String::from_utf8_lossy(&attr.value).to_string(),
-                                            )
-                                        }
-                                        b"scan_progress_percentage" => {
-                                            if let Ok(progress_str) =
-                                                String::from_utf8(attr.value.to_vec())
-                                            {
-                                                scan_info.scan_progress_percentage =
-                                                    progress_str.parse().ok();
-                                            }
-                                        }
-                                        b"total_lines_of_code" => {
-                                            if let Ok(lines_str) =
-                                                String::from_utf8(attr.value.to_vec())
-                                            {
-                                                scan_info.total_lines_of_code =
-                                                    lines_str.parse().ok();
-                                            }
-                                        }
-                                        _ => {}
+                            for attr in e.attributes().flatten() {
+                                match attr.key.as_ref() {
+                                    b"build_id" => {
+                                        scan_info.build_id =
+                                            String::from_utf8_lossy(&attr.value).to_string()
                                     }
+                                    b"analysis_unit" => {
+                                        // Fallback status from buildinfo (older API format)
+                                        if scan_info.status == "Unknown" {
+                                            scan_info.status =
+                                                String::from_utf8_lossy(&attr.value).to_string();
+                                        }
+                                    }
+                                    b"analysis_unit_id" => {
+                                        scan_info.analysis_unit_id =
+                                            Some(String::from_utf8_lossy(&attr.value).to_string())
+                                    }
+                                    b"scan_progress_percentage" => {
+                                        if let Ok(progress_str) =
+                                            String::from_utf8(attr.value.to_vec())
+                                        {
+                                            scan_info.scan_progress_percentage =
+                                                progress_str.parse().ok();
+                                        }
+                                    }
+                                    b"total_lines_of_code" => {
+                                        if let Ok(lines_str) =
+                                            String::from_utf8(attr.value.to_vec())
+                                        {
+                                            scan_info.total_lines_of_code = lines_str.parse().ok();
+                                        }
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -1414,20 +1383,18 @@ impl ScanApi {
                         }
                         b"analysis_unit" => {
                             // Parse analysis_unit attributes (primary status source)
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    match attr.key.as_ref() {
-                                        b"status" => {
-                                            // Primary status source from analysis_unit
-                                            scan_info.status =
-                                                String::from_utf8_lossy(&attr.value).to_string();
-                                        }
-                                        b"analysis_type" => {
-                                            scan_info.scan_type =
-                                                String::from_utf8_lossy(&attr.value).to_string();
-                                        }
-                                        _ => {}
+                            for attr in e.attributes().flatten() {
+                                match attr.key.as_ref() {
+                                    b"status" => {
+                                        // Primary status source from analysis_unit
+                                        scan_info.status =
+                                            String::from_utf8_lossy(&attr.value).to_string();
                                     }
+                                    b"analysis_type" => {
+                                        scan_info.scan_type =
+                                            String::from_utf8_lossy(&attr.value).to_string();
+                                    }
+                                    _ => {}
                                 }
                             }
                         }
@@ -1442,19 +1409,17 @@ impl ScanApi {
                 Ok(Event::Empty(ref e)) => {
                     // Handle self-closing elements like <analysis_unit ... />
                     if e.name().as_ref() == b"analysis_unit" && inside_build {
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                match attr.key.as_ref() {
-                                    b"status" => {
-                                        scan_info.status =
-                                            String::from_utf8_lossy(&attr.value).to_string();
-                                    }
-                                    b"analysis_type" => {
-                                        scan_info.scan_type =
-                                            String::from_utf8_lossy(&attr.value).to_string();
-                                    }
-                                    _ => {}
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"status" => {
+                                    scan_info.status =
+                                        String::from_utf8_lossy(&attr.value).to_string();
                                 }
+                                b"analysis_type" => {
+                                    scan_info.scan_type =
+                                        String::from_utf8_lossy(&attr.value).to_string();
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -1849,7 +1814,7 @@ mod tests {
         }
 
         // If this compiles, the methods have correct signatures
-        assert!(true);
+        // Test passes if no panic occurs
     }
 
     #[test]
@@ -1920,10 +1885,7 @@ mod tests {
 
             // Test progress callback signature
             let progress_callback = |bytes_uploaded: u64, total_bytes: u64, percentage: f64| {
-                println!(
-                    "Progress: {}/{} ({:.1}%)",
-                    bytes_uploaded, total_bytes, percentage
-                );
+                println!("Progress: {bytes_uploaded}/{total_bytes} ({percentage:.1}%)");
             };
             let _: Result<UploadedFile, _> = api
                 .upload_large_file_with_progress(request, progress_callback)
@@ -1933,6 +1895,6 @@ mod tests {
         }
 
         // If this compiles, the methods have correct signatures
-        assert!(true);
+        // Test passes if no panic occurs
     }
 }

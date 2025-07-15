@@ -63,7 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Err(e) => {
-            eprintln!("❌ Failed to create GitLab issues: {}", e);
+            eprintln!("❌ Failed to create GitLab issues: {e}");
             return Err(e.into());
         }
     }
@@ -89,14 +89,14 @@ fn check_environment_variables() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("✅ Environment variables found:");
     println!("   Token: {}...", &token[..std::cmp::min(8, token.len())]);
-    println!("   Project ID: {}", project_id);
+    println!("   Project ID: {project_id}");
 
     // Optional variables
     if let Ok(gitlab_url) = env::var("GITLAB_URL") {
-        println!("   GitLab URL: {}", gitlab_url);
+        println!("   GitLab URL: {gitlab_url}");
     }
     if let Ok(pipeline_id) = env::var("CI_PIPELINE_ID") {
-        println!("   Pipeline ID: {}", pipeline_id);
+        println!("   Pipeline ID: {pipeline_id}");
     }
 
     Ok(())

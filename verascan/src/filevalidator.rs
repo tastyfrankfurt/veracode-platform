@@ -39,11 +39,11 @@ pub enum ValidationError {
 impl std::fmt::Display for ValidationError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ValidationError::IoError(msg) => write!(f, "IO error: {}", msg),
+            ValidationError::IoError(msg) => write!(f, "IO error: {msg}"),
             ValidationError::UnsupportedFileType(msg) => {
-                write!(f, "Unsupported file type: {}", msg)
+                write!(f, "Unsupported file type: {msg}")
             }
-            ValidationError::InvalidFileHeader(msg) => write!(f, "Invalid file header: {}", msg),
+            ValidationError::InvalidFileHeader(msg) => write!(f, "Invalid file header: {msg}"),
         }
     }
 }
@@ -51,6 +51,12 @@ impl std::fmt::Display for ValidationError {
 impl std::error::Error for ValidationError {}
 
 pub struct FileValidator;
+
+impl Default for FileValidator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl FileValidator {
     pub fn new() -> Self {
@@ -83,7 +89,7 @@ impl FileValidator {
 
         if debug {
             println!("🔍 DEBUG: Reading file: {}", file_path.display());
-            println!("🔍 DEBUG: Bytes read: {}", bytes_read);
+            println!("🔍 DEBUG: Bytes read: {bytes_read}");
         }
 
         if bytes_read == 0 {
@@ -112,7 +118,7 @@ impl FileValidator {
             .map(|s| s.to_lowercase());
 
         if debug {
-            println!("🔍 DEBUG: File extension: {:?}", file_extension);
+            println!("🔍 DEBUG: File extension: {file_extension:?}");
             println!(
                 "🔍 DEBUG: Infer detected type: {:?}",
                 file_type.as_ref().map(|t| t.mime_type())
@@ -274,7 +280,7 @@ impl FileValidator {
         let search_pattern = b"META-INF/";
         let found = self.contains_pattern(buffer, search_pattern);
         if debug {
-            println!("🔍 DEBUG: JAR pattern search for 'META-INF/': {}", found);
+            println!("🔍 DEBUG: JAR pattern search for 'META-INF/': {found}");
         }
         found
     }
@@ -290,7 +296,7 @@ impl FileValidator {
         let search_pattern = b"WEB-INF/";
         let found = self.contains_pattern(buffer, search_pattern);
         if debug {
-            println!("🔍 DEBUG: WAR pattern search for 'WEB-INF/': {}", found);
+            println!("🔍 DEBUG: WAR pattern search for 'WEB-INF/': {found}");
         }
         found
     }

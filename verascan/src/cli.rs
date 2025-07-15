@@ -205,7 +205,7 @@ pub enum Commands {
         validate: bool,
 
         /// Veracode application profile name to link the scan to an existing application
-        #[arg(short = 'n', long = "app-profile-name", help = "Veracode application profile name for automatic app_id lookup (required)", value_parser = validate_name_field)]
+        #[arg(short = 'n', long = "app-profile-name", help = "Veracode application profile name for automatic app_id lookup (required)", value_parser = validate_name_field, required = true)]
         app_profile_name: String,
 
         /// Timeout in minutes to wait for scan completion
@@ -244,6 +244,14 @@ pub enum Commands {
         /// Business criticality level for application creation
         #[arg(long = "bus-cri", help = "Business criticality level for application creation (very-high, high, medium, low, very-low)", default_value = "very-high", value_parser = validate_business_criticality)]
         bus_cri: String,
+
+        /// Business criticality level for application creation
+        #[arg(
+            long = "skip-prescan",
+            help = "NOT RECOMMENDED, when specified the sandbox and policy scans will skip validation of the modules.",
+            default_value = "false"
+        )]
+        skip_prescan: bool,
 
         /// Delete incomplete scan policy for assessment scans
         #[arg(long = "deleteincompletescan", help = "Build deletion policy for assessment scans: 0=Never delete, 1=Delete safe builds only (default), 2=Delete any build except Results Ready", default_value = "1", value_parser = validate_delete_incomplete_scan)]
@@ -316,8 +324,7 @@ fn validate_severity_level(s: &str) -> Result<String, String> {
         Ok(s.to_string())
     } else {
         Err(format!(
-            "Invalid severity level '{}'. Valid options are: informational, very-low, low, medium, high, very-high",
-            s
+            "Invalid severity level '{s}'. Valid options are: informational, very-low, low, medium, high, very-high"
         ))
     }
 }
@@ -331,8 +338,7 @@ fn validate_export_format(s: &str) -> Result<String, String> {
         Ok(s.to_string())
     } else {
         Err(format!(
-            "Invalid export format '{}'. Valid options are: json, csv, gitlab, all",
-            s
+            "Invalid export format '{s}'. Valid options are: json, csv, gitlab, all"
         ))
     }
 }
@@ -346,8 +352,7 @@ fn validate_region(s: &str) -> Result<String, String> {
         Ok(s.to_string())
     } else {
         Err(format!(
-            "Invalid region '{}'. Valid options are: commercial, european, federal",
-            s
+            "Invalid region '{s}'. Valid options are: commercial, european, federal"
         ))
     }
 }
@@ -356,29 +361,23 @@ fn validate_region(s: &str) -> Result<String, String> {
 fn validate_findings_limit(s: &str) -> Result<u32, String> {
     match s.parse::<u32>() {
         Ok(0) => Ok(0), // 0 means show all
-        Ok(n) if n >= 1 && n <= 100 => Ok(n),
+        Ok(n) if (1..=100).contains(&n) => Ok(n),
         Ok(n) => Err(format!(
-            "Findings limit must be between 1 and 100 (or 0 for all), got: {}",
-            n
+            "Findings limit must be between 1 and 100 (or 0 for all), got: {n}"
         )),
-        Err(_) => Err(format!(
-            "Findings limit must be a valid number, got: '{}'",
-            s
-        )),
+        Err(_) => Err(format!("Findings limit must be a valid number, got: '{s}'")),
     }
 }
 
 /// Validate threads input
 fn validate_threads(s: &str) -> Result<usize, String> {
     match s.parse::<usize>() {
-        Ok(n) if n >= 2 && n <= 10 => Ok(n),
+        Ok(n) if (2..=10).contains(&n) => Ok(n),
         Ok(n) => Err(format!(
-            "Number of threads must be between 2 and 10, got: {}",
-            n
+            "Number of threads must be between 2 and 10, got: {n}"
         )),
         Err(_) => Err(format!(
-            "Number of threads must be a valid number, got: '{}'",
-            s
+            "Number of threads must be a valid number, got: '{s}'"
         )),
     }
 }
@@ -405,8 +404,7 @@ fn validate_name_field(s: &str) -> Result<String, String> {
 
     if !is_valid {
         return Err(format!(
-            "Name can only contain alphanumeric characters, dashes (-), underscores (_), and spaces. Got: '{}'",
-            s
+            "Name can only contain alphanumeric characters, dashes (-), underscores (_), and spaces. Got: '{s}'"
         ));
     }
 
@@ -438,22 +436,17 @@ fn validate_project_url(s: &str) -> Result<String, String> {
     if !valid_https && !valid_http_dev {
         if cert_validation_disabled {
             return Err(format!(
-                "Project URL must start with https:// or http:// (http allowed due to VERASCAN_DISABLE_CERT_VALIDATION), got: '{}'",
-                s
+                "Project URL must start with https:// or http:// (http allowed due to VERASCAN_DISABLE_CERT_VALIDATION), got: '{s}'"
             ));
         } else {
-            return Err(format!(
-                "Project URL must start with https://, got: '{}'",
-                s
-            ));
+            return Err(format!("Project URL must start with https://, got: '{s}'"));
         }
     }
 
     // Additional basic URI structure validation
     if !s.contains('.') && !s.contains(':') {
         return Err(format!(
-            "Project URL does not appear to be a valid URI, got: '{}'",
-            s
+            "Project URL does not appear to be a valid URI, got: '{s}'"
         ));
     }
 
@@ -469,12 +462,12 @@ fn validate_json_file(s: &str, file_type: &str) -> Result<String, String> {
 
     // Check if file exists
     if !path.exists() {
-        return Err(format!("{} file does not exist: '{}'", file_type, s));
+        return Err(format!("{file_type} file does not exist: '{s}'"));
     }
 
     // Check if it's a file (not directory)
     if !path.is_file() {
-        return Err(format!("{} file path is not a file: '{}'", file_type, s));
+        return Err(format!("{file_type} file path is not a file: '{s}'"));
     }
 
     // Try to read the file
@@ -489,10 +482,7 @@ fn validate_json_file(s: &str, file_type: &str) -> Result<String, String> {
 
     // Try to parse as JSON to validate format
     if let Err(e) = serde_json::from_str::<serde_json::Value>(&content) {
-        return Err(format!(
-            "{} file '{}' is not valid JSON: {}",
-            file_type, s, e
-        ));
+        return Err(format!("{file_type} file '{s}' is not valid JSON: {e}"));
     }
 
     Ok(s.to_string())
@@ -530,8 +520,7 @@ fn validate_policy_name(s: &str) -> Result<String, String> {
 
     if !is_valid {
         return Err(format!(
-            "Policy name can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.). Got: '{}'",
-            s
+            "Policy name can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.). Got: '{s}'"
         ));
     }
 
@@ -556,8 +545,7 @@ fn validate_development_stage(s: &str) -> Result<String, String> {
         Ok(s.to_string())
     } else {
         Err(format!(
-            "Invalid development stage '{}'. Valid options are: development, testing, release",
-            s
+            "Invalid development stage '{s}'. Valid options are: development, testing, release"
         ))
     }
 }
@@ -593,8 +581,7 @@ fn validate_fail_on_severity(s: &str) -> Result<String, String> {
         let lower_severity = severity.to_lowercase();
         if !VALID_SEVERITIES.contains(&lower_severity.as_str()) {
             return Err(format!(
-                "Invalid severity '{}'. Valid options are: Informational, Very Low, Low, Medium, High, Very High",
-                severity
+                "Invalid severity '{severity}'. Valid options are: Informational, Very Low, Low, Medium, High, Very High"
             ));
         }
     }
@@ -621,8 +608,7 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
 
         if cwe_number.parse::<u32>().is_err() {
             return Err(format!(
-                "Invalid CWE ID '{}'. CWE IDs should be numeric (e.g., '89' or 'CWE-89')",
-                cwe
+                "Invalid CWE ID '{cwe}'. CWE IDs should be numeric (e.g., '89' or 'CWE-89')"
             ));
         }
     }
@@ -651,16 +637,14 @@ fn validate_modules_list(s: &str) -> Result<String, String> {
 
         if !is_valid {
             return Err(format!(
-                "Invalid module name '{}'. Module names can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.)",
-                module
+                "Invalid module name '{module}'. Module names can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and dots (.)"
             ));
         }
 
         // Check length (reasonable limit)
         if module.len() > 100 {
             return Err(format!(
-                "Module name '{}' is too long. Maximum length is 100 characters",
-                module
+                "Module name '{module}' is too long. Maximum length is 100 characters"
             ));
         }
     }
@@ -688,8 +672,7 @@ fn validate_business_criticality(s: &str) -> Result<String, String> {
         Ok(s.to_string())
     } else {
         Err(format!(
-            "Invalid business criticality '{}'. Valid options are: very-high, high, medium, low, very-low",
-            s
+            "Invalid business criticality '{s}'. Valid options are: very-high, high, medium, low, very-low"
         ))
     }
 }
@@ -701,12 +684,10 @@ fn validate_delete_incomplete_scan(s: &str) -> Result<u8, String> {
         Ok(1) => Ok(1), // Delete safe builds only (default)
         Ok(2) => Ok(2), // Delete any build except Results Ready
         Ok(n) => Err(format!(
-            "Delete incomplete scan policy must be 0, 1, or 2, got: {}",
-            n
+            "Delete incomplete scan policy must be 0, 1, or 2, got: {n}"
         )),
         Err(_) => Err(format!(
-            "Delete incomplete scan policy must be a valid number (0, 1, or 2), got: '{}'",
-            s
+            "Delete incomplete scan policy must be a valid number (0, 1, or 2), got: '{s}'"
         )),
     }
 }
@@ -726,8 +707,7 @@ pub fn parse_business_criticality(
         _ => {
             // This should not happen due to CLI validation, but provide a fallback
             eprintln!(
-                "⚠️  Warning: Invalid business criticality '{}', defaulting to Medium",
-                criticality_str
+                "⚠️  Warning: Invalid business criticality '{criticality_str}', defaulting to Medium"
             );
             BusinessCriticality::Medium
         }
@@ -836,6 +816,7 @@ mod tests {
                 export_results: "assessment-results.json".to_string(),
                 sandbox_name: None,
                 modules: None,
+                skip_prescan: false,
                 teamname: None,
                 bus_cri: "very-high".to_string(),
                 deleteincompletescan: 1,

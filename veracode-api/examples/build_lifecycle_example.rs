@@ -173,7 +173,7 @@ async fn demonstrate_create_builds(
             );
             println!("      - App ID: {}", build.app_id);
             if let Some(submitter) = build.submitter {
-                println!("      - Submitter: {}", submitter);
+                println!("      - Submitter: {submitter}");
             }
         }
         Err(e) => {
@@ -254,19 +254,19 @@ async fn demonstrate_get_build_info(
             println!("      - Build ID: {}", build.build_id);
             println!("      - App ID: {}", build.app_id);
             if let Some(version) = build.version {
-                println!("      - Version: {}", version);
+                println!("      - Version: {version}");
             }
             if let Some(submitter) = build.submitter {
-                println!("      - Submitter: {}", submitter);
+                println!("      - Submitter: {submitter}");
             }
             if let Some(platform) = build.platform {
-                println!("      - Platform: {}", platform);
+                println!("      - Platform: {platform}");
             }
             if let Some(analysis_unit) = build.analysis_unit {
-                println!("      - Analysis Unit: {}", analysis_unit);
+                println!("      - Analysis Unit: {analysis_unit}");
             }
             if let Some(policy_compliance) = build.policy_compliance_status {
-                println!("      - Policy Compliance: {}", policy_compliance);
+                println!("      - Policy Compliance: {policy_compliance}");
             }
         }
         Err(e) => {
@@ -286,10 +286,10 @@ async fn demonstrate_get_build_info(
                 build.sandbox_id.unwrap_or("None".to_string())
             );
             if let Some(version) = build.version {
-                println!("      - Version: {}", version);
+                println!("      - Version: {version}");
             }
             if let Some(lifecycle_stage) = build.lifecycle_stage {
-                println!("      - Lifecycle Stage: {}", lifecycle_stage);
+                println!("      - Lifecycle Stage: {lifecycle_stage}");
             }
             if let Some(launch_date) = build.launch_date {
                 println!("      - Launch Date: {}", launch_date.format("%m/%d/%Y"));
@@ -319,7 +319,7 @@ async fn demonstrate_get_build_info(
             if !build.attributes.is_empty() {
                 println!("      - Additional attributes:");
                 for (key, value) in build.attributes.iter().take(3) {
-                    println!("        • {}: {}", key, value);
+                    println!("        • {key}: {value}");
                 }
             }
         }
@@ -359,10 +359,10 @@ async fn demonstrate_list_builds(
                 println!("      Build {}:", i + 1);
                 println!("        - Build ID: {}", build.build_id);
                 if let Some(version) = &build.version {
-                    println!("        - Version: {}", version);
+                    println!("        - Version: {version}");
                 }
                 if let Some(lifecycle_stage) = &build.lifecycle_stage {
-                    println!("        - Lifecycle: {}", lifecycle_stage);
+                    println!("        - Lifecycle: {lifecycle_stage}");
                 }
             }
         }
@@ -390,7 +390,7 @@ async fn demonstrate_list_builds(
                         build.sandbox_id.as_ref().unwrap()
                     );
                     if let Some(version) = &build.version {
-                        println!("        - Version: {}", version);
+                        println!("        - Version: {version}");
                     }
                 }
             }
@@ -425,8 +425,8 @@ async fn demonstrate_list_builds(
                 .filter(|b| b.sandbox_id.is_some())
                 .count();
 
-            println!("      - Application builds: {}", app_builds);
-            println!("      - Sandbox builds: {}", sandbox_builds);
+            println!("      - Application builds: {app_builds}");
+            println!("      - Sandbox builds: {sandbox_builds}");
         }
         Err(e) => {
             println!("   ⚠️  Custom build list: {e}");

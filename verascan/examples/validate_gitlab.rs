@@ -48,26 +48,26 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 
     if let Ok(project_id) = env::var("CI_PROJECT_ID") {
-        println!("✅ CI_PROJECT_ID: {}", project_id);
+        println!("✅ CI_PROJECT_ID: {project_id}");
     }
 
     if let Ok(gitlab_url) = env::var("GITLAB_URL") {
-        println!("✅ GITLAB_URL: {}", gitlab_url);
+        println!("✅ GITLAB_URL: {gitlab_url}");
     } else {
         println!("ℹ️  GITLAB_URL: Using default (https://gitlab.com/api/v4/projects/)");
     }
 
     // Optional variables
     if let Ok(pipeline_id) = env::var("CI_PIPELINE_ID") {
-        println!("✅ CI_PIPELINE_ID: {}", pipeline_id);
+        println!("✅ CI_PIPELINE_ID: {pipeline_id}");
     }
 
     if let Ok(project_url) = env::var("CI_PROJECT_URL") {
-        println!("✅ CI_PROJECT_URL: {}", project_url);
+        println!("✅ CI_PROJECT_URL: {project_url}");
     }
 
     if let Ok(commit_sha) = env::var("CI_COMMIT_SHA") {
-        println!("✅ CI_COMMIT_SHA: {}", commit_sha);
+        println!("✅ CI_COMMIT_SHA: {commit_sha}");
     }
 
     println!();
@@ -88,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("    --debug");
         }
         Err(e) => {
-            println!("❌ GitLab validation failed: {}", e);
+            println!("❌ GitLab validation failed: {e}");
             println!();
             println!("🔧 Troubleshooting steps:");
             println!("1. Verify your GitLab token has 'api' scope");

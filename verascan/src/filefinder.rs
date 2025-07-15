@@ -23,10 +23,10 @@ pub enum SearchError {
 impl std::fmt::Display for SearchError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            SearchError::InvalidPattern(msg) => write!(f, "Invalid pattern: {}", msg),
-            SearchError::DirectoryNotFound(msg) => write!(f, "Directory not found: {}", msg),
-            SearchError::NotADirectory(msg) => write!(f, "Not a directory: {}", msg),
-            SearchError::IoError(msg) => write!(f, "IO error: {}", msg),
+            SearchError::InvalidPattern(msg) => write!(f, "Invalid pattern: {msg}"),
+            SearchError::DirectoryNotFound(msg) => write!(f, "Directory not found: {msg}"),
+            SearchError::NotADirectory(msg) => write!(f, "Not a directory: {msg}"),
+            SearchError::IoError(msg) => write!(f, "IO error: {msg}"),
         }
     }
 }
@@ -35,6 +35,12 @@ impl std::error::Error for SearchError {}
 
 pub struct FileFinder {
     validator: FileValidator,
+}
+
+impl Default for FileFinder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FileFinder {
@@ -68,7 +74,7 @@ impl FileFinder {
             .filter(|s| !s.is_empty())
             .map(|pattern| {
                 Pattern::new(pattern)
-                    .map_err(|e| SearchError::InvalidPattern(format!("'{}': {}", pattern, e)))
+                    .map_err(|e| SearchError::InvalidPattern(format!("'{pattern}': {e}")))
             })
             .collect();
 
@@ -129,9 +135,8 @@ impl FileFinder {
         })?;
 
         for entry in entries {
-            let entry = entry.map_err(|e| {
-                SearchError::IoError(format!("Error reading directory entry: {}", e))
-            })?;
+            let entry = entry
+                .map_err(|e| SearchError::IoError(format!("Error reading directory entry: {e}")))?;
 
             let file_type = match entry.file_type() {
                 Ok(ft) => ft,
@@ -186,14 +191,14 @@ impl FileFinder {
                                             "⚠️  Unsupported file type: {}",
                                             file_path.display()
                                         );
-                                        println!("   Reason: {}", msg);
+                                        println!("   Reason: {msg}");
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::InvalidFileHeader(msg)) => {
                                     if config.debug {
                                         println!("❌ Invalid file: {}", file_path.display());
-                                        println!("   Reason: {}", msg);
+                                        println!("   Reason: {msg}");
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
@@ -203,7 +208,7 @@ impl FileFinder {
                                             "❌ IO Error reading file: {}",
                                             file_path.display()
                                         );
-                                        println!("   Reason: {}", msg);
+                                        println!("   Reason: {msg}");
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
@@ -243,7 +248,7 @@ impl FileFinder {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(e) => {
-                    eprintln!("Warning: Error reading directory entry: {}", e);
+                    eprintln!("Warning: Error reading directory entry: {e}");
                     continue;
                 }
             };
@@ -301,14 +306,14 @@ impl FileFinder {
                                             "⚠️  Unsupported file type: {}",
                                             file_path.display()
                                         );
-                                        println!("   Reason: {}", msg);
+                                        println!("   Reason: {msg}");
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::InvalidFileHeader(msg)) => {
                                     if config.debug {
                                         println!("❌ Invalid file: {}", file_path.display());
-                                        println!("   Reason: {}", msg);
+                                        println!("   Reason: {msg}");
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
@@ -318,7 +323,7 @@ impl FileFinder {
                                             "❌ IO Error reading file: {}",
                                             file_path.display()
                                         );
-                                        println!("   Reason: {}", msg);
+                                        println!("   Reason: {msg}");
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
