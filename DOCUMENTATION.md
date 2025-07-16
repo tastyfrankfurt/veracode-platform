@@ -184,7 +184,6 @@ verascan [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS]
 ```bash
 --app-profile-name <NAME>          # Veracode application profile (required)
 --sandbox-name <NAME>              # Sandbox name for sandbox scans
---skip-prescan                     # Skip prescan validation (not recommended)
 --no-wait                          # Submit scan and exit without waiting
 --modules <LIST>                   # Specific modules to scan (comma-separated)
 --teamname <NAME>                  # Team name for application creation
@@ -412,7 +411,6 @@ verascan assessment --filepath ./dev-build \
   --app-profile-name "MyApp-Development" \
   --sandbox-name "feature-branch" \
   --no-wait \
-  --skip-prescan \
   --export-results dev-assessment.json
 ```
 
@@ -454,11 +452,10 @@ verascan assessment --filepath ./build \
   --modules "core,api" \
   --export-results ci-results.json
 
-# Quick assessment with skip-prescan (not recommended for production)
+# Quick assessment with no-wait option
 verascan assessment --filepath ./artifacts \
   --app-profile-name "MyApp-Testing" \
   --sandbox-name "quick-test" \
-  --skip-prescan \
   --no-wait
 ```
 

@@ -254,15 +254,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             match scan_api.begin_scan(scan_request).await {
-                Ok(scan_build_id) => {
+                Ok(()) => {
                     println!("✅ Scan started successfully:");
-                    println!("   Scan Build ID: {scan_build_id}");
+                    println!("   Using Build ID: {build_id}");
 
                     // Step 9: Monitor scan progress
                     println!("\n⏳ Step 9: Monitoring scan progress...");
 
                     match scan_api
-                        .get_build_info(&app_id, Some(&scan_build_id), Some(&sandbox_id))
+                        .get_build_info(&app_id, Some(&build_id), Some(&sandbox_id))
                         .await
                     {
                         Ok(scan_info) => {

@@ -245,14 +245,6 @@ pub enum Commands {
         #[arg(long = "bus-cri", help = "Business criticality level for application creation (very-high, high, medium, low, very-low)", default_value = "very-high", value_parser = validate_business_criticality)]
         bus_cri: String,
 
-        /// Business criticality level for application creation
-        #[arg(
-            long = "skip-prescan",
-            help = "NOT RECOMMENDED, when specified the sandbox and policy scans will skip validation of the modules.",
-            default_value = "false"
-        )]
-        skip_prescan: bool,
-
         /// Submit scan and exit without waiting for completion
         #[arg(
             long = "no-wait",
@@ -824,7 +816,6 @@ mod tests {
                 export_results: "assessment-results.json".to_string(),
                 sandbox_name: None,
                 modules: None,
-                skip_prescan: false,
                 no_wait: false,
                 teamname: None,
                 bus_cri: "very-high".to_string(),

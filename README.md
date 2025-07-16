@@ -178,10 +178,9 @@ verascan assessment --filepath ./target \
   --no-wait \
   --export-results results.json
 
-# Assessment scan with skip-prescan (not recommended)
+# Assessment scan with no-wait option
 verascan assessment --filepath ./target \
   --app-profile-name "MyApplication" \
-  --skip-prescan \
   --no-wait
 ```
 
@@ -306,7 +305,6 @@ verascan assessment --filepath ./artifacts \
 |--------|---------|-------------|
 | `--app-profile-name <NAME>` | - | Veracode application profile name (required) |
 | `--sandbox-name <NAME>` | - | Sandbox name for sandbox assessment scans |
-| `--skip-prescan` | `false` | Skip prescan validation (not recommended) |
 | `--no-wait` | `false` | Submit scan and exit without waiting for completion |
 | `--modules <LIST>` | - | Specific modules to scan (comma-separated) |
 | `--teamname <NAME>` | - | Team name for application creation |

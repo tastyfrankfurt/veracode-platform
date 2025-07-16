@@ -1529,7 +1529,6 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         modules,
         export_results,
         deleteincompletescan,
-        skip_prescan,
         no_wait,
         ..
     } = &args.command
@@ -1569,12 +1568,6 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
             println!("   This should only be used in development environments!");
         }
 
-        if *skip_prescan {
-            println!(
-                "⚠️  WARNING: Prescan Verification is disabled.  This is important to ensure your scan will succeed."
-            );
-        }
-
         // Parse modules if provided
         let selected_modules = modules.as_ref().map(|modules_str| {
             modules_str
@@ -1593,7 +1586,6 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
             timeout: timeout_value,
             threads: *threads,
             debug: args.debug,
-            skip_prescan: *skip_prescan,
             autoscan: true, // Always true for now; required when no-wait is specified
             monitor_completion: !no_wait, // Inverse of no_wait
             export_results_path: export_results.clone(),

@@ -160,7 +160,6 @@ pub struct AssessmentScanConfig {
     pub timeout: u32,
     pub threads: usize,
     pub debug: bool,
-    pub skip_prescan: bool,
     pub autoscan: bool,
     pub monitor_completion: bool,
     pub export_results_path: String,
@@ -178,7 +177,6 @@ impl Default for AssessmentScanConfig {
             timeout: 60, // 60 minutes default for assessment scans
             threads: 4,  // 4 threads default for assessment uploads
             debug: false,
-            skip_prescan: false,
             autoscan: true,           // Enable autoscan by default
             monitor_completion: true, // Default to monitoring completion
             export_results_path: "assessment-results.json".to_string(),
@@ -773,11 +771,10 @@ impl AssessmentSubmitter {
         };
 
         match prescan_result {
-            Ok(returned_build_id) => {
+            Ok(()) => {
                 println!("✅ Prescan started");
                 if self.config.debug {
                     println!("🔍 Prescan started for build ID: {}", build_id.id());
-                    println!("🔍 API returned build ID: {returned_build_id}");
                 }
                 Ok(())
             }
@@ -906,77 +903,48 @@ impl AssessmentSubmitter {
             .upload_files(files, app_id, sandbox_id.as_ref())
             .await?;
 
-        // Step 4: Start prescan or scan based on configuration
-        if self.config.skip_prescan {
-            // Skip prescan and directly start scan
-            if self.config.debug {
-                println!("⚠️  Skipping prescan - directly starting scan");
-            } else {
-                println!("⚠️  Prescan skipped - starting scan directly");
-            }
+        // Step 4: Start prescan first (normal workflow)
+        self.start_prescan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+            .await?;
 
-            // Start scan directly without prescan
+        // Check if we should exit early (--no-wait specified)
+        if !self.config.monitor_completion {
+            println!(
+                "⏳ Prescan submitted successfully - not waiting for completion (--no-wait specified)"
+            );
+            println!("   Build ID: {}", &build_id);
+            return Ok(build_id);
+        }
+
+        // Check if we need to manually start scan (only if autoscan is disabled)
+        if !self.is_autoscan_enabled() {
+            if self.config.debug {
+                println!("🔄 Autoscan disabled, will manually start scan after prescan completes");
+            }
+        } else if self.config.debug {
+            println!("🤖 Autoscan enabled, scan will start automatically after prescan");
+        }
+
+        // Use two-phase monitoring approach matching Java implementation
+        // This handles both prescan completion and scan completion automatically
+        if !self.is_autoscan_enabled() {
+            // For manual scan workflows, monitor prescan first, then start scan, then monitor build
+            self.monitor_prescan_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+                .await?;
+
+            if self.config.debug {
+                println!("🔄 Prescan complete, manually starting scan...");
+            }
             self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
 
-            // Check if we should exit early (--no-wait specified)
-            if !self.config.monitor_completion {
-                println!(
-                    "⏳ Scan submitted successfully - not waiting for completion (--no-wait specified)"
-                );
-                println!("   Build ID: {}", &build_id);
-                return Ok(build_id);
-            }
-
-            // Monitor only the build phase (scan completion) since we skipped prescan
+            // Monitor build phase (scan completion)
             self.monitor_build_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
         } else {
-            // Normal workflow: Start prescan first
-            self.start_prescan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+            // For autoscan workflows, use unified two-phase monitoring
+            self.monitor_scan_progress(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
-
-            // Check if we should exit early (--no-wait specified)
-            if !self.config.monitor_completion {
-                println!(
-                    "⏳ Prescan submitted successfully - not waiting for completion (--no-wait specified)"
-                );
-                println!("   Build ID: {}", &build_id);
-                return Ok(build_id);
-            }
-
-            // Check if we need to manually start scan (only if autoscan is disabled)
-            if !self.is_autoscan_enabled() {
-                if self.config.debug {
-                    println!(
-                        "🔄 Autoscan disabled, will manually start scan after prescan completes"
-                    );
-                }
-            } else if self.config.debug {
-                println!("🤖 Autoscan enabled, scan will start automatically after prescan");
-            }
-
-            // Use two-phase monitoring approach matching Java implementation
-            // This handles both prescan completion and scan completion automatically
-            if !self.is_autoscan_enabled() {
-                // For manual scan workflows, monitor prescan first, then start scan, then monitor build
-                self.monitor_prescan_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                    .await?;
-
-                if self.config.debug {
-                    println!("🔄 Prescan complete, manually starting scan...");
-                }
-                self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                    .await?;
-
-                // Monitor build phase (scan completion)
-                self.monitor_build_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                    .await?;
-            } else {
-                // For autoscan workflows, use unified two-phase monitoring
-                self.monitor_scan_progress(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                    .await?;
-            }
         }
 
         // Export results to file
@@ -1513,14 +1481,6 @@ impl AssessmentSubmitter {
         println!("   Upload Threads: {}", self.config.threads);
         println!("   Timeout: {} minutes", self.config.timeout);
         println!(
-            "   Skip Prescan: {}",
-            if self.config.skip_prescan {
-                "enabled"
-            } else {
-                "disabled"
-            }
-        );
-        println!(
             "   Monitor Completion: {}",
             if self.config.monitor_completion {
                 "enabled"
@@ -1571,7 +1531,6 @@ mod tests {
             timeout: 90,
             threads: 8,
             debug: true,
-            skip_prescan: false,
             autoscan: false,
             monitor_completion: false,
             export_results_path: "custom-results.json".to_string(),
