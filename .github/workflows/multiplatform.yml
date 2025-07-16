@@ -70,7 +70,7 @@ jobs:
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y pkg-config libssl-dev openssl
+        sudo apt-get install -y pkg-config libssl-dev openssl build-essential
     
     - name: Install mingw-w64 for Windows GNU target
       if: matrix.os == 'windows-latest'
