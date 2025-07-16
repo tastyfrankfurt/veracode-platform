@@ -194,15 +194,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     match scan_api.begin_prescan(prescan_request).await {
-        Ok(build_id) => {
-            println!("✅ Pre-scan started successfully:");
-            println!("   Build ID: {build_id}");
+        Ok(()) => {
+            println!("✅ Pre-scan started successfully");
 
             // Step 7: Get pre-scan results
             println!("\n📋 Step 7: Getting pre-scan results...");
 
             match scan_api
-                .get_prescan_results(&app_id, Some(&sandbox_id), Some(&build_id))
+                .get_prescan_results(&app_id, Some(&sandbox_id), None)
                 .await
             {
                 Ok(prescan_results) => {
@@ -235,67 +234,70 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             message.text
                         );
                     }
-                }
-                Err(e) => {
-                    eprintln!("❌ Failed to get pre-scan results: {e}");
-                }
-            }
 
-            // Step 8: Begin scan
-            println!("\n🚀 Step 8: Beginning static analysis scan...");
+                    // Step 8: Begin scan
+                    println!("\n🚀 Step 8: Beginning static analysis scan...");
 
-            let scan_request = BeginScanRequest {
-                app_id: app_id.clone(),
-                sandbox_id: Some(sandbox_id.clone()),
-                modules: None, // Scan all modules
-                scan_all_top_level_modules: Some(true),
-                scan_all_nonfatal_top_level_modules: Some(true),
-                scan_previously_selected_modules: None,
-            };
+                    let scan_request = BeginScanRequest {
+                        app_id: app_id.clone(),
+                        sandbox_id: Some(sandbox_id.clone()),
+                        modules: None, // Scan all modules
+                        scan_all_top_level_modules: Some(true),
+                        scan_all_nonfatal_top_level_modules: Some(true),
+                        scan_previously_selected_modules: None,
+                    };
 
-            match scan_api.begin_scan(scan_request).await {
-                Ok(()) => {
-                    println!("✅ Scan started successfully:");
-                    println!("   Using Build ID: {build_id}");
+                    match scan_api.begin_scan(scan_request).await {
+                        Ok(()) => {
+                            println!("✅ Scan started successfully");
 
-                    // Step 9: Monitor scan progress
-                    println!("\n⏳ Step 9: Monitoring scan progress...");
+                            // Step 9: Monitor scan progress
+                            println!("\n⏳ Step 9: Monitoring scan progress...");
 
-                    match scan_api
-                        .get_build_info(&app_id, Some(&build_id), Some(&sandbox_id))
-                        .await
-                    {
-                        Ok(scan_info) => {
-                            println!("✅ Scan information retrieved:");
-                            println!("   Build ID: {}", scan_info.build_id);
-                            println!("   Status: {}", scan_info.status);
-                            println!("   Scan Type: {}", scan_info.scan_type);
+                            match scan_api
+                                .get_build_info(
+                                    &app_id,
+                                    Some(&prescan_results.build_id),
+                                    Some(&sandbox_id),
+                                )
+                                .await
+                            {
+                                Ok(scan_info) => {
+                                    println!("✅ Scan information retrieved:");
+                                    println!("   Build ID: {}", scan_info.build_id);
+                                    println!("   Status: {}", scan_info.status);
+                                    println!("   Scan Type: {}", scan_info.scan_type);
 
-                            if let Some(progress) = scan_info.scan_progress_percentage {
-                                println!("   Progress: {progress}%");
-                            }
+                                    if let Some(progress) = scan_info.scan_progress_percentage {
+                                        println!("   Progress: {progress}%");
+                                    }
 
-                            if let Some(start_time) = scan_info.scan_start {
-                                println!("   Started: {start_time}");
-                            }
+                                    if let Some(start_time) = scan_info.scan_start {
+                                        println!("   Started: {start_time}");
+                                    }
 
-                            if let Some(complete_time) = scan_info.scan_complete {
-                                println!("   Completed: {complete_time}");
-                            } else {
-                                println!("   Status: Scan in progress");
-                            }
+                                    if let Some(complete_time) = scan_info.scan_complete {
+                                        println!("   Completed: {complete_time}");
+                                    } else {
+                                        println!("   Status: Scan in progress");
+                                    }
 
-                            if let Some(loc) = scan_info.total_lines_of_code {
-                                println!("   Total Lines of Code: {loc}");
+                                    if let Some(loc) = scan_info.total_lines_of_code {
+                                        println!("   Total Lines of Code: {loc}");
+                                    }
+                                }
+                                Err(e) => {
+                                    eprintln!("❌ Failed to get scan information: {e}");
+                                }
                             }
                         }
                         Err(e) => {
-                            eprintln!("❌ Failed to get scan information: {e}");
+                            eprintln!("❌ Failed to start scan: {e}");
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("❌ Failed to start scan: {e}");
+                    eprintln!("❌ Failed to get prescan results: {e}");
                 }
             }
         }
