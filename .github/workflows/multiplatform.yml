@@ -3,6 +3,10 @@ name: Multi-Platform Release
 on:
   push:
     tags: ['v*']
+permissions:
+  contents: write
+  packages: write
+  actions: read
 
 jobs:
   create-release:
