@@ -80,7 +80,7 @@ jobs:
     
     - name: Build release binary
       env:
-        OPENSSL_DIR: ${{ matrix.os == 'ubuntu-latest' && '/usr/lib/ssl' || matrix.os == 'macos-latest' && '/usr/local/opt/openssl' || '' }}
+        OPENSSL_DIR: ${{ matrix.os == 'ubuntu-latest' && '/usr' || matrix.os == 'macos-latest' && '/usr/local/opt/openssl' || '' }}
       run: cargo build --release --target ${{ matrix.target }}
     
     - name: Create zip archive
