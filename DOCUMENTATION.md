@@ -23,11 +23,13 @@ Verascan is a comprehensive command-line interface for the Veracode security pla
 
 ### Core Capabilities
 - **Pipeline Scanning**: Submit files to Veracode for security analysis
+- **Assessment Scanning**: Submit files for sandbox or policy assessment scans
 - **Baseline Comparison**: Track new vulnerabilities against historical baselines
 - **Policy Assessment**: Enforce security policies with pass/fail criteria
 - **Multi-format Export**: JSON, CSV, and GitLab SAST report formats
 - **GitLab Integration**: Automatic issue creation and SAST dashboard support
 - **Concurrent Processing**: Multi-threaded file processing for improved performance
+- **Flexible Workflows**: Support for both monitoring and fire-and-forget scan submission
 
 ### Supported File Types
 - Java Archives (JAR, WAR)
@@ -71,22 +73,33 @@ export PRIVATE_TOKEN="your-gitlab-token"
 
 ### Basic Security Scan
 ```bash
-# Scan current directory for vulnerabilities
-verascan --pipeline-scan --filepath . --export-findings results.json
+# Pipeline scan - current directory for vulnerabilities
+verascan pipeline --filepath . --export-findings results.json
 
-# Scan with specific file types
-verascan --pipeline-scan --filepath ./build \
+# Pipeline scan - specific file types
+verascan pipeline --filepath ./build \
   --filefilter "*.jar,*.war" \
   --export-findings vulnerabilities.json
+
+# Assessment scan - policy scan
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --export-results assessment-results.json
+
+# Assessment scan - sandbox scan
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --sandbox-name "development" \
+  --export-results sandbox-results.json
 ```
 
 ### Baseline Comparison
 ```bash
 # Create initial baseline
-verascan --pipeline-scan --filepath . --export-findings baseline.json
+verascan pipeline --filepath . --export-findings baseline.json
 
 # Compare against baseline
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --baseline-file baseline.json \
   --filtered-json-output-file new-findings.json \
   --export-findings current-results.json
@@ -95,12 +108,12 @@ verascan --pipeline-scan --filepath . \
 ### Policy Enforcement
 ```bash
 # Fail on High or Very High severity findings
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --fail-on-severity "High,Very High" \
   --export-findings results.json
 
 # Fail on specific CWE types
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --fail-on-cwe "89,79,22" \
   --export-findings results.json
 ```
@@ -121,24 +134,34 @@ Verascan requires Veracode API credentials for authentication:
 ### Regional Support
 ```bash
 # Commercial cloud (default)
-verascan --region commercial --pipeline-scan --filepath .
+verascan --region commercial pipeline --filepath .
 
 # European cloud
-verascan --region european --pipeline-scan --filepath .
+verascan --region european pipeline --filepath .
 
 # Federal cloud
-verascan --region federal --pipeline-scan --filepath .
+verascan --region federal pipeline --filepath .
 ```
 
 ## Usage
 
 ### Command Structure
 ```bash
-verascan [OPTIONS] --filepath <PATH>
+verascan [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS]
 ```
 
-### Required Options
+### Available Commands
+- `pipeline`: Submit files for Veracode pipeline scan
+- `assessment`: Submit files for Veracode assessment scan (sandbox or policy)
+- `policy <NAME>`: Download Veracode security policy by name
+
+### Global Options
+- `--region <REGION>`: Veracode region (commercial/european/federal)
+- `--debug`: Enable detailed diagnostic output
+
+### Required Options (per command)
 - `--filepath <PATH>`: Directory to scan for files
+- `--app-profile-name <NAME>`: Veracode application profile name (assessment only)
 
 ### File Discovery Options
 ```bash
@@ -149,13 +172,27 @@ verascan [OPTIONS] --filepath <PATH>
 
 ### Pipeline Scan Options
 ```bash
---pipeline-scan                    # Enable Veracode scanning
 --app-profile-name <NAME>          # Veracode application profile
 --project-name <NAME>              # Project name (max 70 chars)
 --project-url <URL>                # Project URL (https:// required)
 --timeout <MINUTES>                # Scan timeout (default: 30)
 --threads <COUNT>                  # Concurrent threads (2-10, default: 4)
 --development-stage <STAGE>        # development/testing/release
+```
+
+### Assessment Scan Options
+```bash
+--app-profile-name <NAME>          # Veracode application profile (required)
+--sandbox-name <NAME>              # Sandbox name for sandbox scans
+--skip-prescan                     # Skip prescan validation (not recommended)
+--no-wait                          # Submit scan and exit without waiting
+--modules <LIST>                   # Specific modules to scan (comma-separated)
+--teamname <NAME>                  # Team name for application creation
+--bus-cri <LEVEL>                  # Business criticality level
+--deleteincompletescan <POLICY>    # Build deletion policy (0/1/2)
+--timeout <MINUTES>                # Scan timeout (default: 60)
+--threads <COUNT>                  # Concurrent threads (2-10, default: 4)
+--export-results <FILE>            # Export assessment results
 ```
 
 ### Export Options
@@ -185,8 +222,7 @@ verascan [OPTIONS] --filepath <PATH>
 
 ### Utility Options
 ```bash
---debug                            # Enable debug output
---request-policy <NAME>            # Download policy by name
+--debug                            # Enable debug output (global)
 ```
 
 ## Configuration
@@ -296,19 +332,25 @@ verascan --debug --pipeline-scan --filepath . \
 
 #### 1. Initial Security Assessment
 ```bash
-# Comprehensive scan with all outputs
-verascan --pipeline-scan --filepath ./target \
+# Comprehensive pipeline scan with all outputs
+verascan pipeline --filepath ./target \
   --project-name "MyApp-v1.0" \
   --export-findings scan-results.json \
   --export-format all \
   --show-findings \
+  --debug
+
+# Initial assessment scan for policy compliance
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApp-v1.0" \
+  --export-results assessment-scan.json \
   --debug
 ```
 
 #### 2. Establish Security Baseline
 ```bash
 # Create baseline from clean build
-verascan --pipeline-scan --filepath ./release \
+verascan pipeline --filepath ./release \
   --project-name "MyApp-Release-v1.0" \
   --export-findings baseline-v1.0.json \
   --filefilter "*.jar,*.war"
@@ -317,11 +359,18 @@ verascan --pipeline-scan --filepath ./release \
 #### 3. Continuous Security Monitoring
 ```bash
 # Check for new vulnerabilities
-verascan --pipeline-scan --filepath ./target \
+verascan pipeline --filepath ./target \
   --baseline-file baseline-v1.0.json \
   --filtered-json-output-file new-vulnerabilities.json \
   --fail-on-severity "Medium,High,Very High" \
   --export-findings current-scan.json
+
+# Continuous assessment scanning with --no-wait
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApp-v1.0" \
+  --sandbox-name "continuous-integration" \
+  --no-wait \
+  --export-results ci-assessment.json
 ```
 
 ### GitLab CI Integration
@@ -329,7 +378,7 @@ verascan --pipeline-scan --filepath ./target \
 #### 4. Complete GitLab Pipeline
 ```bash
 # Full CI/CD integration with GitLab
-verascan --pipeline-scan --filepath ./build \
+verascan pipeline --filepath ./build \
   --baseline-file security-baseline.json \
   --export-format gitlab \
   --export-findings gitlab-sast-report.json \
@@ -343,7 +392,7 @@ verascan --pipeline-scan --filepath ./build \
 #### 5. Strict Security Policy
 ```bash
 # Zero tolerance for critical vulnerabilities
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --fail-on-severity "Very High" \
   --fail-on-cwe "89,79,22,78,352" \
   --export-findings results.json
@@ -352,11 +401,19 @@ verascan --pipeline-scan --filepath . \
 #### 6. Development Stage Policy
 ```bash
 # Relaxed policy for development
-verascan --pipeline-scan --filepath ./dev-build \
+verascan pipeline --filepath ./dev-build \
   --development-stage development \
   --fail-on-severity "Very High" \
   --min-severity "Medium" \
   --export-findings dev-results.json
+
+# Development assessment scan with --no-wait
+verascan assessment --filepath ./dev-build \
+  --app-profile-name "MyApp-Development" \
+  --sandbox-name "feature-branch" \
+  --no-wait \
+  --skip-prescan \
+  --export-results dev-assessment.json
 ```
 
 ### Advanced Use Cases
@@ -364,7 +421,7 @@ verascan --pipeline-scan --filepath ./dev-build \
 #### 7. Multi-format Reporting
 ```bash
 # Generate all report formats
-verascan --pipeline-scan --filepath ./artifacts \
+verascan pipeline --filepath ./artifacts \
   --export-format all \
   --export-findings security-report \
   --show-findings \
@@ -374,11 +431,35 @@ verascan --pipeline-scan --filepath ./artifacts \
 #### 8. Baseline Comparison with Policy
 ```bash
 # Baseline + policy enforcement
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --baseline-file previous-scan.json \
   --policy-name "Veracode Recommended Medium" \
   --filtered-json-output-file violations.json \
   --export-findings full-results.json
+```
+
+#### 9. Assessment Scan Workflows
+```bash
+# Production assessment scan with monitoring
+verascan assessment --filepath ./release \
+  --app-profile-name "MyApp-Production" \
+  --timeout 180 \
+  --export-results production-assessment.json
+
+# CI/CD assessment scan without monitoring
+verascan assessment --filepath ./build \
+  --app-profile-name "MyApp-CI" \
+  --sandbox-name "pipeline-$CI_PIPELINE_ID" \
+  --no-wait \
+  --modules "core,api" \
+  --export-results ci-results.json
+
+# Quick assessment with skip-prescan (not recommended for production)
+verascan assessment --filepath ./artifacts \
+  --app-profile-name "MyApp-Testing" \
+  --sandbox-name "quick-test" \
+  --skip-prescan \
+  --no-wait
 ```
 
 ## CI/CD Integration

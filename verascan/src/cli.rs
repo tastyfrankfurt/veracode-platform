@@ -253,6 +253,14 @@ pub enum Commands {
         )]
         skip_prescan: bool,
 
+        /// Submit scan and exit without waiting for completion
+        #[arg(
+            long = "no-wait",
+            help = "Submit scan and exit without waiting for completion",
+            default_value = "false"
+        )]
+        no_wait: bool,
+
         /// Delete incomplete scan policy for assessment scans
         #[arg(long = "deleteincompletescan", help = "Build deletion policy for assessment scans: 0=Never delete, 1=Delete safe builds only (default), 2=Delete any build except Results Ready", default_value = "1", value_parser = validate_delete_incomplete_scan)]
         deleteincompletescan: u8,
@@ -817,6 +825,7 @@ mod tests {
                 sandbox_name: None,
                 modules: None,
                 skip_prescan: false,
+                no_wait: false,
                 teamname: None,
                 bus_cri: "very-high".to_string(),
                 deleteincompletescan: 1,

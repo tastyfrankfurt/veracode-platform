@@ -17,8 +17,11 @@ cargo build --release
 export VERACODE_API_ID="your-api-id"
 export VERACODE_API_KEY="your-api-key"
 
-# Run a basic security scan
-./target/release/verascan --pipeline-scan --filepath . --export-findings results.json
+# Run a basic pipeline scan
+./target/release/verascan pipeline --filepath . --export-findings results.json
+
+# Run a basic assessment scan
+./target/release/verascan assessment --filepath . --app-profile-name "MyApp"
 ```
 
 ## 📁 Project Structure
@@ -144,26 +147,53 @@ export VERASCAN_DISABLE_CERT_VALIDATION="true"
 ### Basic Security Scanning
 
 ```bash
-# Scan current directory for vulnerabilities
-verascan --pipeline-scan --filepath . --export-findings results.json
+# Pipeline scan - current directory for vulnerabilities
+verascan pipeline --filepath . --export-findings results.json
 
-# Scan specific file types with custom project info
-verascan --pipeline-scan --filepath ./build \
+# Pipeline scan - specific file types with custom project info
+verascan pipeline --filepath ./build \
   --filefilter "*.jar,*.war" \
   --project-name "MyApp-v1.0" \
   --project-url "https://github.com/user/repo" \
   --export-findings scan-results.json
 ```
 
+### Assessment Scanning
+
+```bash
+# Basic assessment scan (policy scan)
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --export-results assessment-results.json
+
+# Sandbox assessment scan
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --sandbox-name "development-sandbox" \
+  --export-results sandbox-results.json
+
+# Assessment scan with --no-wait (submit and exit)
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --no-wait \
+  --export-results results.json
+
+# Assessment scan with skip-prescan (not recommended)
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --skip-prescan \
+  --no-wait
+```
+
 ### Baseline Security Management
 
 ```bash
 # Create security baseline
-verascan --pipeline-scan --filepath ./release \
+verascan pipeline --filepath ./release \
   --export-findings baseline-v1.0.json
 
 # Compare against baseline
-verascan --pipeline-scan --filepath ./current \
+verascan pipeline --filepath ./current \
   --baseline-file baseline-v1.0.json \
   --filtered-json-output-file new-findings.json \
   --export-findings current-results.json
@@ -173,17 +203,17 @@ verascan --pipeline-scan --filepath ./current \
 
 ```bash
 # Fail on high severity vulnerabilities
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --fail-on-severity "High,Very High" \
   --export-findings results.json
 
 # Fail on specific vulnerability types
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --fail-on-cwe "89,79,22" \
   --export-findings results.json
 
 # Combined baseline and policy enforcement
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --baseline-file baseline.json \
   --fail-on-severity "Medium,High,Very High" \
   --filtered-json-output-file violations.json
@@ -193,7 +223,7 @@ verascan --pipeline-scan --filepath . \
 
 ```bash
 # Complete GitLab pipeline integration
-verascan --pipeline-scan --filepath ./build \
+verascan pipeline --filepath ./build \
   --baseline-file security-baseline.json \
   --export-format gitlab \
   --export-findings gl-sast-report.json \
@@ -205,10 +235,10 @@ verascan --pipeline-scan --filepath ./build \
 
 ```bash
 # Download Veracode platform policy
-verascan --request-policy "Veracode Recommended High"
+verascan policy "Veracode Recommended High"
 
 # Use downloaded policy
-verascan --pipeline-scan --filepath . \
+verascan pipeline --filepath . \
   --policy-name "Veracode Recommended High" \
   --filtered-json-output-file violations.json
 ```
@@ -216,8 +246,8 @@ verascan --pipeline-scan --filepath . \
 ### Advanced Configuration
 
 ```bash
-# High-performance scanning with custom settings
-verascan --pipeline-scan --filepath ./artifacts \
+# High-performance pipeline scanning with custom settings
+verascan pipeline --filepath ./artifacts \
   --threads 8 \
   --timeout 60 \
   --region european \
@@ -226,6 +256,18 @@ verascan --pipeline-scan --filepath ./artifacts \
   --export-format all \
   --export-findings comprehensive-report \
   --show-findings \
+  --debug
+
+# Advanced assessment scan with custom settings
+verascan assessment --filepath ./artifacts \
+  --app-profile-name "Production App" \
+  --sandbox-name "qa-testing" \
+  --threads 8 \
+  --timeout 120 \
+  --modules "web-app,api-service" \
+  --teamname "Security Team" \
+  --bus-cri high \
+  --export-results assessment-comprehensive.json \
   --debug
 ```
 
@@ -257,6 +299,22 @@ verascan --pipeline-scan --filepath ./artifacts \
 | `--timeout <MINUTES>` | `30` | Scan timeout in minutes |
 | `--threads <COUNT>` | `4` | Concurrent threads (2-10) |
 | `--development-stage <STAGE>` | `development` | development/testing/release |
+
+### Assessment Scan Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--app-profile-name <NAME>` | - | Veracode application profile name (required) |
+| `--sandbox-name <NAME>` | - | Sandbox name for sandbox assessment scans |
+| `--skip-prescan` | `false` | Skip prescan validation (not recommended) |
+| `--no-wait` | `false` | Submit scan and exit without waiting for completion |
+| `--modules <LIST>` | - | Specific modules to scan (comma-separated) |
+| `--teamname <NAME>` | - | Team name for application creation |
+| `--bus-cri <LEVEL>` | `very-high` | Business criticality (very-high/high/medium/low/very-low) |
+| `--deleteincompletescan <POLICY>` | `1` | Build deletion policy (0=never, 1=safe builds, 2=any build) |
+| `--timeout <MINUTES>` | `60` | Scan timeout in minutes |
+| `--threads <COUNT>` | `4` | Concurrent threads (2-10) |
+| `--export-results <FILE>` | `assessment-results.json` | Export assessment results |
 
 ### Export & Display Options
 

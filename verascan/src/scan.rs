@@ -1530,6 +1530,7 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         export_results,
         deleteincompletescan,
         skip_prescan,
+        no_wait,
         ..
     } = &args.command
     {
@@ -1593,7 +1594,8 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
             threads: *threads,
             debug: args.debug,
             skip_prescan: *skip_prescan,
-            autoscan: true, // Default to enabled for now, could be made configurable via CLI
+            autoscan: true, // Always true for now; required when no-wait is specified
+            monitor_completion: !no_wait, // Inverse of no_wait
             export_results_path: export_results.clone(),
             deleteincompletescan: *deleteincompletescan,
         };

@@ -42,6 +42,31 @@ pub struct SandboxId {
     pub name: String,
 }
 
+/// Build identifier for Veracode assessment scans
+#[derive(Debug, Clone)]
+pub struct BuildId {
+    /// Build ID - used for XML API calls (scan operations)
+    pub id: String,
+}
+
+impl BuildId {
+    /// Create new BuildId from identifier
+    pub fn new(id: String) -> Self {
+        Self { id }
+    }
+
+    /// Get the build ID as string
+    pub fn id(&self) -> &str {
+        &self.id
+    }
+}
+
+impl std::fmt::Display for BuildId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.id)
+    }
+}
+
 impl SandboxId {
     /// Create new SandboxId from all identifiers
     pub fn new(guid: String, legacy_id: String, name: String) -> Self {
@@ -137,6 +162,7 @@ pub struct AssessmentScanConfig {
     pub debug: bool,
     pub skip_prescan: bool,
     pub autoscan: bool,
+    pub monitor_completion: bool,
     pub export_results_path: String,
     pub deleteincompletescan: u8,
 }
@@ -153,7 +179,8 @@ impl Default for AssessmentScanConfig {
             threads: 4,  // 4 threads default for assessment uploads
             debug: false,
             skip_prescan: false,
-            autoscan: true, // Enable autoscan by default
+            autoscan: true,           // Enable autoscan by default
+            monitor_completion: true, // Default to monitoring completion
             export_results_path: "assessment-results.json".to_string(),
             deleteincompletescan: 1, // Default to policy 1 (delete safe builds only)
         }
@@ -260,7 +287,7 @@ impl AssessmentSubmitter {
         &self,
         app_id: &str,
         sandbox_legacy_id: Option<&str>,
-    ) -> Result<String, AssessmentError> {
+    ) -> Result<BuildId, AssessmentError> {
         if self.config.debug {
             println!("🔍 Checking/creating build for uploads...");
         }
@@ -286,7 +313,7 @@ impl AssessmentSubmitter {
                 if self.config.debug {
                     println!("✅ Build ready for uploads: {}", build.build_id);
                 }
-                Ok(build.build_id)
+                Ok(BuildId::new(build.build_id))
             }
             Err(e) => {
                 eprintln!("❌ Failed to ensure build exists: {e}");
@@ -307,46 +334,24 @@ impl AssessmentSubmitter {
         &self,
         files: &[PathBuf],
         app_id: &ApplicationId,
+        sandbox_id: Option<&SandboxId>,
     ) -> Result<Vec<String>, AssessmentError> {
         if files.is_empty() {
             return Err(AssessmentError::NoValidFiles);
         }
 
-        // Sandbox creation is now handled in upload_and_scan before this method is called
-        // Step 1: Ensure build exists (using numeric app_id and sandbox legacy ID if applicable)
-        let sandbox_legacy_id = match self.config.scan_type {
-            ScanType::Sandbox => {
-                if let Some(ref sandbox_name) = self.config.sandbox_name {
-                    // Get the existing sandbox legacy ID using GUID
-                    let sandbox_api = self.client.sandbox_api();
-                    match sandbox_api
-                        .get_sandbox_by_name(app_id.for_rest_api(), sandbox_name)
-                        .await
-                    {
-                        Ok(Some(sandbox)) => sandbox.id.map(|id| id.to_string()),
-                        _ => None,
-                    }
-                } else {
-                    None
-                }
-            }
-            ScanType::Policy => None,
-        };
-
-        let _build_id = self
-            .ensure_build_exists(app_id.for_xml_api(), sandbox_legacy_id.as_deref())
-            .await?;
+        // Get sandbox legacy ID if sandbox scan
+        let sandbox_legacy_id = sandbox_id.map(|s| s.for_xml_api());
 
         // For single file or small number of files, use sequential upload
         if files.len() == 1 || self.config.threads == 1 {
-            return self
-                .upload_files_sequential(files, app_id, sandbox_legacy_id.as_deref())
-                .await;
+            self.upload_files_sequential(files, app_id, sandbox_legacy_id)
+                .await
+        } else {
+            // Use concurrent upload for multiple files
+            self.upload_files_concurrent(files, app_id, sandbox_legacy_id)
+                .await
         }
-
-        // Use concurrent upload for multiple files
-        self.upload_files_concurrent(files, app_id, sandbox_legacy_id.as_deref())
-            .await
     }
 
     /// Upload files sequentially
@@ -718,8 +723,9 @@ impl AssessmentSubmitter {
     pub async fn start_prescan(
         &self,
         app_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
-    ) -> Result<String, AssessmentError> {
+    ) -> Result<(), AssessmentError> {
         if self.config.debug {
             println!("🔍 Starting prescan analysis...");
         }
@@ -767,12 +773,13 @@ impl AssessmentSubmitter {
         };
 
         match prescan_result {
-            Ok(build_id) => {
-                println!("✅ Prescan started with build ID: {build_id}");
+            Ok(returned_build_id) => {
+                println!("✅ Prescan started");
                 if self.config.debug {
-                    println!("🔍 Prescan build ID: {build_id}");
+                    println!("🔍 Prescan started for build ID: {}", build_id.id());
+                    println!("🔍 API returned build ID: {returned_build_id}");
                 }
-                Ok(build_id)
+                Ok(())
             }
             Err(e) => {
                 eprintln!("❌ Failed to start prescan: {e}");
@@ -787,12 +794,12 @@ impl AssessmentSubmitter {
     pub async fn start_scan(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
             println!("🚀 Starting scan analysis...");
-            println!("   Build ID: {build_id}");
+            println!("   Build ID: {}", build_id.id());
         }
 
         let scan_api = self.client.scan_api();
@@ -882,49 +889,94 @@ impl AssessmentSubmitter {
         &self,
         files: &[PathBuf],
         app_id: &ApplicationId,
-    ) -> Result<String, AssessmentError> {
+    ) -> Result<BuildId, AssessmentError> {
         // Step 1: Ensure sandbox exists first (if sandbox scan) and get sandbox ID
         let sandbox_id = self
             .ensure_sandbox_and_get_id(app_id.for_rest_api())
             .await?;
 
-        // Upload files (sandbox already created)
-        let _uploaded_files = self.upload_files(files, app_id).await?;
-
-        // Start prescan - use numeric ID
+        // Step 2: Ensure build exists
+        let sandbox_legacy_id = sandbox_id.as_ref().map(|s| s.for_xml_api());
         let build_id = self
-            .start_prescan(app_id.for_xml_api(), sandbox_id.as_ref())
+            .ensure_build_exists(app_id.for_xml_api(), sandbox_legacy_id)
             .await?;
 
-        // Check if we need to manually start scan (only if autoscan is disabled)
-        if !self.is_autoscan_enabled() {
-            if self.config.debug {
-                println!("🔄 Autoscan disabled, will manually start scan after prescan completes");
-            }
-        } else if self.config.debug {
-            println!("🤖 Autoscan enabled, scan will start automatically after prescan");
-        }
+        // Step 3: Upload files (now simplified)
+        let _uploaded_files = self
+            .upload_files(files, app_id, sandbox_id.as_ref())
+            .await?;
 
-        // Use two-phase monitoring approach matching Java implementation
-        // This handles both prescan completion and scan completion automatically
-        if !self.is_autoscan_enabled() {
-            // For manual scan workflows, monitor prescan first, then start scan, then monitor build
-            self.monitor_prescan_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                .await?;
-
+        // Step 4: Start prescan or scan based on configuration
+        if self.config.skip_prescan {
+            // Skip prescan and directly start scan
             if self.config.debug {
-                println!("🔄 Prescan complete, manually starting scan...");
+                println!("⚠️  Skipping prescan - directly starting scan");
+            } else {
+                println!("⚠️  Prescan skipped - starting scan directly");
             }
+
+            // Start scan directly without prescan
             self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
 
-            // Monitor build phase (scan completion)
+            // Check if we should exit early (--no-wait specified)
+            if !self.config.monitor_completion {
+                println!(
+                    "⏳ Scan submitted successfully - not waiting for completion (--no-wait specified)"
+                );
+                println!("   Build ID: {}", &build_id);
+                return Ok(build_id);
+            }
+
+            // Monitor only the build phase (scan completion) since we skipped prescan
             self.monitor_build_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
         } else {
-            // For autoscan workflows, use unified two-phase monitoring
-            self.monitor_scan_progress(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+            // Normal workflow: Start prescan first
+            self.start_prescan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
+
+            // Check if we should exit early (--no-wait specified)
+            if !self.config.monitor_completion {
+                println!(
+                    "⏳ Prescan submitted successfully - not waiting for completion (--no-wait specified)"
+                );
+                println!("   Build ID: {}", &build_id);
+                return Ok(build_id);
+            }
+
+            // Check if we need to manually start scan (only if autoscan is disabled)
+            if !self.is_autoscan_enabled() {
+                if self.config.debug {
+                    println!(
+                        "🔄 Autoscan disabled, will manually start scan after prescan completes"
+                    );
+                }
+            } else if self.config.debug {
+                println!("🤖 Autoscan enabled, scan will start automatically after prescan");
+            }
+
+            // Use two-phase monitoring approach matching Java implementation
+            // This handles both prescan completion and scan completion automatically
+            if !self.is_autoscan_enabled() {
+                // For manual scan workflows, monitor prescan first, then start scan, then monitor build
+                self.monitor_prescan_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+                    .await?;
+
+                if self.config.debug {
+                    println!("🔄 Prescan complete, manually starting scan...");
+                }
+                self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+                    .await?;
+
+                // Monitor build phase (scan completion)
+                self.monitor_build_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+                    .await?;
+            } else {
+                // For autoscan workflows, use unified two-phase monitoring
+                self.monitor_scan_progress(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+                    .await?;
+            }
         }
 
         // Export results to file
@@ -938,7 +990,7 @@ impl AssessmentSubmitter {
     pub async fn wait_for_prescan(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
@@ -961,7 +1013,7 @@ impl AssessmentSubmitter {
             };
 
             match scan_api
-                .get_prescan_results(app_id, sandbox_legacy_id_str, Some(build_id))
+                .get_prescan_results(app_id, sandbox_legacy_id_str, Some(build_id.id()))
                 .await
             {
                 Ok(prescan_results) => {
@@ -1016,7 +1068,7 @@ impl AssessmentSubmitter {
     pub async fn wait_for_scan_completion(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
@@ -1040,7 +1092,7 @@ impl AssessmentSubmitter {
 
             // Use get_build_info to check scan status
             match scan_api
-                .get_build_info(app_id, Some(build_id), sandbox_legacy_id_str)
+                .get_build_info(app_id, Some(build_id.id()), sandbox_legacy_id_str)
                 .await
             {
                 Ok(build_info) => {
@@ -1120,7 +1172,7 @@ impl AssessmentSubmitter {
     pub async fn monitor_scan_progress(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
@@ -1158,7 +1210,7 @@ impl AssessmentSubmitter {
     async fn monitor_prescan_phase(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
@@ -1181,7 +1233,7 @@ impl AssessmentSubmitter {
             };
 
             match scan_api
-                .get_prescan_results(app_id, sandbox_legacy_id_str, Some(build_id))
+                .get_prescan_results(app_id, sandbox_legacy_id_str, Some(build_id.id()))
                 .await
             {
                 Ok(prescan_results) => {
@@ -1236,7 +1288,7 @@ impl AssessmentSubmitter {
     async fn monitor_build_phase(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
@@ -1259,7 +1311,7 @@ impl AssessmentSubmitter {
             };
 
             match scan_api
-                .get_build_info(app_id, Some(build_id), sandbox_legacy_id_str)
+                .get_build_info(app_id, Some(build_id.id()), sandbox_legacy_id_str)
                 .await
             {
                 Ok(build_info) => {
@@ -1335,7 +1387,7 @@ impl AssessmentSubmitter {
     pub async fn export_scan_results(
         &self,
         app_id: &str,
-        build_id: &str,
+        build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
@@ -1350,7 +1402,7 @@ impl AssessmentSubmitter {
 
         // Get build info as scan results (detailed report API not yet implemented)
         match scan_api
-            .get_build_info(app_id, Some(build_id), sandbox_legacy_id_str)
+            .get_build_info(app_id, Some(build_id.id()), sandbox_legacy_id_str)
             .await
         {
             Ok(build_info) => {
@@ -1460,6 +1512,22 @@ impl AssessmentSubmitter {
 
         println!("   Upload Threads: {}", self.config.threads);
         println!("   Timeout: {} minutes", self.config.timeout);
+        println!(
+            "   Skip Prescan: {}",
+            if self.config.skip_prescan {
+                "enabled"
+            } else {
+                "disabled"
+            }
+        );
+        println!(
+            "   Monitor Completion: {}",
+            if self.config.monitor_completion {
+                "enabled"
+            } else {
+                "disabled (--no-wait)"
+            }
+        );
         println!("   Export Results: {}", self.config.export_results_path);
     }
 }
@@ -1478,6 +1546,7 @@ mod tests {
         assert!(config.sandbox_name.is_none());
         assert!(config.selected_modules.is_none());
         assert!(config.autoscan);
+        assert!(config.monitor_completion);
         assert_eq!(config.export_results_path, "assessment-results.json");
         assert_eq!(config.deleteincompletescan, 1);
     }
@@ -1504,6 +1573,7 @@ mod tests {
             debug: true,
             skip_prescan: false,
             autoscan: false,
+            monitor_completion: false,
             export_results_path: "custom-results.json".to_string(),
             deleteincompletescan: 2,
         };
