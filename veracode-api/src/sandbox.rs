@@ -1,6 +1,6 @@
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 use crate::{VeracodeClient, VeracodeError};
 
@@ -132,7 +132,7 @@ impl SandboxListParams {
     /// Convert to query parameters for HTTP requests
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         let mut params = Vec::new();
-        
+
         if let Some(name) = &self.name {
             params.push(("name".to_string(), name.clone()));
         }
@@ -154,7 +154,7 @@ impl SandboxListParams {
         if let Some(modified_before) = self.modified_before {
             params.push(("modified_before".to_string(), modified_before.to_rfc3339()));
         }
-        
+
         params
     }
 }
@@ -236,25 +236,26 @@ impl<'a> SandboxApi<'a> {
         params: Option<SandboxListParams>,
     ) -> Result<Vec<Sandbox>, SandboxError> {
         let endpoint = format!("/appsec/v1/applications/{application_guid}/sandboxes");
-        
+
         let query_params = params.map(|p| p.to_query_params());
-        
+
         let response = self.client.get(&endpoint, query_params.as_deref()).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
                 let sandbox_response: SandboxListResponse = response.json().await?;
-                Ok(sandbox_response.embedded
+                Ok(sandbox_response
+                    .embedded
                     .map(|e| e.sandboxes)
                     .unwrap_or_default())
             }
             404 => Err(SandboxError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -274,9 +275,8 @@ impl<'a> SandboxApi<'a> {
         application_guid: &str,
         sandbox_guid: &str,
     ) -> Result<Sandbox, SandboxError> {
-        let endpoint = format!(
-            "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}"
-        );
+        let endpoint =
+            format!("/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}");
 
         let response = self.client.get(&endpoint, None).await?;
 
@@ -289,9 +289,9 @@ impl<'a> SandboxApi<'a> {
             404 => Err(SandboxError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -326,7 +326,7 @@ impl<'a> SandboxApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
-                
+
                 // Try to parse the structured error response
                 if let Ok(error_response) = serde_json::from_str::<ApiErrorResponse>(&error_text) {
                     if let Some(embedded) = error_response.embedded {
@@ -334,16 +334,23 @@ impl<'a> SandboxApi<'a> {
                             if api_error.title.contains("already exists") {
                                 return Err(SandboxError::AlreadyExists(api_error.title));
                             }
-                            if api_error.title.contains("limit") || api_error.title.contains("maximum") {
+                            if api_error.title.contains("limit")
+                                || api_error.title.contains("maximum")
+                            {
                                 return Err(SandboxError::LimitExceeded);
                             }
-                            if api_error.title.contains("Json Parse Error") || api_error.title.contains("Cannot deserialize") {
-                                return Err(SandboxError::InvalidInput(format!("JSON parsing error: {}", api_error.title)));
+                            if api_error.title.contains("Json Parse Error")
+                                || api_error.title.contains("Cannot deserialize")
+                            {
+                                return Err(SandboxError::InvalidInput(format!(
+                                    "JSON parsing error: {}",
+                                    api_error.title
+                                )));
                             }
                         }
                     }
                 }
-                
+
                 // Fallback to string matching for backwards compatibility
                 if error_text.contains("limit") || error_text.contains("maximum") {
                     Err(SandboxError::LimitExceeded)
@@ -356,9 +363,9 @@ impl<'a> SandboxApi<'a> {
             404 => Err(SandboxError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -383,9 +390,8 @@ impl<'a> SandboxApi<'a> {
         // Validate the request
         Self::validate_update_request(&request)?;
 
-        let endpoint = format!(
-            "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}"
-        );
+        let endpoint =
+            format!("/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}");
 
         let response = self.client.put(&endpoint, Some(&request)).await?;
 
@@ -402,9 +408,9 @@ impl<'a> SandboxApi<'a> {
             404 => Err(SandboxError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -424,9 +430,8 @@ impl<'a> SandboxApi<'a> {
         application_guid: &str,
         sandbox_guid: &str,
     ) -> Result<(), SandboxError> {
-        let endpoint = format!(
-            "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}"
-        );
+        let endpoint =
+            format!("/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}");
 
         let response = self.client.delete(&endpoint).await?;
 
@@ -440,9 +445,9 @@ impl<'a> SandboxApi<'a> {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -469,9 +474,7 @@ impl<'a> SandboxApi<'a> {
                 "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}/promote?delete_on_promote=true"
             )
         } else {
-            format!(
-                "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}/promote"
-            )
+            format!("/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}/promote")
         };
 
         let response = self.client.post(&endpoint, None::<&()>).await?;
@@ -486,9 +489,9 @@ impl<'a> SandboxApi<'a> {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -508,9 +511,8 @@ impl<'a> SandboxApi<'a> {
         application_guid: &str,
         sandbox_guid: &str,
     ) -> Result<Vec<SandboxScan>, SandboxError> {
-        let endpoint = format!(
-            "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}/scans"
-        );
+        let endpoint =
+            format!("/appsec/v1/applications/{application_guid}/sandboxes/{sandbox_guid}/scans");
 
         let response = self.client.get(&endpoint, None).await?;
 
@@ -523,9 +525,9 @@ impl<'a> SandboxApi<'a> {
             404 => Err(SandboxError::NotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(SandboxError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(SandboxError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -579,17 +581,23 @@ impl<'a> SandboxApi<'a> {
     /// Validate sandbox creation request
     fn validate_create_request(request: &CreateSandboxRequest) -> Result<(), SandboxError> {
         if request.name.is_empty() {
-            return Err(SandboxError::InvalidInput("Sandbox name cannot be empty".to_string()));
+            return Err(SandboxError::InvalidInput(
+                "Sandbox name cannot be empty".to_string(),
+            ));
         }
         if request.name.len() > 256 {
-            return Err(SandboxError::InvalidInput("Sandbox name too long (max 256 characters)".to_string()));
+            return Err(SandboxError::InvalidInput(
+                "Sandbox name too long (max 256 characters)".to_string(),
+            ));
         }
-        
+
         // Check for invalid characters in name
         if request.name.contains(['<', '>', '"', '&', '\'']) {
-            return Err(SandboxError::InvalidInput("Sandbox name contains invalid characters".to_string()));
+            return Err(SandboxError::InvalidInput(
+                "Sandbox name contains invalid characters".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 
@@ -597,18 +605,24 @@ impl<'a> SandboxApi<'a> {
     fn validate_update_request(request: &UpdateSandboxRequest) -> Result<(), SandboxError> {
         if let Some(name) = &request.name {
             if name.is_empty() {
-                return Err(SandboxError::InvalidInput("Sandbox name cannot be empty".to_string()));
+                return Err(SandboxError::InvalidInput(
+                    "Sandbox name cannot be empty".to_string(),
+                ));
             }
             if name.len() > 256 {
-                return Err(SandboxError::InvalidInput("Sandbox name too long (max 256 characters)".to_string()));
+                return Err(SandboxError::InvalidInput(
+                    "Sandbox name too long (max 256 characters)".to_string(),
+                ));
             }
-            
+
             // Check for invalid characters in name
             if name.contains(['<', '>', '"', '&', '\'']) {
-                return Err(SandboxError::InvalidInput("Sandbox name contains invalid characters".to_string()));
+                return Err(SandboxError::InvalidInput(
+                    "Sandbox name contains invalid characters".to_string(),
+                ));
             }
         }
-        
+
         Ok(())
     }
 }
@@ -694,7 +708,8 @@ impl<'a> SandboxApi<'a> {
             team_identifiers: None,
         };
 
-        self.update_sandbox(application_guid, sandbox_guid, request).await
+        self.update_sandbox(application_guid, sandbox_guid, request)
+            .await
     }
 
     /// Count sandboxes for an application
@@ -731,7 +746,9 @@ impl<'a> SandboxApi<'a> {
         let sandbox = self.get_sandbox(application_guid, sandbox_guid).await?;
         match sandbox.id {
             Some(id) => Ok(id.to_string()),
-            None => Err(SandboxError::InvalidInput("Sandbox has no numeric ID".to_string())),
+            None => Err(SandboxError::InvalidInput(
+                "Sandbox has no numeric ID".to_string(),
+            )),
         }
     }
 

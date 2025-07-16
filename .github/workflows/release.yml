@@ -1,0 +1,78 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v4
+    
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+    
+    - name: Cache cargo registry
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/registry
+        key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Cache cargo index
+      uses: actions/cache@v3
+      with:
+        path: ~/.cargo/git
+        key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Cache cargo build
+      uses: actions/cache@v3
+      with:
+        path: target
+        key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+    
+    - name: Build release binary
+      run: cargo build --release
+    
+    - name: Run tests
+      run: cargo test --verbose
+    
+    - name: Create Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          target/release/verascan
+          README.md
+        generate_release_notes: true
+        draft: false
+        prerelease: false
+        body: |
+          ## Changes in this release
+          
+          See the full changelog and commit history for details.
+          
+          ## Installation
+          
+          Download the `verascan` binary for your platform and make it executable:
+          
+          ```bash
+          chmod +x verascan
+          ./verascan --help
+          ```
+          
+          ## Usage
+          
+          ```bash
+          # Basic usage
+          ./verascan --help
+          
+          # Scan with GitLab integration
+          ./verascan --gitlab-issues
+          ```
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
