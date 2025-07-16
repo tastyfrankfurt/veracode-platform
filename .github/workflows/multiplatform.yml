@@ -44,9 +44,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            target: x86_64-unknown-linux-musl
+            target: x86_64-unknown-linux-gnu
             binary_name: verascan
-            asset_name: verascan-linux-musl-amd64
+            asset_name: verascan-linux-gnu-amd64
           - os: windows-latest
             target: x86_64-pc-windows-gnu
             binary_name: verascan.exe
@@ -66,12 +66,6 @@ jobs:
       with:
         targets: ${{ matrix.target }}
     
-    - name: Install cross-compilation dependencies
-      if: matrix.os == 'ubuntu-latest'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y musl-tools musl-dev pkg-config libssl-dev openssl
-    
     - name: Install mingw-w64 for Windows GNU target
       if: matrix.os == 'windows-latest'
       run: |
@@ -83,14 +77,17 @@ jobs:
         OPENSSL_DIR: ${{ matrix.os == 'ubuntu-latest' && '/usr' || matrix.os == 'macos-latest' && '/usr/local/opt/openssl' || '' }}
       run: cargo build --release --target ${{ matrix.target }}
     
-    - name: Create zip archive
+    - name: Create zip archive Windows
+      if: matrix.os == 'windows-latest'
       run: |
         cd target/${{ matrix.target }}/release/
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
-        else
-          zip ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
-        fi
+        7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
+
+    - name: Create zip archive Windows
+      if: matrix.os != 'windows-latest'
+      run: |
+        cd target/${{ matrix.target }}/release/
+        zip ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
     
     - name: Upload Release Asset
       env:
