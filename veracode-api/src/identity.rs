@@ -3,9 +3,9 @@
 //! This module provides functionality to interact with the Veracode Identity API,
 //! allowing you to manage users, teams, roles, and API credentials programmatically.
 
+use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use chrono::{DateTime, Utc};
 
 use crate::{VeracodeClient, VeracodeError};
 
@@ -153,11 +153,11 @@ pub struct BusinessUnit {
 }
 
 /// Represents API credentials
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ApiCredential {
     /// Unique API credential ID
     pub api_id: String,
-    /// API key (only shown when first created)
+    /// API key (only shown when first created) - automatically redacted in debug output
     pub api_key: Option<String>,
     /// Expiration date of the credentials
     pub expiration_ts: Option<DateTime<Utc>>,
@@ -165,6 +165,19 @@ pub struct ApiCredential {
     pub active: Option<bool>,
     /// Creation date
     pub created_date: Option<DateTime<Utc>>,
+}
+
+/// Custom Debug implementation for ApiCredential that redacts sensitive information
+impl std::fmt::Debug for ApiCredential {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ApiCredential")
+            .field("api_id", &self.api_id)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[REDACTED]"))
+            .field("expiration_ts", &self.expiration_ts)
+            .field("active", &self.active)
+            .field("created_date", &self.created_date)
+            .finish()
+    }
 }
 
 /// Login status information
@@ -516,8 +529,7 @@ impl<'a> IdentityApi<'a> {
         match status {
             200 => {
                 let response_text = response.text().await?;
-                
-                
+
                 // Try embedded response format first
                 if let Ok(users_response) = serde_json::from_str::<UsersResponse>(&response_text) {
                     let users = if !users_response.users.is_empty() {
@@ -529,22 +541,22 @@ impl<'a> IdentityApi<'a> {
                     };
                     return Ok(users);
                 }
-                
+
                 // Try direct array as fallback
                 if let Ok(users) = serde_json::from_str::<Vec<User>>(&response_text) {
                     return Ok(users);
                 }
-                
+
                 Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    "Unable to parse users response".to_string()
+                    "Unable to parse users response".to_string(),
                 )))
             }
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -572,9 +584,9 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -592,132 +604,164 @@ impl<'a> IdentityApi<'a> {
         let endpoint = "/api/authn/v2/users";
 
         let mut fixed_request = request.clone();
-        
+
         // Both email_address and user_name are required by the API
         if fixed_request.user_name.is_none() {
-            return Err(IdentityError::InvalidInput("user_name is required".to_string()));
+            return Err(IdentityError::InvalidInput(
+                "user_name is required".to_string(),
+            ));
         }
-        
+
         // Team membership validation: ALL users must either have team assignment OR "No Team Restrictions" role
-        let has_teams = fixed_request.team_ids.is_some() && !fixed_request.team_ids.as_ref().unwrap().is_empty();
-        
+        let has_teams = fixed_request.team_ids.is_some()
+            && !fixed_request.team_ids.as_ref().unwrap().is_empty();
+
         if !has_teams {
             // Check if user has "No Team Restrictions" role (works for both human and API users)
             let has_no_team_restriction_role = if let Some(ref role_ids) = fixed_request.role_ids {
                 // Get available roles to check role descriptions
                 let roles = self.list_roles().await?;
                 role_ids.iter().any(|role_id| {
-                    roles.iter().any(|r| &r.role_id == role_id && 
-                        (r.role_description.as_ref().is_some_and(|desc| desc == "No Team Restriction API") ||
-                         r.role_name.to_lowercase() == "noteamrestrictionapi"))
+                    roles.iter().any(|r| {
+                        &r.role_id == role_id
+                            && (r
+                                .role_description
+                                .as_ref()
+                                .is_some_and(|desc| desc == "No Team Restriction API")
+                                || r.role_name.to_lowercase() == "noteamrestrictionapi")
+                    })
                 })
             } else {
                 false
             };
-            
+
             if !has_no_team_restriction_role {
                 return Err(IdentityError::InvalidInput(
                     "You must select at least one team for this user, or select No Team Restrictions role".to_string()
                 ));
             }
         }
-        
+
         // Determine user type flags early
         let is_api_user = matches!(fixed_request.user_type, Some(UserType::ApiService));
         let is_saml_user = matches!(fixed_request.user_type, Some(UserType::Saml));
-        
+
         // Validate role assignments for API users
         if is_api_user && fixed_request.role_ids.is_some() {
             let roles = self.list_roles().await?;
             let provided_role_ids = fixed_request.role_ids.as_ref().unwrap();
-            
+
             // Define human-only role descriptions (from userrolesbydescription file)
             let human_role_descriptions = [
-                "Creator", "Executive", "Mitigation Approver", "Reviewer", "Sandbox User",
-                "Security Lead", "Team Admin", "Workspace Editor", "Analytics Creator",
-                "Delete Scans", "Greenlight IDE User", "Policy Administrator", 
-                "Sandbox Administrator", "Security Insights", "Submitter", "Workspace Administrator"
+                "Creator",
+                "Executive",
+                "Mitigation Approver",
+                "Reviewer",
+                "Sandbox User",
+                "Security Lead",
+                "Team Admin",
+                "Workspace Editor",
+                "Analytics Creator",
+                "Delete Scans",
+                "Greenlight IDE User",
+                "Policy Administrator",
+                "Sandbox Administrator",
+                "Security Insights",
+                "Submitter",
+                "Workspace Administrator",
             ];
-            
+
             for role_id in provided_role_ids {
                 if let Some(role) = roles.iter().find(|r| &r.role_id == role_id) {
                     // Check if this is a human-only role
                     if let Some(ref desc) = role.role_description {
                         if human_role_descriptions.contains(&desc.as_str()) {
-                            return Err(IdentityError::InvalidInput(
-                                format!("Role '{}' (description: '{}') is a human-only role and cannot be assigned to API users.", 
-                                       role.role_name, desc)
-                            ));
+                            return Err(IdentityError::InvalidInput(format!(
+                                "Role '{}' (description: '{}') is a human-only role and cannot be assigned to API users.",
+                                role.role_name, desc
+                            )));
                         }
                     }
-                    
+
                     // API users can only be assigned roles where is_api is true
                     if role.is_api != Some(true) {
-                        return Err(IdentityError::InvalidInput(
-                            format!("Role '{}' (is_api: {:?}) cannot be assigned to API users. API users can only be assigned API roles.", 
-                                   role.role_name, role.is_api)
-                        ));
+                        return Err(IdentityError::InvalidInput(format!(
+                            "Role '{}' (is_api: {:?}) cannot be assigned to API users. API users can only be assigned API roles.",
+                            role.role_name, role.is_api
+                        )));
                     }
                 }
             }
         }
-        
+
         // If no roles provided, assign default roles (any scan and submitter)
         if fixed_request.role_ids.is_none() || fixed_request.role_ids.as_ref().unwrap().is_empty() {
             // Get available roles to find default ones
             let roles = self.list_roles().await?;
             let mut default_role_ids = Vec::new();
-            
+
             // Based on Veracode documentation, assign appropriate default roles
             if is_api_user {
                 // For API service accounts, assign apisubmitanyscan role
-                if let Some(api_submit_role) = roles.iter().find(|r| 
-                    r.role_name.to_lowercase() == "apisubmitanyscan"
-                ) {
+                if let Some(api_submit_role) = roles
+                    .iter()
+                    .find(|r| r.role_name.to_lowercase() == "apisubmitanyscan")
+                {
                     default_role_ids.push(api_submit_role.role_id.clone());
                 }
-                
+
                 // Always assign noteamrestrictionapi role for API users (required for team restrictions)
-                if let Some(noteam_role) = roles.iter().find(|r| 
-                    r.role_name.to_lowercase() == "noteamrestrictionapi"
-                ) {
+                if let Some(noteam_role) = roles
+                    .iter()
+                    .find(|r| r.role_name.to_lowercase() == "noteamrestrictionapi")
+                {
                     default_role_ids.push(noteam_role.role_id.clone());
                 }
             } else {
                 // For human users (Human/SAML/VOSP), start with Submitter as it's the most basic role
-                if let Some(submitter_role) = roles.iter().find(|r| 
-                    r.role_description.as_ref().is_some_and(|desc| desc == "Submitter")
-                ) {
+                if let Some(submitter_role) = roles.iter().find(|r| {
+                    r.role_description
+                        .as_ref()
+                        .is_some_and(|desc| desc == "Submitter")
+                }) {
                     default_role_ids.push(submitter_role.role_id.clone());
-                } else if let Some(creator_role) = roles.iter().find(|r| 
-                    r.role_description.as_ref().is_some_and(|desc| desc == "Creator")
-                ) {
+                } else if let Some(creator_role) = roles.iter().find(|r| {
+                    r.role_description
+                        .as_ref()
+                        .is_some_and(|desc| desc == "Creator")
+                }) {
                     default_role_ids.push(creator_role.role_id.clone());
-                } else if let Some(reviewer_role) = roles.iter().find(|r| 
-                    r.role_description.as_ref().is_some_and(|desc| desc == "Reviewer")
-                ) {
+                } else if let Some(reviewer_role) = roles.iter().find(|r| {
+                    r.role_description
+                        .as_ref()
+                        .is_some_and(|desc| desc == "Reviewer")
+                }) {
                     default_role_ids.push(reviewer_role.role_id.clone());
                 }
-                
+
                 // If user has no teams, also assign "No Team Restrictions" role
                 if !has_teams {
-                    if let Some(no_team_role) = roles.iter().find(|r| 
-                        r.role_description.as_ref().is_some_and(|desc| desc == "No Team Restriction API") ||
-                        r.role_name.to_lowercase() == "noteamrestrictionapi"
-                    ) {
+                    if let Some(no_team_role) = roles.iter().find(|r| {
+                        r.role_description
+                            .as_ref()
+                            .is_some_and(|desc| desc == "No Team Restriction API")
+                            || r.role_name.to_lowercase() == "noteamrestrictionapi"
+                    }) {
                         default_role_ids.push(no_team_role.role_id.clone());
                     }
                 }
             }
-            
+
             // If we found default roles, use them
             if !default_role_ids.is_empty() {
                 fixed_request.role_ids = Some(default_role_ids);
             }
         }
-        
+
         // If no permissions provided, assign default permissions based on user type
-        if fixed_request.permissions.is_none() || fixed_request.permissions.as_ref().unwrap().is_empty() {
+        if fixed_request.permissions.is_none()
+            || fixed_request.permissions.as_ref().unwrap().is_empty()
+        {
             if is_api_user {
                 // For API users, assign "apiUser" permission (from defaultapiuserperm file)
                 let api_user_permission = Permission {
@@ -740,32 +784,43 @@ impl<'a> IdentityApi<'a> {
                 fixed_request.permissions = Some(vec![human_user_permission]);
             }
         }
-        
+
         // Create the payload with the correct role structure
         let roles_payload = if let Some(ref role_ids) = fixed_request.role_ids {
-            role_ids.iter().map(|id| serde_json::json!({"role_id": id})).collect::<Vec<_>>()
+            role_ids
+                .iter()
+                .map(|id| serde_json::json!({"role_id": id}))
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
-        
+
         // Create the payload with the correct team structure
         let teams_payload = if let Some(ref team_ids) = fixed_request.team_ids {
-            team_ids.iter().map(|id| serde_json::json!({"team_id": id})).collect::<Vec<_>>()
+            team_ids
+                .iter()
+                .map(|id| serde_json::json!({"team_id": id}))
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
-        
+
         // Create the payload with the correct permissions structure
         let permissions_payload = if let Some(ref permissions) = fixed_request.permissions {
-            permissions.iter().map(|p| serde_json::json!({
-                "permission_name": p.permission_name,
-                "api_only": p.api_only.unwrap_or(false),
-                "ui_only": p.ui_only.unwrap_or(false)
-            })).collect::<Vec<_>>()
+            permissions
+                .iter()
+                .map(|p| {
+                    serde_json::json!({
+                        "permission_name": p.permission_name,
+                        "api_only": p.api_only.unwrap_or(false),
+                        "ui_only": p.ui_only.unwrap_or(false)
+                    })
+                })
+                .collect::<Vec<_>>()
         } else {
             Vec::new()
         };
-        
+
         // Build payload conditionally to exclude null fields and user_type for API users
         let mut payload = serde_json::json!({
             "email_address": fixed_request.email_address,
@@ -776,28 +831,27 @@ impl<'a> IdentityApi<'a> {
             "active": true, // New users are active by default
             "send_email_invitation": fixed_request.send_email_invitation.unwrap_or(false)
         });
-        
+
         // Add user_name only if it's not None
         if let Some(ref user_name) = fixed_request.user_name {
             payload["user_name"] = serde_json::json!(user_name);
         }
-        
+
         // Add roles only if not empty
         if !roles_payload.is_empty() {
             payload["roles"] = serde_json::json!(roles_payload);
         }
-        
+
         // Add teams only if not empty
         if !teams_payload.is_empty() {
             payload["teams"] = serde_json::json!(teams_payload);
         }
-        
+
         // Add permissions only if not empty
         if !permissions_payload.is_empty() {
             payload["permissions"] = serde_json::json!(permissions_payload);
         }
-        
-        
+
         let response = self.client.post(endpoint, Some(&payload)).await?;
 
         let status = response.status().as_u16();
@@ -820,15 +874,15 @@ impl<'a> IdentityApi<'a> {
             }
             415 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP 415 Unsupported Media Type: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP 415 Unsupported Media Type: {error_text}"
+                ))))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -843,14 +897,26 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the updated user or an error
-    pub async fn update_user(&self, user_id: &str, request: UpdateUserRequest) -> Result<User, IdentityError> {
+    pub async fn update_user(
+        &self,
+        user_id: &str,
+        request: UpdateUserRequest,
+    ) -> Result<User, IdentityError> {
         let endpoint = format!("/api/authn/v2/users/{user_id}");
 
         // Create the payload with the correct role and team structure
-        let roles_payload = request.role_ids.iter().map(|id| serde_json::json!({"role_id": id})).collect::<Vec<_>>();
-        
-        let teams_payload = request.team_ids.iter().map(|id| serde_json::json!({"team_id": id})).collect::<Vec<_>>();
-        
+        let roles_payload = request
+            .role_ids
+            .iter()
+            .map(|id| serde_json::json!({"role_id": id}))
+            .collect::<Vec<_>>();
+
+        let teams_payload = request
+            .team_ids
+            .iter()
+            .map(|id| serde_json::json!({"team_id": id}))
+            .collect::<Vec<_>>();
+
         let payload = serde_json::json!({
             "email_address": request.email_address,
             "user_name": request.user_name,
@@ -880,9 +946,9 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -911,9 +977,9 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -938,13 +1004,15 @@ impl<'a> IdentityApi<'a> {
 
             let response = self.client.get(endpoint, Some(&query_params)).await?;
             let status = response.status().as_u16();
-            
+
             match status {
                 200 => {
                     let response_text = response.text().await?;
-                    
+
                     // Try embedded response format
-                    if let Ok(roles_response) = serde_json::from_str::<RolesResponse>(&response_text) {
+                    if let Ok(roles_response) =
+                        serde_json::from_str::<RolesResponse>(&response_text)
+                    {
                         let page_roles = if !roles_response.roles.is_empty() {
                             roles_response.roles
                         } else if let Some(embedded) = roles_response.embedded {
@@ -952,26 +1020,28 @@ impl<'a> IdentityApi<'a> {
                         } else {
                             Vec::new()
                         };
-                        
+
                         if page_roles.is_empty() {
                             break; // No more roles to fetch
                         }
-                        
+
                         all_roles.extend(page_roles);
                         page += 1;
-                        
+
                         // Check pagination info if available
                         if let Some(page_info) = roles_response.page {
-                            if let (Some(current_page), Some(total_pages)) = (page_info.number, page_info.total_pages) {
+                            if let (Some(current_page), Some(total_pages)) =
+                                (page_info.number, page_info.total_pages)
+                            {
                                 if current_page + 1 >= total_pages {
                                     break;
                                 }
                             }
                         }
-                        
+
                         continue;
                     }
-                    
+
                     // Try direct array as fallback
                     if let Ok(roles) = serde_json::from_str::<Vec<Role>>(&response_text) {
                         if roles.is_empty() {
@@ -981,21 +1051,21 @@ impl<'a> IdentityApi<'a> {
                         page += 1;
                         continue;
                     }
-                    
+
                     // If we can't parse, maybe it's the first page without pagination
                     if page == 0 {
-                        return Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                            format!("Unable to parse roles response: {response_text}")
-                        )));
+                        return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                            "Unable to parse roles response: {response_text}"
+                        ))));
                     } else {
                         break; // End of pages
                     }
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
-                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                        format!("HTTP {status}: {error_text}")
-                    )));
+                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                        "HTTP {status}: {error_text}"
+                    ))));
                 }
             }
         }
@@ -1020,7 +1090,7 @@ impl<'a> IdentityApi<'a> {
             if page > 100 {
                 break;
             }
-            
+
             let query_params = vec![
                 ("page".to_string(), page.to_string()),
                 ("size".to_string(), page_size.to_string()),
@@ -1028,13 +1098,15 @@ impl<'a> IdentityApi<'a> {
 
             let response = self.client.get(endpoint, Some(&query_params)).await?;
             let status = response.status().as_u16();
-            
+
             match status {
                 200 => {
                     let response_text = response.text().await?;
-                    
+
                     // Try embedded response format first
-                    if let Ok(teams_response) = serde_json::from_str::<TeamsResponse>(&response_text) {
+                    if let Ok(teams_response) =
+                        serde_json::from_str::<TeamsResponse>(&response_text)
+                    {
                         let page_teams = if !teams_response.teams.is_empty() {
                             teams_response.teams
                         } else if let Some(embedded) = teams_response.embedded {
@@ -1042,26 +1114,28 @@ impl<'a> IdentityApi<'a> {
                         } else {
                             Vec::new()
                         };
-                        
+
                         if page_teams.is_empty() {
                             break; // No more teams to fetch
                         }
-                        
+
                         all_teams.extend(page_teams);
                         page += 1;
-                        
+
                         // Check pagination info if available
                         if let Some(page_info) = teams_response.page {
-                            if let (Some(current_page), Some(total_pages)) = (page_info.number, page_info.total_pages) {
+                            if let (Some(current_page), Some(total_pages)) =
+                                (page_info.number, page_info.total_pages)
+                            {
                                 if current_page + 1 >= total_pages {
                                     break; // Last page reached
                                 }
                             }
                         }
-                        
+
                         continue;
                     }
-                    
+
                     // Try direct array as fallback
                     if let Ok(teams) = serde_json::from_str::<Vec<Team>>(&response_text) {
                         if teams.is_empty() {
@@ -1071,11 +1145,11 @@ impl<'a> IdentityApi<'a> {
                         page += 1;
                         continue;
                     }
-                    
+
                     // If we can't parse, maybe it's the first page without pagination
                     if page == 0 {
                         return Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                            "Unable to parse teams response".to_string()
+                            "Unable to parse teams response".to_string(),
                         )));
                     } else {
                         // We've gotten some teams, but this page failed - break
@@ -1084,9 +1158,9 @@ impl<'a> IdentityApi<'a> {
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
-                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                        format!("HTTP {status}: {error_text}")
-                    )));
+                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                        "HTTP {status}: {error_text}"
+                    ))));
                 }
             }
         }
@@ -1128,9 +1202,9 @@ impl<'a> IdentityApi<'a> {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -1159,9 +1233,9 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::TeamNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -1175,7 +1249,10 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created API credentials or an error
-    pub async fn create_api_credentials(&self, request: CreateApiCredentialRequest) -> Result<ApiCredential, IdentityError> {
+    pub async fn create_api_credentials(
+        &self,
+        request: CreateApiCredentialRequest,
+    ) -> Result<ApiCredential, IdentityError> {
         let endpoint = "/api/authn/v2/api_credentials";
 
         let response = self.client.post(endpoint, Some(&request)).await?;
@@ -1196,9 +1273,9 @@ impl<'a> IdentityApi<'a> {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -1227,9 +1304,9 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound), // API credentials not found
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -1261,7 +1338,10 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the user if found, or None if not found
-    pub async fn find_user_by_username(&self, username: &str) -> Result<Option<User>, IdentityError> {
+    pub async fn find_user_by_username(
+        &self,
+        username: &str,
+    ) -> Result<Option<User>, IdentityError> {
         let query = UserQuery::new().with_username(username);
         let users = self.list_users(Some(query)).await?;
         Ok(users.into_iter().find(|u| u.user_name == username))
@@ -1280,7 +1360,14 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created user or an error
-    pub async fn create_simple_user(&self, email: &str, username: &str, first_name: &str, last_name: &str, team_ids: Vec<String>) -> Result<User, IdentityError> {
+    pub async fn create_simple_user(
+        &self,
+        email: &str,
+        username: &str,
+        first_name: &str,
+        last_name: &str,
+        team_ids: Vec<String>,
+    ) -> Result<User, IdentityError> {
         let request = CreateUserRequest {
             email_address: email.to_string(),
             first_name: first_name.to_string(),
@@ -1327,14 +1414,13 @@ impl<'a> IdentityApi<'a> {
             user_type: Some(UserType::ApiService), // Still needed for internal logic
             send_email_invitation: Some(false),
             role_ids: Some(role_ids),
-            team_ids, // Use the provided team IDs
+            team_ids,          // Use the provided team IDs
             permissions: None, // Will auto-assign "apiUser" permission for API users
         };
 
         self.create_user(request).await
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -1359,8 +1445,14 @@ mod tests {
 
     #[test]
     fn test_user_type_serialization() {
-        assert_eq!(serde_json::to_string(&UserType::Human).unwrap(), "\"HUMAN\"");
-        assert_eq!(serde_json::to_string(&UserType::ApiService).unwrap(), "\"API\"");
+        assert_eq!(
+            serde_json::to_string(&UserType::Human).unwrap(),
+            "\"HUMAN\""
+        );
+        assert_eq!(
+            serde_json::to_string(&UserType::ApiService).unwrap(),
+            "\"API\""
+        );
         assert_eq!(serde_json::to_string(&UserType::Saml).unwrap(), "\"SAML\"");
         assert_eq!(serde_json::to_string(&UserType::Vosp).unwrap(), "\"VOSP\"");
     }

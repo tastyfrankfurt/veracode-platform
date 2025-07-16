@@ -10,6 +10,7 @@ A comprehensive Rust client library for the Veracode security platform, providin
 ## ✨ Features
 
 - 🔐 **HMAC Authentication** - Built-in Veracode API credential support with automatic signature generation
+- 🛡️ **Secure Credential Handling** - All API credentials are securely wrapped to prevent accidental exposure in logs
 - 🌍 **Multi-Regional Support** - Automatic endpoint routing for Commercial, European, and Federal regions
 - 🔄 **Smart API Routing** - Automatically uses REST or XML APIs based on operation requirements
 - 📱 **Applications API** - Complete application lifecycle management via REST API
@@ -23,6 +24,8 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - ⚡ **Type-Safe** - Full Rust type safety with comprehensive serde serialization
 - 📊 **Rich Data Types** - Comprehensive data structures for all API responses
 - 🔧 **Workflow Helpers** - High-level operations combining multiple API calls
+- 🔒 **Debug Safety** - All sensitive credentials show `[REDACTED]` in debug output
+- 🧪 **Comprehensive Testing** - Extensive test coverage including security measures
 
 ## 🚀 Quick Start
 
@@ -411,6 +414,44 @@ All regional variants are supported with automatic endpoint resolution:
 | Commercial | `api.veracode.com` | `analysiscenter.veracode.com` |
 | European | `api.veracode.eu` | `analysiscenter.veracode.eu` |
 | Federal | `api.veracode.us` | `analysiscenter.veracode.us` |
+
+## 🔐 Security Features
+
+### Secure Credential Handling
+
+All API credentials are automatically secured to prevent accidental exposure:
+
+```rust
+use veracode_platform::{VeracodeConfig, VeracodeClient};
+
+// Credentials are automatically wrapped in secure containers
+let config = VeracodeConfig::new(
+    std::env::var("VERACODE_API_ID")?,
+    std::env::var("VERACODE_API_KEY")?,
+);
+
+// Debug output shows [REDACTED] instead of actual credentials
+println!("{:?}", config);
+// Output: VeracodeConfig { api_id: [REDACTED], api_key: [REDACTED], ... }
+```
+
+### Debug Safety
+
+All sensitive information is automatically redacted in debug output:
+
+- **API Credentials**: `VERACODE_API_ID` and `VERACODE_API_KEY` show as `[REDACTED]`
+- **Configuration Structures**: `VeracodeConfig` safely displays structure without exposing credentials
+- **Identity API**: `ApiCredential` structures redact sensitive `api_key` fields
+- **Comprehensive Coverage**: All credential-containing structures are protected
+
+### Backward Compatibility
+
+Security improvements are transparent to existing code:
+
+- All existing examples continue to work unchanged
+- No breaking changes to public APIs
+- Secure wrappers are internal implementation details
+- Access to credentials through standard methods (`as_str()`, `into_string()`)
 
 ## 🔧 Error Handling
 

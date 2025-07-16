@@ -4,11 +4,11 @@
 //! allowing you to upload files, initiate scans, and monitor scan progress for both
 //! application-level and sandbox scans. This implementation mirrors the Java API wrapper functionality.
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
-use std::path::Path;
 use quick_xml::Reader;
 use quick_xml::events::Event;
+use serde::{Deserialize, Serialize};
+use std::path::Path;
 
 use crate::{VeracodeClient, VeracodeError};
 
@@ -295,31 +295,34 @@ impl ScanApi {
             return Err(ScanError::FileNotFound(request.file_path));
         }
 
-        let endpoint = "api/5.0/uploadfile.do";
-        
+        let endpoint = "/api/5.0/uploadfile.do";
+
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
-        
+
         if let Some(save_as) = &request.save_as {
             query_params.push(("save_as", save_as.as_str()));
         }
 
         // Read file data
         let file_data = std::fs::read(&request.file_path)?;
-        
+
         // Get filename from path
         let filename = Path::new(&request.file_path)
             .file_name()
             .and_then(|f| f.to_str())
             .unwrap_or("file");
 
-        let response = self.client.upload_file_with_query_params(endpoint, &query_params, "file", filename, file_data).await?;
-        
+        let response = self
+            .client
+            .upload_file_with_query_params(endpoint, &query_params, "file", filename, file_data)
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -341,7 +344,9 @@ impl ScanApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::UploadFailed(format!("HTTP {status}: {error_text}")))
+                Err(ScanError::UploadFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -359,7 +364,10 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
-    pub async fn upload_large_file(&self, request: UploadLargeFileRequest) -> Result<UploadedFile, ScanError> {
+    pub async fn upload_large_file(
+        &self,
+        request: UploadLargeFileRequest,
+    ) -> Result<UploadedFile, ScanError> {
         // Validate file exists
         if !Path::new(&request.file_path).exists() {
             return Err(ScanError::FileNotFound(request.file_path));
@@ -369,23 +377,23 @@ impl ScanApi {
         let file_metadata = std::fs::metadata(&request.file_path)?;
         let file_size = file_metadata.len();
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
-        
+
         if file_size > MAX_FILE_SIZE {
-            return Err(ScanError::FileTooLarge(
-                format!("File size {} bytes exceeds 2GB limit", file_size)
-            ));
+            return Err(ScanError::FileTooLarge(format!(
+                "File size {file_size} bytes exceeds 2GB limit"
+            )));
         }
 
         let endpoint = "uploadlargefile.do"; // No version prefix for large file upload
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
-        
+
         if let Some(filename) = &request.filename {
             query_params.push(("filename", filename.as_str()));
         }
@@ -393,13 +401,11 @@ impl ScanApi {
         // Read file data
         let file_data = std::fs::read(&request.file_path)?;
 
-        let response = self.client.upload_file_binary(
-            endpoint, 
-            &query_params, 
-            file_data, 
-            "binary/octet-stream"
-        ).await?;
-        
+        let response = self
+            .client
+            .upload_file_binary(endpoint, &query_params, file_data, "binary/octet-stream")
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -425,10 +431,14 @@ impl ScanApi {
                     Err(ScanError::ApplicationNotFound)
                 }
             }
-            413 => Err(ScanError::FileTooLarge("File size exceeds server limits".to_string())),
+            413 => Err(ScanError::FileTooLarge(
+                "File size exceeds server limits".to_string(),
+            )),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::UploadFailed(format!("HTTP {status}: {error_text}")))
+                Err(ScanError::UploadFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -463,35 +473,38 @@ impl ScanApi {
         let file_metadata = std::fs::metadata(&request.file_path)?;
         let file_size = file_metadata.len();
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
-        
+
         if file_size > MAX_FILE_SIZE {
-            return Err(ScanError::FileTooLarge(
-                format!("File size {} bytes exceeds 2GB limit", file_size)
-            ));
+            return Err(ScanError::FileTooLarge(format!(
+                "File size {file_size} bytes exceeds 2GB limit"
+            )));
         }
 
         let endpoint = "uploadlargefile.do";
-        
+
         // Build query parameters
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
-        
+
         if let Some(filename) = &request.filename {
             query_params.push(("filename", filename.as_str()));
         }
 
-        let response = self.client.upload_large_file_chunked(
-            endpoint,
-            &query_params,
-            &request.file_path,
-            Some("binary/octet-stream"),
-            Some(progress_callback),
-        ).await?;
-        
+        let response = self
+            .client
+            .upload_large_file_chunked(
+                endpoint,
+                &query_params,
+                &request.file_path,
+                Some("binary/octet-stream"),
+                Some(progress_callback),
+            )
+            .await?;
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -517,10 +530,14 @@ impl ScanApi {
                     Err(ScanError::ApplicationNotFound)
                 }
             }
-            413 => Err(ScanError::FileTooLarge("File size exceeds server limits".to_string())),
+            413 => Err(ScanError::FileTooLarge(
+                "File size exceeds server limits".to_string(),
+            )),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::ChunkedUploadFailed(format!("HTTP {status}: {error_text}")))
+                Err(ScanError::ChunkedUploadFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -537,7 +554,10 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
-    pub async fn upload_file_smart(&self, request: UploadFileRequest) -> Result<UploadedFile, ScanError> {
+    pub async fn upload_file_smart(
+        &self,
+        request: UploadFileRequest,
+    ) -> Result<UploadedFile, ScanError> {
         // Check if file exists
         if !Path::new(&request.file_path).exists() {
             return Err(ScanError::FileNotFound(request.file_path));
@@ -546,10 +566,10 @@ impl ScanApi {
         // Get file size to determine upload method
         let file_metadata = std::fs::metadata(&request.file_path)?;
         let file_size = file_metadata.len();
-        
+
         // Use large file upload for files over 100MB or when build might exist
         const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024; // 100MB
-        
+
         if file_size > LARGE_FILE_THRESHOLD {
             // Convert to large file request format
             let large_request = UploadLargeFileRequest {
@@ -558,7 +578,7 @@ impl ScanApi {
                 filename: request.save_as.clone(),
                 sandbox_id: request.sandbox_id.clone(),
             };
-            
+
             // Try large file upload first, fall back to regular upload if needed
             match self.upload_large_file(large_request).await {
                 Ok(result) => Ok(result),
@@ -582,37 +602,46 @@ impl ScanApi {
     ///
     /// # Returns
     ///
-    /// A `Result` containing the build ID or an error.
-    pub async fn begin_prescan(&self, request: BeginPreScanRequest) -> Result<String, ScanError> {
-        let endpoint = "api/5.0/beginprescan.do";
-        
+    /// A `Result` indicating success or an error.
+    pub async fn begin_prescan(&self, request: BeginPreScanRequest) -> Result<(), ScanError> {
+        let endpoint = "/api/5.0/beginprescan.do";
+
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
-        
+
         if let Some(auto_scan) = request.auto_scan {
             query_params.push(("auto_scan", if auto_scan { "true" } else { "false" }));
         }
-        
+
         if let Some(scan_all) = request.scan_all_nonfatal_top_level_modules {
-            query_params.push(("scan_all_nonfatal_top_level_modules", if scan_all { "true" } else { "false" }));
+            query_params.push((
+                "scan_all_nonfatal_top_level_modules",
+                if scan_all { "true" } else { "false" },
+            ));
         }
-        
+
         if let Some(include_new) = request.include_new_modules {
-            query_params.push(("include_new_modules", if include_new { "true" } else { "false" }));
+            query_params.push((
+                "include_new_modules",
+                if include_new { "true" } else { "false" },
+            ));
         }
 
         let response = self.client.get_with_params(endpoint, &query_params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
                 let response_text = response.text().await?;
-                self.parse_build_id_response(&response_text)
+                // Just validate the response is successful, don't parse build_id
+                // since we already have it from ensure_build_exists
+                self.validate_scan_response(&response_text)?;
+                Ok(())
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -629,7 +658,9 @@ impl ScanApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::PreScanFailed(format!("HTTP {status}: {error_text}")))
+                Err(ScanError::PreScanFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -651,21 +682,21 @@ impl ScanApi {
         sandbox_id: Option<&str>,
         build_id: Option<&str>,
     ) -> Result<PreScanResults, ScanError> {
-        let endpoint = "api/5.0/getprescanresults.do";
-        
+        let endpoint = "/api/5.0/getprescanresults.do";
+
         let mut params = Vec::new();
         params.push(("app_id", app_id));
-        
+
         if let Some(sandbox_id) = sandbox_id {
             params.push(("sandbox_id", sandbox_id));
         }
-        
+
         if let Some(build_id) = build_id {
             params.push(("build_id", build_id));
         }
 
         let response = self.client.get_with_params(endpoint, &params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -683,7 +714,9 @@ impl ScanApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::PreScanFailed(format!("HTTP {status}: {error_text}")))
+                Err(ScanError::PreScanFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -696,41 +729,53 @@ impl ScanApi {
     ///
     /// # Returns
     ///
-    /// A `Result` containing the build ID or an error.
-    pub async fn begin_scan(&self, request: BeginScanRequest) -> Result<String, ScanError> {
-        let endpoint = "api/5.0/beginscan.do";
-        
+    /// A `Result` indicating success or an error.
+    pub async fn begin_scan(&self, request: BeginScanRequest) -> Result<(), ScanError> {
+        let endpoint = "/api/5.0/beginscan.do";
+
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
         query_params.push(("app_id", request.app_id.as_str()));
-        
+
         if let Some(sandbox_id) = &request.sandbox_id {
             query_params.push(("sandbox_id", sandbox_id.as_str()));
         }
-        
+
         if let Some(modules) = &request.modules {
             query_params.push(("modules", modules.as_str()));
         }
-        
+
         if let Some(scan_all) = request.scan_all_top_level_modules {
-            query_params.push(("scan_all_top_level_modules", if scan_all { "true" } else { "false" }));
+            query_params.push((
+                "scan_all_top_level_modules",
+                if scan_all { "true" } else { "false" },
+            ));
         }
-        
+
         if let Some(scan_all_nonfatal) = request.scan_all_nonfatal_top_level_modules {
-            query_params.push(("scan_all_nonfatal_top_level_modules", if scan_all_nonfatal { "true" } else { "false" }));
+            query_params.push((
+                "scan_all_nonfatal_top_level_modules",
+                if scan_all_nonfatal { "true" } else { "false" },
+            ));
         }
-        
+
         if let Some(scan_previous) = request.scan_previously_selected_modules {
-            query_params.push(("scan_previously_selected_modules", if scan_previous { "true" } else { "false" }));
+            query_params.push((
+                "scan_previously_selected_modules",
+                if scan_previous { "true" } else { "false" },
+            ));
         }
 
         let response = self.client.get_with_params(endpoint, &query_params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
                 let response_text = response.text().await?;
-                self.parse_build_id_response(&response_text)
+                // Just validate the response is successful, don't parse build_id
+                // since we already have it from ensure_build_exists
+                self.validate_scan_response(&response_text)?;
+                Ok(())
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -747,7 +792,9 @@ impl ScanApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::ScanFailed(format!("HTTP {status}: {error_text}")))
+                Err(ScanError::ScanFailed(format!(
+                    "HTTP {status}: {error_text}"
+                )))
             }
         }
     }
@@ -769,21 +816,21 @@ impl ScanApi {
         sandbox_id: Option<&str>,
         build_id: Option<&str>,
     ) -> Result<Vec<UploadedFile>, ScanError> {
-        let endpoint = "api/5.0/getfilelist.do";
-        
+        let endpoint = "/api/5.0/getfilelist.do";
+
         let mut params = Vec::new();
         params.push(("app_id", app_id));
-        
+
         if let Some(sandbox_id) = sandbox_id {
             params.push(("sandbox_id", sandbox_id));
         }
-        
+
         if let Some(build_id) = build_id {
             params.push(("build_id", build_id));
         }
 
         let response = self.client.get_with_params(endpoint, &params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -801,9 +848,9 @@ impl ScanApi {
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(ScanError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -825,19 +872,19 @@ impl ScanApi {
         file_id: &str,
         sandbox_id: Option<&str>,
     ) -> Result<(), ScanError> {
-        let endpoint = "api/5.0/removefile.do";
-        
+        let endpoint = "/api/5.0/removefile.do";
+
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
         query_params.push(("app_id", app_id));
         query_params.push(("file_id", file_id));
-        
+
         if let Some(sandbox_id) = sandbox_id {
             query_params.push(("sandbox_id", sandbox_id));
         }
 
         let response = self.client.get_with_params(endpoint, &query_params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => Ok(()),
@@ -850,9 +897,9 @@ impl ScanApi {
             404 => Err(ScanError::FileNotFound(file_id.to_string())),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(ScanError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -876,19 +923,19 @@ impl ScanApi {
         build_id: &str,
         sandbox_id: Option<&str>,
     ) -> Result<(), ScanError> {
-        let endpoint = "api/5.0/deletebuild.do";
-        
+        let endpoint = "/api/5.0/deletebuild.do";
+
         // Build query parameters like Java implementation
         let mut query_params = Vec::new();
         query_params.push(("app_id", app_id));
         query_params.push(("build_id", build_id));
-        
+
         if let Some(sandbox_id) = sandbox_id {
             query_params.push(("sandbox_id", sandbox_id));
         }
 
         let response = self.client.get_with_params(endpoint, &query_params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => Ok(()),
@@ -901,9 +948,9 @@ impl ScanApi {
             404 => Err(ScanError::BuildNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(ScanError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
@@ -928,10 +975,11 @@ impl ScanApi {
     ) -> Result<(), ScanError> {
         // First get list of builds
         let build_info = self.get_build_info(app_id, None, sandbox_id).await?;
-        
+
         if !build_info.build_id.is_empty() && build_info.build_id != "unknown" {
             println!("   🗑️  Deleting build: {}", build_info.build_id);
-            self.delete_build(app_id, &build_info.build_id, sandbox_id).await?;
+            self.delete_build(app_id, &build_info.build_id, sandbox_id)
+                .await?;
         }
 
         Ok(())
@@ -954,21 +1002,21 @@ impl ScanApi {
         build_id: Option<&str>,
         sandbox_id: Option<&str>,
     ) -> Result<ScanInfo, ScanError> {
-        let endpoint = "api/5.0/getbuildinfo.do";
-        
+        let endpoint = "/api/5.0/getbuildinfo.do";
+
         let mut params = Vec::new();
         params.push(("app_id", app_id));
-        
+
         if let Some(build_id) = build_id {
             params.push(("build_id", build_id));
         }
-        
+
         if let Some(sandbox_id) = sandbox_id {
             params.push(("sandbox_id", sandbox_id));
         }
 
         let response = self.client.get_with_params(endpoint, &params).await?;
-        
+
         let status = response.status().as_u16();
         match status {
             200 => {
@@ -980,34 +1028,32 @@ impl ScanApi {
             404 => Err(ScanError::BuildNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(ScanError::Api(VeracodeError::InvalidResponse(
-                    format!("HTTP {status}: {error_text}")
-                )))
+                Err(ScanError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
             }
         }
     }
 
     // Helper methods for parsing XML responses (Veracode API returns XML)
-    
+
     fn parse_upload_response(&self, xml: &str, file_path: &str) -> Result<UploadedFile, ScanError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut file_id = None;
         let mut file_status = "Unknown".to_string();
         let mut _md5: Option<String> = None;
-        
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == b"file" {
                         // Extract file_id from attributes
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                if attr.key.as_ref() == b"file_id" {
-                                    file_id = Some(String::from_utf8_lossy(&attr.value).to_string());
-                                }
+                        for attr in e.attributes().flatten() {
+                            if attr.key.as_ref() == b"file_id" {
+                                file_id = Some(String::from_utf8_lossy(&attr.value).to_string());
                             }
                         }
                     }
@@ -1030,13 +1076,13 @@ impl ScanApi {
             }
             buf.clear();
         }
-        
+
         let filename = Path::new(file_path)
             .file_name()
             .and_then(|f| f.to_str())
             .unwrap_or("file")
             .to_string();
-            
+
         Ok(UploadedFile {
             file_id: file_id.unwrap_or_else(|| format!("file_{}", chrono::Utc::now().timestamp())),
             file_name: filename,
@@ -1046,25 +1092,25 @@ impl ScanApi {
             md5: None,
         })
     }
-    
+
+    #[allow(dead_code)]
     fn parse_build_id_response(&self, xml: &str) -> Result<String, ScanError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut build_id = None;
-        
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
                         b"buildinfo" | b"build" => {
                             // Extract build_id from attributes
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    if attr.key.as_ref() == b"build_id" {
-                                        build_id = Some(String::from_utf8_lossy(&attr.value).to_string());
-                                    }
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"build_id" {
+                                    build_id =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string());
                                 }
                             }
                         }
@@ -1080,36 +1126,102 @@ impl ScanApi {
             }
             buf.clear();
         }
-        
-        build_id.ok_or_else(|| ScanError::PreScanFailed("No build_id found in response".to_string()))
+
+        build_id
+            .ok_or_else(|| ScanError::PreScanFailed("No build_id found in response".to_string()))
     }
-    
-    fn parse_prescan_results(&self, xml: &str, app_id: &str, sandbox_id: Option<&str>) -> Result<PreScanResults, ScanError> {
+
+    /// Validate scan response for basic success without parsing build_id
+    fn validate_scan_response(&self, xml: &str) -> Result<(), ScanError> {
+        // Check for basic error conditions in the response
+        if xml.contains("<error>") {
+            // Extract error message if present
+            let mut reader = Reader::from_str(xml);
+            reader.config_mut().trim_text(true);
+
+            let mut buf = Vec::new();
+            let mut in_error = false;
+            let mut error_message = String::new();
+
+            loop {
+                match reader.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.name().as_ref() == b"error" => {
+                        in_error = true;
+                    }
+                    Ok(Event::Text(ref e)) if in_error => {
+                        error_message.push_str(&String::from_utf8_lossy(e));
+                    }
+                    Ok(Event::End(ref e)) if e.name().as_ref() == b"error" => {
+                        break;
+                    }
+                    Ok(Event::Eof) => break,
+                    Err(e) => {
+                        return Err(ScanError::ScanFailed(format!("XML parsing error: {e}")));
+                    }
+                    _ => {}
+                }
+                buf.clear();
+            }
+
+            if !error_message.is_empty() {
+                return Err(ScanError::ScanFailed(error_message));
+            } else {
+                return Err(ScanError::ScanFailed(
+                    "Unknown error in scan response".to_string(),
+                ));
+            }
+        }
+
+        // Check for successful response indicators
+        if xml.contains("<buildinfo") || xml.contains("<build") {
+            Ok(())
+        } else {
+            Err(ScanError::ScanFailed(
+                "Invalid scan response format".to_string(),
+            ))
+        }
+    }
+
+    fn parse_prescan_results(
+        &self,
+        xml: &str,
+        app_id: &str,
+        sandbox_id: Option<&str>,
+    ) -> Result<PreScanResults, ScanError> {
+        // Check if response contains an error element (prescan not ready yet)
+        if xml.contains("<error>") && xml.contains("Prescan results not available") {
+            // Return a special status indicating prescan is still in progress
+            return Ok(PreScanResults {
+                build_id: String::new(),
+                app_id: app_id.to_string(),
+                sandbox_id: sandbox_id.map(|s| s.to_string()),
+                status: "Pre-Scan Submitted".to_string(), // Indicates still in progress
+                modules: Vec::new(),
+                messages: Vec::new(),
+            });
+        }
+
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut build_id = None;
-        let mut status = "Unknown".to_string();
         let mut modules = Vec::new();
         let messages = Vec::new();
-        
+        let mut has_prescan_results = false;
+        let mut has_fatal_errors = false;
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
-                        b"buildinfo" => {
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    match attr.key.as_ref() {
-                                        b"build_id" => {
-                                            build_id = Some(String::from_utf8_lossy(&attr.value).to_string());
-                                        }
-                                        b"analysis_unit" => {
-                                            status = String::from_utf8_lossy(&attr.value).to_string();
-                                        }
-                                        _ => {}
-                                    }
+                        b"prescanresults" => {
+                            has_prescan_results = true;
+                            // Extract build_id from prescanresults attributes if present
+                            for attr in e.attributes().flatten() {
+                                if attr.key.as_ref() == b"build_id" {
+                                    build_id =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string());
                                 }
                             }
                         }
@@ -1123,23 +1235,38 @@ impl ScanApi {
                                 size: None,
                                 platform: None,
                             };
-                            
-                            for attr in e.attributes() {
-                                if let Ok(attr) = attr {
-                                    match attr.key.as_ref() {
-                                        b"id" => module.id = String::from_utf8_lossy(&attr.value).to_string(),
-                                        b"name" => module.name = String::from_utf8_lossy(&attr.value).to_string(),
-                                        b"type" => module.module_type = String::from_utf8_lossy(&attr.value).to_string(),
-                                        b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
-                                        b"selected" => module.selected = attr.value.as_ref() == b"true",
-                                        b"size" => {
-                                            if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
-                                                module.size = size_str.parse().ok();
-                                            }
-                                        }
-                                        b"platform" => module.platform = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                                        _ => {}
+
+                            for attr in e.attributes().flatten() {
+                                match attr.key.as_ref() {
+                                    b"id" => {
+                                        module.id = String::from_utf8_lossy(&attr.value).to_string()
                                     }
+                                    b"name" => {
+                                        module.name =
+                                            String::from_utf8_lossy(&attr.value).to_string()
+                                    }
+                                    b"type" => {
+                                        module.module_type =
+                                            String::from_utf8_lossy(&attr.value).to_string()
+                                    }
+                                    b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
+                                    b"selected" => module.selected = attr.value.as_ref() == b"true",
+                                    b"has_fatal_errors" => {
+                                        if attr.value.as_ref() == b"true" {
+                                            has_fatal_errors = true;
+                                        }
+                                    }
+                                    b"size" => {
+                                        if let Ok(size_str) = String::from_utf8(attr.value.to_vec())
+                                        {
+                                            module.size = size_str.parse().ok();
+                                        }
+                                    }
+                                    b"platform" => {
+                                        module.platform =
+                                            Some(String::from_utf8_lossy(&attr.value).to_string())
+                                    }
+                                    _ => {}
                                 }
                             }
                             modules.push(module);
@@ -1156,7 +1283,21 @@ impl ScanApi {
             }
             buf.clear();
         }
-        
+
+        // Determine prescan status based on the parsed results
+        let status = if !has_prescan_results {
+            "Unknown".to_string()
+        } else if modules.is_empty() {
+            // No modules found - this could indicate prescan failed or is still processing
+            "Pre-Scan Failed".to_string()
+        } else if has_fatal_errors {
+            // Modules found but some have fatal errors
+            "Pre-Scan Failed".to_string()
+        } else {
+            // Modules found with no fatal errors - prescan succeeded
+            "Pre-Scan Success".to_string()
+        };
+
         Ok(PreScanResults {
             build_id: build_id.unwrap_or_else(|| "unknown".to_string()),
             app_id: app_id.to_string(),
@@ -1166,14 +1307,14 @@ impl ScanApi {
             messages,
         })
     }
-    
+
     fn parse_file_list(&self, xml: &str) -> Result<Vec<UploadedFile>, ScanError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut files = Vec::new();
-        
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
@@ -1186,21 +1327,30 @@ impl ScanApi {
                             file_status: "Unknown".to_string(),
                             md5: None,
                         };
-                        
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
-                                match attr.key.as_ref() {
-                                    b"file_id" => file.file_id = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"file_name" => file.file_name = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"file_size" => {
-                                        if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
-                                            file.file_size = size_str.parse().unwrap_or(0);
-                                        }
-                                    }
-                                    b"file_status" => file.file_status = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"md5" => file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string()),
-                                    _ => {}
+
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"file_id" => {
+                                    file.file_id = String::from_utf8_lossy(&attr.value).to_string()
                                 }
+                                b"file_name" => {
+                                    file.file_name =
+                                        String::from_utf8_lossy(&attr.value).to_string()
+                                }
+                                b"file_size" => {
+                                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
+                                        file.file_size = size_str.parse().unwrap_or(0);
+                                    }
+                                }
+                                b"file_status" => {
+                                    file.file_status =
+                                        String::from_utf8_lossy(&attr.value).to_string()
+                                }
+                                b"md5" => {
+                                    file.md5 =
+                                        Some(String::from_utf8_lossy(&attr.value).to_string())
+                                }
+                                _ => {}
                             }
                         }
                         files.push(file);
@@ -1215,14 +1365,19 @@ impl ScanApi {
             }
             buf.clear();
         }
-        
+
         Ok(files)
     }
-    
-    fn parse_build_info(&self, xml: &str, app_id: &str, sandbox_id: Option<&str>) -> Result<ScanInfo, ScanError> {
+
+    fn parse_build_info(
+        &self,
+        xml: &str,
+        app_id: &str,
+        sandbox_id: Option<&str>,
+    ) -> Result<ScanInfo, ScanError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
-        
+
         let mut buf = Vec::new();
         let mut scan_info = ScanInfo {
             build_id: String::new(),
@@ -1236,29 +1391,93 @@ impl ScanApi {
             scan_complete: None,
             total_lines_of_code: None,
         };
-        
+
+        let mut inside_build = false;
+
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == b"buildinfo" {
-                        for attr in e.attributes() {
-                            if let Ok(attr) = attr {
+                    match e.name().as_ref() {
+                        b"buildinfo" => {
+                            // Parse buildinfo attributes
+                            for attr in e.attributes().flatten() {
                                 match attr.key.as_ref() {
-                                    b"build_id" => scan_info.build_id = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"analysis_unit" => scan_info.status = String::from_utf8_lossy(&attr.value).to_string(),
-                                    b"analysis_unit_id" => scan_info.analysis_unit_id = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                                    b"build_id" => {
+                                        scan_info.build_id =
+                                            String::from_utf8_lossy(&attr.value).to_string()
+                                    }
+                                    b"analysis_unit" => {
+                                        // Fallback status from buildinfo (older API format)
+                                        if scan_info.status == "Unknown" {
+                                            scan_info.status =
+                                                String::from_utf8_lossy(&attr.value).to_string();
+                                        }
+                                    }
+                                    b"analysis_unit_id" => {
+                                        scan_info.analysis_unit_id =
+                                            Some(String::from_utf8_lossy(&attr.value).to_string())
+                                    }
                                     b"scan_progress_percentage" => {
-                                        if let Ok(progress_str) = String::from_utf8(attr.value.to_vec()) {
-                                            scan_info.scan_progress_percentage = progress_str.parse().ok();
+                                        if let Ok(progress_str) =
+                                            String::from_utf8(attr.value.to_vec())
+                                        {
+                                            scan_info.scan_progress_percentage =
+                                                progress_str.parse().ok();
                                         }
                                     }
                                     b"total_lines_of_code" => {
-                                        if let Ok(lines_str) = String::from_utf8(attr.value.to_vec()) {
+                                        if let Ok(lines_str) =
+                                            String::from_utf8(attr.value.to_vec())
+                                        {
                                             scan_info.total_lines_of_code = lines_str.parse().ok();
                                         }
                                     }
                                     _ => {}
                                 }
+                            }
+                        }
+                        b"build" => {
+                            inside_build = true;
+                        }
+                        b"analysis_unit" => {
+                            // Parse analysis_unit attributes (primary status source)
+                            for attr in e.attributes().flatten() {
+                                match attr.key.as_ref() {
+                                    b"status" => {
+                                        // Primary status source from analysis_unit
+                                        scan_info.status =
+                                            String::from_utf8_lossy(&attr.value).to_string();
+                                    }
+                                    b"analysis_type" => {
+                                        scan_info.scan_type =
+                                            String::from_utf8_lossy(&attr.value).to_string();
+                                    }
+                                    _ => {}
+                                }
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"build" {
+                        inside_build = false;
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing elements like <analysis_unit ... />
+                    if e.name().as_ref() == b"analysis_unit" && inside_build {
+                        for attr in e.attributes().flatten() {
+                            match attr.key.as_ref() {
+                                b"status" => {
+                                    scan_info.status =
+                                        String::from_utf8_lossy(&attr.value).to_string();
+                                }
+                                b"analysis_type" => {
+                                    scan_info.scan_type =
+                                        String::from_utf8_lossy(&attr.value).to_string();
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -1272,7 +1491,7 @@ impl ScanApi {
             }
             buf.clear();
         }
-        
+
         Ok(scan_info)
     }
 }
@@ -1302,7 +1521,7 @@ impl ScanApi {
             save_as: None,
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
+
         self.upload_file(request).await
     }
 
@@ -1327,7 +1546,7 @@ impl ScanApi {
             save_as: None,
             sandbox_id: None,
         };
-        
+
         self.upload_file(request).await
     }
 
@@ -1356,7 +1575,7 @@ impl ScanApi {
             filename: filename.map(|s| s.to_string()),
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
+
         self.upload_large_file(request).await
     }
 
@@ -1383,7 +1602,7 @@ impl ScanApi {
             filename: filename.map(|s| s.to_string()),
             sandbox_id: None,
         };
-        
+
         self.upload_large_file(request).await
     }
 
@@ -1417,8 +1636,9 @@ impl ScanApi {
             filename: filename.map(|s| s.to_string()),
             sandbox_id: Some(sandbox_id.to_string()),
         };
-        
-        self.upload_large_file_with_progress(request, progress_callback).await
+
+        self.upload_large_file_with_progress(request, progress_callback)
+            .await
     }
 
     /// Begin a simple pre-scan for a sandbox
@@ -1435,7 +1655,7 @@ impl ScanApi {
         &self,
         app_id: &str,
         sandbox_id: &str,
-    ) -> Result<String, ScanError> {
+    ) -> Result<(), ScanError> {
         let request = BeginPreScanRequest {
             app_id: app_id.to_string(),
             sandbox_id: Some(sandbox_id.to_string()),
@@ -1443,7 +1663,7 @@ impl ScanApi {
             scan_all_nonfatal_top_level_modules: Some(true),
             include_new_modules: Some(true),
         };
-        
+
         self.begin_prescan(request).await
     }
 
@@ -1461,7 +1681,7 @@ impl ScanApi {
         &self,
         app_id: &str,
         sandbox_id: &str,
-    ) -> Result<String, ScanError> {
+    ) -> Result<(), ScanError> {
         let request = BeginScanRequest {
             app_id: app_id.to_string(),
             sandbox_id: Some(sandbox_id.to_string()),
@@ -1470,7 +1690,7 @@ impl ScanApi {
             scan_all_nonfatal_top_level_modules: Some(true),
             scan_previously_selected_modules: None,
         };
-        
+
         self.begin_scan(request).await
     }
 
@@ -1493,20 +1713,27 @@ impl ScanApi {
     ) -> Result<String, ScanError> {
         // Step 1: Upload file
         println!("📤 Uploading file to sandbox...");
-        self.upload_file_to_sandbox(app_id, file_path, sandbox_id).await?;
-        
+        let _uploaded_file = self
+            .upload_file_to_sandbox(app_id, file_path, sandbox_id)
+            .await?;
+
         // Step 2: Begin pre-scan
         println!("🔍 Beginning pre-scan...");
-        let _build_id = self.begin_sandbox_prescan(app_id, sandbox_id).await?;
-        
+        self.begin_sandbox_prescan(app_id, sandbox_id).await?;
+
         // Step 3: Wait a moment for pre-scan to complete (in production, poll for status)
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
-        
+
         // Step 4: Begin scan
         println!("🚀 Beginning scan...");
-        let scan_build_id = self.begin_sandbox_scan_all_modules(app_id, sandbox_id).await?;
-        
-        Ok(scan_build_id)
+        self.begin_sandbox_scan_all_modules(app_id, sandbox_id)
+            .await?;
+
+        // For now, return a placeholder build ID since we don't parse it from responses anymore
+        // In a real implementation, this would need to come from ensure_build_exists or similar
+        // This is a limitation of this convenience method - it should be deprecated in favor
+        // of the proper workflow that tracks build IDs
+        Ok("build_id_not_available".to_string())
     }
 
     /// Delete a build from a sandbox
@@ -1557,11 +1784,7 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
-    pub async fn delete_app_build(
-        &self,
-        app_id: &str,
-        build_id: &str,
-    ) -> Result<(), ScanError> {
+    pub async fn delete_app_build(&self, app_id: &str, build_id: &str) -> Result<(), ScanError> {
         self.delete_build(app_id, build_id, None).await
     }
 
@@ -1574,10 +1797,7 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
-    pub async fn delete_all_app_builds(
-        &self,
-        app_id: &str,
-    ) -> Result<(), ScanError> {
+    pub async fn delete_all_app_builds(&self, app_id: &str) -> Result<(), ScanError> {
         self.delete_all_builds(app_id, None).await
     }
 }
@@ -1595,7 +1815,7 @@ mod tests {
             save_as: Some("app.jar".to_string()),
             sandbox_id: Some("456".to_string()),
         };
-        
+
         assert_eq!(request.app_id, "123");
         assert_eq!(request.sandbox_id, Some("456".to_string()));
     }
@@ -1609,7 +1829,7 @@ mod tests {
             scan_all_nonfatal_top_level_modules: Some(true),
             include_new_modules: Some(false),
         };
-        
+
         assert_eq!(request.app_id, "123");
         assert_eq!(request.auto_scan, Some(true));
     }
@@ -1633,26 +1853,30 @@ mod tests {
     fn test_delete_build_request_structure() {
         // Test that the delete build methods have correct structure
         // This is a compile-time test to ensure methods exist with correct signatures
-        
-        use crate::{VeracodeConfig, VeracodeClient};
-        
+
+        use crate::{VeracodeClient, VeracodeConfig};
+
         async fn _test_delete_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test".to_string(), "test".to_string());
             let client = VeracodeClient::new(config)?;
             let api = client.scan_api();
-            
+
             // These calls won't actually execute due to test environment,
             // but they validate the method signatures exist
-            let _: Result<(), _> = api.delete_build("app_id", "build_id", Some("sandbox_id")).await;
+            let _: Result<(), _> = api
+                .delete_build("app_id", "build_id", Some("sandbox_id"))
+                .await;
             let _: Result<(), _> = api.delete_all_builds("app_id", Some("sandbox_id")).await;
-            let _: Result<(), _> = api.delete_sandbox_build("app_id", "build_id", "sandbox_id").await;
+            let _: Result<(), _> = api
+                .delete_sandbox_build("app_id", "build_id", "sandbox_id")
+                .await;
             let _: Result<(), _> = api.delete_all_sandbox_builds("app_id", "sandbox_id").await;
-            
+
             Ok(())
         }
-        
+
         // If this compiles, the methods have correct signatures
-        assert!(true);
+        // Test passes if no panic occurs
     }
 
     #[test]
@@ -1663,7 +1887,7 @@ mod tests {
             filename: Some("custom_name.jar".to_string()),
             sandbox_id: Some("456".to_string()),
         };
-        
+
         assert_eq!(request.app_id, "123");
         assert_eq!(request.filename, Some("custom_name.jar".to_string()));
         assert_eq!(request.sandbox_id, Some("456".to_string()));
@@ -1676,7 +1900,7 @@ mod tests {
             total_bytes: 2048,
             percentage: 50.0,
         };
-        
+
         assert_eq!(progress.bytes_uploaded, 1024);
         assert_eq!(progress.total_bytes, 2048);
         assert_eq!(progress.percentage, 50.0);
@@ -1703,7 +1927,7 @@ mod tests {
             let config = VeracodeConfig::new("test".to_string(), "test".to_string());
             let client = VeracodeClient::new(config)?;
             let api = client.scan_api();
-            
+
             // Test that the method signatures exist and compile
             let request = UploadLargeFileRequest {
                 app_id: "123".to_string(),
@@ -1711,23 +1935,28 @@ mod tests {
                 filename: None,
                 sandbox_id: Some("456".to_string()),
             };
-            
+
             // These calls won't actually execute due to test environment,
             // but they validate the method signatures exist
             let _: Result<UploadedFile, _> = api.upload_large_file(request.clone()).await;
-            let _: Result<UploadedFile, _> = api.upload_large_file_to_sandbox("123", "/path", "456", None).await;
-            let _: Result<UploadedFile, _> = api.upload_large_file_to_app("123", "/path", None).await;
-            
+            let _: Result<UploadedFile, _> = api
+                .upload_large_file_to_sandbox("123", "/path", "456", None)
+                .await;
+            let _: Result<UploadedFile, _> =
+                api.upload_large_file_to_app("123", "/path", None).await;
+
             // Test progress callback signature
             let progress_callback = |bytes_uploaded: u64, total_bytes: u64, percentage: f64| {
-                println!("Progress: {}/{} ({:.1}%)", bytes_uploaded, total_bytes, percentage);
+                println!("Progress: {bytes_uploaded}/{total_bytes} ({percentage:.1}%)");
             };
-            let _: Result<UploadedFile, _> = api.upload_large_file_with_progress(request, progress_callback).await;
-            
+            let _: Result<UploadedFile, _> = api
+                .upload_large_file_with_progress(request, progress_callback)
+                .await;
+
             Ok(())
         }
-        
+
         // If this compiles, the methods have correct signatures
-        assert!(true);
+        // Test passes if no panic occurs
     }
 }

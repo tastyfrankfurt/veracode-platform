@@ -22,7 +22,9 @@ pub enum PipelineError {
     FindingsNotReady,
     #[error("Application not found: {0}")]
     ApplicationNotFound(String),
-    #[error("Multiple applications found with name '{0}'. Please check the application name and ensure it uniquely identifies a single application.")]
+    #[error(
+        "Multiple applications found with name '{0}'. Please check the application name and ensure it uniquely identifies a single application."
+    )]
     MultipleApplicationsFound(String),
     #[error("API error: {0}")]
     ApiError(#[from] VeracodeError),
@@ -73,20 +75,20 @@ impl ScanStatus {
 
     /// Check if the scan failed or was terminated
     pub fn is_failed(&self) -> bool {
-        matches!(self, 
-            ScanStatus::Failure |
-            ScanStatus::Cancelled |
-            ScanStatus::Timeout |
-            ScanStatus::UserTimeout
+        matches!(
+            self,
+            ScanStatus::Failure
+                | ScanStatus::Cancelled
+                | ScanStatus::Timeout
+                | ScanStatus::UserTimeout
         )
     }
 
     /// Check if the scan is still in progress
     pub fn is_in_progress(&self) -> bool {
-        matches!(self, 
-            ScanStatus::Pending |
-            ScanStatus::Uploading |
-            ScanStatus::Started
+        matches!(
+            self,
+            ScanStatus::Pending | ScanStatus::Uploading | ScanStatus::Started
         )
     }
 }
@@ -254,7 +256,7 @@ fn strip_html_tags(html: &str) -> String {
     // Simple HTML tag removal without regex dependency
     let mut result = String::new();
     let mut in_tag = false;
-    
+
     for ch in html.chars() {
         match ch {
             '<' => in_tag = true,
@@ -263,7 +265,7 @@ fn strip_html_tags(html: &str) -> String {
             _ => {}
         }
     }
-    
+
     // Clean up extra whitespace
     result.split_whitespace().collect::<Vec<&str>>().join(" ")
 }
@@ -322,7 +324,7 @@ fn never_skip_u64(_: &u64) -> bool {
 pub struct ScanCreationResult {
     /// The scan ID
     pub scan_id: String,
-    /// Upload URI from _links.upload.href 
+    /// Upload URI from _links.upload.href
     pub upload_uri: Option<String>,
     /// Details URI from _links.details.href
     pub details_uri: Option<String>,
@@ -468,7 +470,10 @@ pub struct PipelineApi {
 impl PipelineApi {
     /// Create a new Pipeline API client
     pub fn new(client: VeracodeClient) -> Self {
-        Self { client, debug: false }
+        Self {
+            client,
+            debug: false,
+        }
     }
 
     /// Create a new Pipeline API client with debug enabled
@@ -482,7 +487,10 @@ impl PipelineApi {
             "https://api.veracode.com/pipeline_scan/v1".to_string()
         } else {
             // For other environments, use the configured base URL with pipeline_scan/v1 path
-            format!("{}/pipeline_scan/v1", self.client.config().base_url.trim_end_matches('/'))
+            format!(
+                "{}/pipeline_scan/v1",
+                self.client.config().base_url.trim_end_matches('/')
+            )
         }
     }
 
@@ -497,13 +505,17 @@ impl PipelineApi {
     /// A `Result` containing the application ID as a string if found
     pub async fn lookup_app_id_by_name(&self, app_name: &str) -> Result<String, PipelineError> {
         let applications = self.client.search_applications_by_name(app_name).await?;
-        
+
         match applications.len() {
             0 => Err(PipelineError::ApplicationNotFound(app_name.to_string())),
             1 => Ok(applications[0].id.to_string()),
             _ => {
                 // Print the found applications to help the user
-                eprintln!("❌ Found {} applications matching '{}':", applications.len(), app_name);
+                eprintln!(
+                    "❌ Found {} applications matching '{}':",
+                    applications.len(),
+                    app_name
+                );
                 for (i, app) in applications.iter().enumerate() {
                     if let Some(ref profile) = app.profile {
                         eprintln!("   {}. ID: {} - Name: '{}'", i + 1, app.id, profile.name);
@@ -511,8 +523,12 @@ impl PipelineApi {
                         eprintln!("   {}. ID: {} - GUID: {}", i + 1, app.id, app.guid);
                     }
                 }
-                eprintln!("💡 Please provide a more specific application name that matches exactly one application.");
-                Err(PipelineError::MultipleApplicationsFound(app_name.to_string()))
+                eprintln!(
+                    "💡 Please provide a more specific application name that matches exactly one application."
+                );
+                Err(PipelineError::MultipleApplicationsFound(
+                    app_name.to_string(),
+                ))
             }
         }
     }
@@ -527,16 +543,24 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details if successful
-    pub async fn create_scan_with_app_lookup(&self, mut request: CreateScanRequest, app_name: Option<&str>) -> Result<ScanCreationResult, PipelineError> {
+    pub async fn create_scan_with_app_lookup(
+        &self,
+        mut request: CreateScanRequest,
+        app_name: Option<&str>,
+    ) -> Result<ScanCreationResult, PipelineError> {
         // Look up app_id if app_name is provided
         if let Some(name) = app_name {
             if request.app_id.is_none() {
                 let app_id = self.lookup_app_id_by_name(name).await?;
                 request.app_id = Some(app_id);
-                println!("✅ Found application '{}' with ID: {}", name, request.app_id.as_ref().unwrap());
+                println!(
+                    "✅ Found application '{}' with ID: {}",
+                    name,
+                    request.app_id.as_ref().unwrap()
+                );
             }
         }
-        
+
         self.create_scan(request).await
     }
 
@@ -549,67 +573,75 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details if successful
-    pub async fn create_scan(&self, mut request: CreateScanRequest) -> Result<ScanCreationResult, PipelineError> {
+    pub async fn create_scan(
+        &self,
+        mut request: CreateScanRequest,
+    ) -> Result<ScanCreationResult, PipelineError> {
         // Set plugin version to match Java implementation (from MANIFEST.MF)
         if request.plugin_version.is_none() {
             request.plugin_version = Some("25.2.0-0".to_string());
         }
-        
+
         // Set default scan timeout to 30 minutes if not supplied
         if request.scan_timeout.is_none() {
             request.scan_timeout = Some(30);
         }
-        
+
         // Generate auth header for debugging
         let endpoint = "/pipeline_scan/v1/scans";
         let _full_url = format!("{}{}", self.client.config().base_url, endpoint);
-                
-        let response = self.client
+
+        let response = self
+            .client
             .post_with_response("/pipeline_scan/v1/scans", Some(&request))
             .await?;
 
         let response_text = response.text().await?;
-        
+
         // Parse response to extract scan ID and _links (using actual API response structure)
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {
             // Extract scan ID
-            let scan_id = json_value.get("scan_id")
+            let scan_id = json_value
+                .get("scan_id")
                 .and_then(|id| id.as_str())
-                .ok_or_else(|| PipelineError::InvalidRequest("Missing scan_id in response".to_string()))?
+                .ok_or_else(|| {
+                    PipelineError::InvalidRequest("Missing scan_id in response".to_string())
+                })?
                 .to_string();
-            
+
             // Extract all useful URIs from _links
             let links = json_value.get("_links");
-            
+
             let upload_uri = links
                 .and_then(|links| links.get("upload"))
                 .and_then(|upload| upload.get("href"))
                 .and_then(|href| href.as_str())
                 .map(|s| s.to_string());
-            
+
             let details_uri = links
                 .and_then(|links| links.get("details"))
                 .and_then(|details| details.get("href"))
                 .and_then(|href| href.as_str())
                 .map(|s| s.to_string());
-            
+
             let start_uri = links
                 .and_then(|links| links.get("start"))
                 .and_then(|start| start.get("href"))
                 .and_then(|href| href.as_str())
                 .map(|s| s.to_string());
-            
+
             let cancel_uri = links
                 .and_then(|links| links.get("cancel"))
                 .and_then(|cancel| cancel.get("href"))
                 .and_then(|href| href.as_str())
                 .map(|s| s.to_string());
-            
+
             // Extract expected segments
-            let expected_segments = json_value.get("binary_segments_expected")
+            let expected_segments = json_value
+                .get("binary_segments_expected")
                 .and_then(|segments| segments.as_u64())
                 .map(|s| s as u32);
-            
+
             if self.debug {
                 println!("✅ Scan creation response parsed:");
                 println!("   Scan ID: {scan_id}");
@@ -629,7 +661,7 @@ impl PipelineApi {
                     println!("   Expected segments: {segments}");
                 }
             }
-            
+
             return Ok(ScanCreationResult {
                 scan_id,
                 upload_uri,
@@ -640,7 +672,9 @@ impl PipelineApi {
             });
         }
 
-        Err(PipelineError::InvalidRequest("Failed to parse scan creation response".to_string()))
+        Err(PipelineError::InvalidRequest(
+            "Failed to parse scan creation response".to_string(),
+        ))
     }
 
     /// Upload binary data for a scan using segmented upload (matching Java implementation)
@@ -670,29 +704,39 @@ impl PipelineApi {
     ) -> Result<(), PipelineError> {
         let total_size = binary_data.len();
         let segment_size = ((total_size as f64) / (expected_segments as f64)).ceil() as usize;
-        
+
         if self.debug {
-            println!("📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)");
+            println!(
+                "📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)"
+            );
             println!("   Segment size: {segment_size} bytes each");
         }
-        
+
         let mut current_upload_uri = initial_upload_uri.to_string();
-        
+
         for segment_num in 0..expected_segments {
             let start_idx = (segment_num as usize) * segment_size;
             let end_idx = std::cmp::min(start_idx + segment_size, total_size);
             let segment_data = &binary_data[start_idx..end_idx];
-            
+
             if self.debug {
-                println!("   Uploading segment {}/{} ({} bytes)...", segment_num + 1, expected_segments, segment_data.len());
+                println!(
+                    "   Uploading segment {}/{} ({} bytes)...",
+                    segment_num + 1,
+                    expected_segments,
+                    segment_data.len()
+                );
             }
-            
-            match self.upload_single_segment(&current_upload_uri, segment_data, file_name).await {
+
+            match self
+                .upload_single_segment(&current_upload_uri, segment_data, file_name)
+                .await
+            {
                 Ok(response_text) => {
                     if self.debug {
                         println!("   ✅ Segment {} uploaded successfully", segment_num + 1);
                     }
-                    
+
                     // Parse response to get next upload URI (like Java implementation)
                     if segment_num < expected_segments - 1 {
                         match self.extract_next_upload_uri(&response_text) {
@@ -704,7 +748,9 @@ impl PipelineApi {
                             }
                             None => {
                                 if self.debug {
-                                    eprintln!("   ⚠️  No next URI found in response, using current");
+                                    eprintln!(
+                                        "   ⚠️  No next URI found in response, using current"
+                                    );
                                 }
                             }
                         }
@@ -716,7 +762,7 @@ impl PipelineApi {
                 }
             }
         }
-        
+
         if self.debug {
             println!("✅ All {expected_segments} segments uploaded successfully");
         }
@@ -724,13 +770,18 @@ impl PipelineApi {
     }
 
     /// Simplified upload method for backwards compatibility
-    pub async fn upload_binary(&self, scan_id: &str, binary_data: &[u8]) -> Result<(), PipelineError> {
+    pub async fn upload_binary(
+        &self,
+        scan_id: &str,
+        binary_data: &[u8],
+    ) -> Result<(), PipelineError> {
         // For backwards compatibility, use a default approach
         let upload_uri = format!("/pipeline_scan/scans/{scan_id}/segments/1");
         let expected_segments = 1; // Default to single segment
         let file_name = "binary.tar.gz";
-        
-        self.upload_binary_segments(&upload_uri, expected_segments, binary_data, file_name).await
+
+        self.upload_binary_segments(&upload_uri, expected_segments, binary_data, file_name)
+            .await
     }
 
     /// Upload a single segment using the provided URI (exactly matching Java implementation)
@@ -746,27 +797,34 @@ impl PipelineApi {
         } else {
             format!("{}{}", self.get_pipeline_base_url(), upload_uri)
         };
-        
+
         // Prepare additional headers for pipeline scan
         let mut headers = std::collections::HashMap::new();
         headers.insert("accept", "application/json");
-        headers.insert("PLUGIN-VERSION", "25.2.0-0");  // CRITICAL: Java adds this header! (from MANIFEST.MF)
-        
+        headers.insert("PLUGIN-VERSION", "25.2.0-0"); // CRITICAL: Java adds this header! (from MANIFEST.MF)
+
         // Use the client's multipart PUT upload method
-        let response = self.client.upload_file_multipart_put(
-            &url,
-            "file",
-            file_name,
-            segment_data.to_vec(),
-            Some(headers)
-        ).await.map_err(PipelineError::ApiError)?;
+        let response = self
+            .client
+            .upload_file_multipart_put(
+                &url,
+                "file",
+                file_name,
+                segment_data.to_vec(),
+                Some(headers),
+            )
+            .await
+            .map_err(PipelineError::ApiError)?;
 
         if response.status().is_success() {
             let response_text = response.text().await?;
             Ok(response_text)
         } else {
             let status = response.status();
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
             Err(PipelineError::InvalidRequest(format!(
                 "Segment upload failed with status {status}: {error_text}"
             )))
@@ -785,13 +843,13 @@ impl PipelineApi {
                     }
                 }
             }
-            
+
             // Alternative: look for upload_url field
             if let Some(upload_url) = json_value.get("upload_url") {
                 return upload_url.as_str().map(|s| s.to_string());
             }
         }
-        
+
         None
     }
 
@@ -805,12 +863,16 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
-    pub async fn start_scan_with_uri(&self, start_uri: &str, config: Option<ScanConfig>) -> Result<(), PipelineError> {
+    pub async fn start_scan_with_uri(
+        &self,
+        start_uri: &str,
+        config: Option<ScanConfig>,
+    ) -> Result<(), PipelineError> {
         // Create payload with scan_status: STARTED
         let mut payload = serde_json::json!({
             "scan_status": "STARTED"
         });
-        
+
         // Add scan config fields if provided
         if let Some(config) = config {
             if let Some(timeout) = config.timeout {
@@ -832,10 +894,14 @@ impl PipelineApi {
         };
 
         // Generate auth header for PUT request
-        let auth_header = self.client.generate_auth_header("PUT", &url)
+        let auth_header = self
+            .client
+            .generate_auth_header("PUT", &url)
             .map_err(PipelineError::ApiError)?;
 
-        let response = self.client.client()
+        let response = self
+            .client
+            .client()
             .put(&url)
             .header("Authorization", auth_header)
             .header("accept", "application/json")
@@ -847,8 +913,13 @@ impl PipelineApi {
         if response.status().is_success() {
             Ok(())
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            Err(PipelineError::InvalidRequest(format!("Failed to start scan: {error_text}")))
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(PipelineError::InvalidRequest(format!(
+                "Failed to start scan: {error_text}"
+            )))
         }
     }
 
@@ -862,15 +933,19 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
-    pub async fn start_scan(&self, scan_id: &str, config: Option<ScanConfig>) -> Result<(), PipelineError> {
+    pub async fn start_scan(
+        &self,
+        scan_id: &str,
+        config: Option<ScanConfig>,
+    ) -> Result<(), PipelineError> {
         let endpoint = format!("/scans/{scan_id}");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
-        
+
         // Create payload with scan_status: STARTED
         let mut payload = serde_json::json!({
             "scan_status": "STARTED"
         });
-        
+
         // Add scan config fields if provided
         if let Some(config) = config {
             if let Some(timeout) = config.timeout {
@@ -883,12 +958,16 @@ impl PipelineApi {
                 payload["max_findings"] = serde_json::Value::Number(max_findings.into());
             }
         }
-        
+
         // Generate auth header for PUT request
-        let auth_header = self.client.generate_auth_header("PUT", &url)
+        let auth_header = self
+            .client
+            .generate_auth_header("PUT", &url)
             .map_err(PipelineError::ApiError)?;
 
-        let response = self.client.client()
+        let response = self
+            .client
+            .client()
             .put(&url)
             .header("Authorization", auth_header)
             .header("accept", "application/json")
@@ -900,8 +979,13 @@ impl PipelineApi {
         if response.status().is_success() {
             Ok(())
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            Err(PipelineError::InvalidRequest(format!("Failed to start scan: {error_text}")))
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(PipelineError::InvalidRequest(format!(
+                "Failed to start scan: {error_text}"
+            )))
         }
     }
 
@@ -923,10 +1007,14 @@ impl PipelineApi {
         };
 
         // Generate auth header for GET request
-        let auth_header = self.client.generate_auth_header("GET", &url)
+        let auth_header = self
+            .client
+            .generate_auth_header("GET", &url)
             .map_err(PipelineError::ApiError)?;
 
-        let response = self.client.client()
+        let response = self
+            .client
+            .client()
             .get(&url)
             .header("Authorization", auth_header)
             .header("accept", "application/json")
@@ -934,9 +1022,10 @@ impl PipelineApi {
             .await?;
 
         let response_text = response.text().await?;
-        
-        serde_json::from_str::<Scan>(&response_text)
-            .map_err(|e| PipelineError::InvalidRequest(format!("Failed to parse scan details: {e}")))
+
+        serde_json::from_str::<Scan>(&response_text).map_err(|e| {
+            PipelineError::InvalidRequest(format!("Failed to parse scan details: {e}"))
+        })
     }
 
     /// Get pipeline scan details (fallback method using scan ID)
@@ -951,12 +1040,16 @@ impl PipelineApi {
     pub async fn get_scan(&self, scan_id: &str) -> Result<Scan, PipelineError> {
         let endpoint = format!("/scans/{scan_id}");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
-        
+
         // Generate auth header for GET request
-        let auth_header = self.client.generate_auth_header("GET", &url)
+        let auth_header = self
+            .client
+            .generate_auth_header("GET", &url)
             .map_err(PipelineError::ApiError)?;
 
-        let response = self.client.client()
+        let response = self
+            .client
+            .client()
             .get(&url)
             .header("Authorization", auth_header)
             .header("accept", "application/json")
@@ -964,9 +1057,10 @@ impl PipelineApi {
             .await?;
 
         let response_text = response.text().await?;
-        
-        serde_json::from_str::<Scan>(&response_text)
-            .map_err(|e| PipelineError::InvalidRequest(format!("Failed to parse scan details: {e}")))
+
+        serde_json::from_str::<Scan>(&response_text).map_err(|e| {
+            PipelineError::InvalidRequest(format!("Failed to parse scan details: {e}"))
+        })
     }
 
     /// Get pipeline scan findings
@@ -978,22 +1072,26 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan findings
-    /// 
+    ///
     /// # HTTP Status Codes
-    /// 
+    ///
     /// * `200` - Findings are ready and returned
     /// * `202` - Scan accepted but findings not yet available (returns FindingsNotReady error)
     pub async fn get_findings(&self, scan_id: &str) -> Result<Vec<Finding>, PipelineError> {
         let endpoint = format!("/scans/{scan_id}/findings");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
-        
+
         // println!("🔍 Debug - get_findings() calling: {}", url);
-        
+
         // Generate auth header for GET request
-        let auth_header = self.client.generate_auth_header("GET", &url)
+        let auth_header = self
+            .client
+            .generate_auth_header("GET", &url)
             .map_err(PipelineError::ApiError)?;
 
-        let response = self.client.client()
+        let response = self
+            .client
+            .client()
             .get(&url)
             .header("Authorization", auth_header)
             .header("accept", "application/json")
@@ -1002,14 +1100,14 @@ impl PipelineApi {
 
         let status = response.status();
         let response_text = response.text().await?;
-        
+
         // Debug: Print findings response summary
         if self.debug {
             println!("🔍 Debug - Findings API Response:");
             println!("   Status: {status}");
             println!("   Response Length: {} bytes", response_text.len());
         }
-        
+
         match status.as_u16() {
             200 => {
                 // Findings are ready - parse the response as FindingsResponse
@@ -1029,26 +1127,38 @@ impl PipelineApi {
                             println!("❌ Debug - Failed to parse FindingsResponse: {e}");
                         }
                         // Fallback: try to parse as generic JSON and extract findings array
-                        if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {
-                            if let Some(findings_array) = json_value.get("findings").and_then(|f| f.as_array()) {
+                        if let Ok(json_value) =
+                            serde_json::from_str::<serde_json::Value>(&response_text)
+                        {
+                            if let Some(findings_array) =
+                                json_value.get("findings").and_then(|f| f.as_array())
+                            {
                                 if self.debug {
-                                    println!("🔍 Debug - Trying fallback parsing of findings array...");
+                                    println!(
+                                        "🔍 Debug - Trying fallback parsing of findings array..."
+                                    );
                                 }
                                 let findings: Result<Vec<Finding>, _> = findings_array
                                     .iter()
                                     .map(|f| serde_json::from_value(f.clone()))
                                     .collect();
-                                return findings.map_err(|e| PipelineError::InvalidRequest(format!("Failed to parse findings array: {e}")));
+                                return findings.map_err(|e| {
+                                    PipelineError::InvalidRequest(format!(
+                                        "Failed to parse findings array: {e}"
+                                    ))
+                                });
                             }
                         }
-                        Err(PipelineError::InvalidRequest(format!("Failed to parse findings response: {e}")))
+                        Err(PipelineError::InvalidRequest(format!(
+                            "Failed to parse findings response: {e}"
+                        )))
                     }
                 }
-            },
+            }
             202 => {
                 // Findings not ready yet
                 Err(PipelineError::FindingsNotReady)
-            },
+            }
             _ => {
                 // Other error codes
                 Err(PipelineError::InvalidRequest(format!(
@@ -1067,9 +1177,9 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the complete scan results
-    /// 
+    ///
     /// # Note
-    /// 
+    ///
     /// This method will return `FindingsNotReady` error if the scan findings are not yet available.
     /// Use `get_scan()` to check scan status before calling this method.
     pub async fn get_results(&self, scan_id: &str) -> Result<ScanResults, PipelineError> {
@@ -1082,10 +1192,10 @@ impl PipelineApi {
             println!("🔍 Debug - get_results() calling get_findings() for: {scan_id}");
         }
         let findings = self.get_findings(scan_id).await?;
-        
+
         // Calculate summary
         let summary = self.calculate_summary(&findings);
-        
+
         // Generate standards compliance (placeholder - would need actual implementation)
         let standards = SecurityStandards {
             owasp: None,
@@ -1113,21 +1223,24 @@ impl PipelineApi {
     /// A `Result` indicating success or failure
     pub async fn cancel_scan(&self, scan_id: &str) -> Result<(), PipelineError> {
         let endpoint = format!("/scans/{scan_id}/cancel");
-        
-        let response = self.client
-            .delete_with_response(&endpoint)
-            .await?;
+
+        let response = self.client.delete_with_response(&endpoint).await?;
 
         if response.status().is_success() {
             Ok(())
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "Unknown error".to_string());
-            Err(PipelineError::InvalidRequest(format!("Failed to cancel scan: {error_text}")))
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "Unknown error".to_string());
+            Err(PipelineError::InvalidRequest(format!(
+                "Failed to cancel scan: {error_text}"
+            )))
         }
     }
 
     /// List pipeline scans with optional filtering
-    /// 
+    ///
     /// **Note**: This method is not supported by the Veracode Pipeline Scan API.
     /// Veracode does not provide endpoints to enumerate/list all scans.
     /// Use `get_scan()` with a specific scan ID instead.
@@ -1141,7 +1254,9 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing an error indicating this operation is not supported
-    #[deprecated(note = "Veracode Pipeline Scan API does not support listing scans. Use get_scan() with specific scan ID instead.")]
+    #[deprecated(
+        note = "Veracode Pipeline Scan API does not support listing scans. Use get_scan() with specific scan ID instead."
+    )]
     pub async fn list_scans(
         &self,
         _project_name: Option<&str>,
@@ -1173,19 +1288,19 @@ impl PipelineApi {
         let timeout = timeout_minutes.unwrap_or(60);
         let interval = poll_interval_seconds.unwrap_or(10);
         let max_polls = (timeout * 60) / interval;
-        
+
         for _ in 0..max_polls {
             let scan = self.get_scan(scan_id).await?;
-            
+
             // Check if scan is completed based on status
             if scan.scan_status.is_successful() || scan.scan_status.is_failed() {
                 return Ok(scan);
             }
-            
+
             // Wait before next poll
             tokio::time::sleep(tokio::time::Duration::from_secs(interval as u64)).await;
         }
-        
+
         Err(PipelineError::ScanTimeout)
     }
 
