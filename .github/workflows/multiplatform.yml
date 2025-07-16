@@ -79,11 +79,19 @@ jobs:
     - name: Build release binary
       run: cargo build --release --target ${{ matrix.target }}
     
+    - name: Create zip archive
+      run: |
+        cd target/${{ matrix.target }}/release/
+        if [ "${{ matrix.os }}" = "windows-latest" ]; then
+          7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
+        else
+          zip ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
+        fi
+    
     - name: Upload Release Asset
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         TAG_NAME=${GITHUB_REF#refs/tags/}
         gh release upload "$TAG_NAME" \
-          target/${{ matrix.target }}/release/${{ matrix.binary_name }} \
-          --clobber
+          ${{ matrix.asset_name }}.zip
