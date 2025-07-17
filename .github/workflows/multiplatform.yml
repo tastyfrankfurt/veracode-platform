@@ -52,9 +52,9 @@ jobs:
             binary_name: verascan.exe
             asset_name: verascan-windows-gnu-amd64.exe
           - os: macos-latest
-            target: x86_64-apple-darwin
+            target: aarch64-apple-darwin
             binary_name: verascan
-            asset_name: verascan-macos-amd64
+            asset_name: verascan-macos-arm64
     
     runs-on: ${{ matrix.os }}
     
