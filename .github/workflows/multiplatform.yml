@@ -66,12 +66,14 @@ jobs:
       with:
         targets: ${{ matrix.target }}
         toolchain: stable
-        override: true    
+        override: true
+
     - name: Install build-essential for Linux
       if: matrix.os == 'ubuntu-latest'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential
+        sudo apt-get install -y build-essential libssl-dev pkg-config
+
     - name: Install mingw-w64 for Windows GNU target
       if: matrix.os == 'windows-latest'
       run: |
