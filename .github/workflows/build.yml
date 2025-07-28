@@ -8,14 +8,53 @@ on:
 
 jobs:
   build:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            binary_name: verascan
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            binary_name: verascan
+          - os: windows-latest
+            target: x86_64-pc-windows-gnu
+            binary_name: verascan.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            binary_name: verascan
+    
+    runs-on: ${{ matrix.os }}
     
     steps:
     - uses: actions/checkout@v4
     
+    - name: Install Linux dependencies
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential ca-certificates
+        
+    - name: Install musl tools for musl target
+      if: matrix.target == 'x86_64-unknown-linux-musl'
+      run: |
+        sudo apt-get install -y musl-tools musl-dev
+
+    - name: Install build-essential for glibc Linux
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y build-essential libssl-dev pkg-config
+
+    - name: Install mingw-w64 for Windows GNU target
+      if: matrix.os == 'windows-latest'
+      run: |
+        choco install mingw
+
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
+        targets: ${{ matrix.target }}
         toolchain: stable
         override: true
         components: rustfmt, clippy
@@ -38,23 +77,26 @@ jobs:
         path: target
         key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
     
-    - name: Check formatting
+    - name: Check formatting (Linux only)
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: cargo fmt --all -- --check
     
-    - name: Run clippy
+    - name: Run clippy (Linux only)
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: cargo clippy --all-targets --all-features -- -D warnings
     
     - name: Build
-      run: cargo build --release
+      run: cargo build --release --target ${{ matrix.target }}
     
-    - name: Run tests
-      run: cargo test --verbose
+    - name: Run tests (Linux only)
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      run: cargo test --verbose --target ${{ matrix.target }}
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: verascan-linux-amd64
+        name: test-${{ matrix.target }}-${{ matrix.binary_name }}
         path: |
-          target/release/verascan
+          target/${{ matrix.target }}/release/${{ matrix.binary_name }}
           README.md
-        retention-days: 30
+        retention-days: 7
