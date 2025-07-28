@@ -51,13 +51,51 @@ Verascan is a comprehensive command-line interface for the Veracode security pla
 - GitLab access token (for GitLab features)
 
 ### Build from Source
+
+#### Option 1: Standard Linux Build (glibc - dynamic linking)
 ```bash
 git clone <repository-url>
 cd veracode-workspace
-cargo build --release
+cargo build --release --target x86_64-unknown-linux-gnu
 ```
 
-The binary will be available at `target/release/verascan`.
+**System Requirements (Ubuntu/Debian):**
+```bash
+# Required runtime libraries for glibc build
+sudo apt-get install libssl3 libgcc-s1 libc6
+```
+
+The binary will be available at `target/x86_64-unknown-linux-gnu/release/verascan`.
+
+#### Option 2: Alpine/Container Build (musl - static linking)
+```bash
+git clone <repository-url>
+cd veracode-workspace
+
+# Install musl toolchain (Ubuntu/Debian)
+sudo apt-get install musl-tools musl-dev
+
+# Add musl target
+rustup target add x86_64-unknown-linux-musl
+
+# Build static binary
+cargo build --release --target x86_64-unknown-linux-musl
+```
+
+The static binary will be available at `target/x86_64-unknown-linux-musl/release/verascan`.
+**No runtime dependencies required** - works in Alpine containers.
+
+#### Cross-Platform Build Script
+```bash
+# Build all supported platforms
+./build.sh --all
+
+# Build specific targets
+./build.sh --target x86_64-unknown-linux-gnu      # Standard Linux (glibc)
+./build.sh --target x86_64-unknown-linux-musl     # Alpine Linux (musl)
+./build.sh --target x86_64-pc-windows-gnu         # Windows
+./build.sh --target aarch64-apple-darwin          # macOS ARM
+```
 
 ### Environment Setup
 ```bash
