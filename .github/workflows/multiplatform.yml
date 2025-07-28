@@ -80,9 +80,11 @@ jobs:
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
-        targets: ${{ matrix.target }}
         toolchain: stable
         override: true
+        
+    - name: Add target
+      run: rustup target add ${{ matrix.target }}
 
     - name: Install build-essential for glibc Linux
       if: matrix.target == 'x86_64-unknown-linux-gnu'

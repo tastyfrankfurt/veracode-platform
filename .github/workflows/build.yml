@@ -54,10 +54,12 @@ jobs:
     - name: Setup Rust
       uses: actions-rs/toolchain@v1
       with:
-        targets: ${{ matrix.target }}
         toolchain: stable
         override: true
         components: rustfmt, clippy
+        
+    - name: Add target
+      run: rustup target add ${{ matrix.target }}
     
     - name: Cache cargo registry
       uses: actions/cache@v3
