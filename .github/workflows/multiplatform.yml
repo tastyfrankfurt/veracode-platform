@@ -88,7 +88,7 @@ jobs:
       if: matrix.target == 'x86_64-unknown-linux-gnu'
       run: |
         sudo apt-get update
-        sudo apt-get install -y build-essential libssl-dev pkg-config
+        sudo apt-get install -y build-essential libssl-dev pkg-config libc6-dev libssl3 libcrypto3
 
     - name: Install mingw-w64 for Windows GNU target
       if: matrix.os == 'windows-latest'
