@@ -31,7 +31,8 @@ print_error() {
 
 # Available targets
 TARGETS=(
-    "x86_64-unknown-linux-gnu:Linux x64"
+    "x86_64-unknown-linux-gnu:Linux x64 (glibc)"
+    "x86_64-unknown-linux-musl:Linux x64 (musl/Alpine)"
     "x86_64-pc-windows-msvc:Windows x64"
     "x86_64-apple-darwin:macOS Intel"
     "aarch64-apple-darwin:macOS Apple Silicon"
@@ -106,7 +107,15 @@ build_target() {
     # Install target if needed
     install_target "$target"
     
-    # Build the project
+    # Build the project with platform-specific optimizations
+    if [[ $target == "x86_64-unknown-linux-gnu" ]]; then
+        print_status "Using static linking for glibc (requires static libraries)"
+    elif [[ $target == "x86_64-unknown-linux-musl" ]]; then
+        print_status "Using musl static linking for Alpine compatibility"
+    else
+        print_status "Using dynamic linking for $target"
+    fi
+    
     if [ "$BUILD_MODE" = "debug" ]; then
         cargo build --target "$target" -p "$PACKAGE"
     else
@@ -122,7 +131,10 @@ build_target() {
         local artifact_name
         case $target in
             "x86_64-unknown-linux-gnu")
-                artifact_name="verascan-linux-x64"
+                artifact_name="verascan-linux-x64-glibc"
+                ;;
+            "x86_64-unknown-linux-musl")
+                artifact_name="verascan-linux-x64-musl"
                 ;;
             "x86_64-pc-windows-msvc")
                 artifact_name="verascan-windows-x64.exe"
