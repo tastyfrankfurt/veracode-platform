@@ -419,9 +419,7 @@ fn validate_sandbox_name(s: &str) -> Result<String, String> {
 
     // Show user the transformation if any forward slashes were replaced
     if s.contains('/') {
-        println!(
-            "📝 Sandbox name transformed: '{s}' → '{sanitized_name}'"
-        );
+        println!("📝 Sandbox name transformed: '{s}' → '{sanitized_name}'");
     }
 
     // Use the existing validate_name_field function for standard validation
