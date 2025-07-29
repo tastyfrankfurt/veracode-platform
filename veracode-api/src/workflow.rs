@@ -972,9 +972,7 @@ impl VeracodeWorkflow {
                 }
                 Err(e) => {
                     // Other error, might be temporary API issue, continue waiting
-                    println!(
-                        "      ⚠️  Error checking build status: {e} (attempt {attempt})"
-                    );
+                    println!("      ⚠️  Error checking build status: {e} (attempt {attempt})");
                 }
             }
         }
