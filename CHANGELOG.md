@@ -5,9 +5,31 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.1] - 2025-07-28
 
-## [0.2.0] - 2025-01-XX
+### Added
+- **Sandbox Name Forward Slash Support**: Enhanced CLI to accept forward slashes in sandbox names
+  - Added `validate_sandbox_name` function that automatically replaces forward slashes (/) with underscores (_)
+  - Updated `--sandbox-name` CLI option to accept names like `feature/bug-fix` → `feature_bug-fix`
+  - Provides user feedback showing the transformation when replacements occur
+  - Maintains all existing validation rules (length ≤ 70 characters, valid characters only)
+  - Improves workflow integration with Git branch names and CI/CD pipelines
+
+### Fixed
+- **Double Slash URL Bug**: Fixed URL construction issue in HTTP client methods
+  - Corrected `format!("{}/{}", base_url, endpoint)` to `format!("{}{}", base_url, endpoint)` in 5 client methods
+  - Affects `post_with_query_params`, `get_with_query_params`, `upload_file_with_query_params`, `upload_large_file_chunked`, and `upload_file_binary`
+  - Resolves malformed URLs like `https://api.veracode.com//api/5.0/deletebuild.do` that occurred when base_url ends with "/" and endpoint starts with "/"
+  - Fixes build operations (create, update, delete, info retrieval) and file upload operations
+  - Issue primarily manifested after deleting existing builds in build lifecycle operations
+- **Build Recreation Race Condition**: Fixed timing issue in build deletion and recreation workflow
+  - Added `wait_for_build_deletion` method with retry logic to ensure build is fully deleted before recreation
+  - Implements 5 attempts with 3-second delays (15 seconds maximum wait time) to verify build deletion
+  - Resolves build creation failures that occurred immediately after deleting existing builds
+  - Fixed workflow in `ensure_build_exists_with_policy` method in `workflow.rs:824-840`
+  - Addresses API eventual consistency issues where delete operations succeed but backend systems haven't fully synchronized
+
+## [0.2.0] - 2025-07-28
 
 ### Added
 - **Alpine Linux Container Support**: Added musl static linking for Alpine container compatibility
