@@ -691,7 +691,7 @@ impl VeracodeClient {
         file_data: Vec<u8>,
     ) -> Result<reqwest::Response, VeracodeError> {
         // Build URL with query parameters (URL encoded)
-        let mut url = format!("{}/{}", self.config.base_url, endpoint);
+        let mut url = format!("{}{}", self.config.base_url, endpoint);
 
         if !query_params.is_empty() {
             url.push('?');
@@ -749,7 +749,7 @@ impl VeracodeClient {
         query_params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
         // Build URL with query parameters (URL encoded)
-        let mut url = format!("{}/{}", self.config.base_url, endpoint);
+        let mut url = format!("{}{}", self.config.base_url, endpoint);
 
         if !query_params.is_empty() {
             url.push('?');
@@ -798,7 +798,7 @@ impl VeracodeClient {
         query_params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
         // Build URL with query parameters (URL encoded)
-        let mut url = format!("{}/{}", self.config.base_url, endpoint);
+        let mut url = format!("{}{}", self.config.base_url, endpoint);
 
         if !query_params.is_empty() {
             url.push('?');
@@ -859,7 +859,7 @@ impl VeracodeClient {
         use std::io::{Read, Seek, SeekFrom};
 
         // Build URL with query parameters
-        let mut url = format!("{}/{}", self.config.base_url, endpoint);
+        let mut url = format!("{}{}", self.config.base_url, endpoint);
 
         if !query_params.is_empty() {
             url.push('?');
@@ -949,7 +949,7 @@ impl VeracodeClient {
         content_type: &str,
     ) -> Result<reqwest::Response, VeracodeError> {
         // Build URL with query parameters
-        let mut url = format!("{}/{}", self.config.base_url, endpoint);
+        let mut url = format!("{}{}", self.config.base_url, endpoint);
 
         if !query_params.is_empty() {
             url.push('?');
