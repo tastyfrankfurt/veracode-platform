@@ -830,6 +830,10 @@ impl VeracodeWorkflow {
                         }
                     }
 
+                    // Wait for build deletion to be fully processed by Veracode API
+                    println!("   ⏳ Waiting for build deletion to be fully processed...");
+                    self.wait_for_build_deletion(app_id, sandbox_id).await?;
+
                     // Create new build
                     println!("   ➕ Creating new build...");
                     self.create_build_for_upload(app_id, sandbox_id, version)
@@ -908,6 +912,76 @@ impl VeracodeWorkflow {
                 Err(WorkflowError::Build(e))
             }
         }
+    }
+
+    /// Wait for build deletion to be fully processed by the Veracode API
+    ///
+    /// This method waits up to 15 seconds (5 attempts × 3 seconds) for the build
+    /// to be completely removed from the Veracode system before allowing recreation.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_id` - Application ID (numeric)
+    /// * `sandbox_id` - Optional sandbox ID (numeric)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` indicating success or timeout error.
+    async fn wait_for_build_deletion(
+        &self,
+        app_id: &str,
+        sandbox_id: Option<&str>,
+    ) -> WorkflowResult<()> {
+        let build_api = self.client.build_api();
+        let max_attempts = 5;
+        let delay_seconds = 3;
+
+        // Keep this outside the loop to avoid repeated Duration creation
+        let sleep_duration = tokio::time::Duration::from_secs(delay_seconds);
+
+        for attempt in 1..=max_attempts {
+            // Wait 3 seconds before checking
+            tokio::time::sleep(sleep_duration).await;
+
+            // Recreate request each time - cheaper than cloning
+            let get_request = crate::build::GetBuildInfoRequest {
+                app_id: app_id.to_string(),
+                build_id: None,
+                sandbox_id: sandbox_id.map(|s| s.to_string()),
+            };
+
+            match build_api.get_build_info(get_request).await {
+                Ok(_build) => {
+                    // Build still exists, continue waiting
+                    if attempt < max_attempts {
+                        println!(
+                            "      ⏳ Build still exists, waiting {delay_seconds} more seconds... (attempt {attempt}/{max_attempts})"
+                        );
+                    } else {
+                        println!(
+                            "      ⚠️  Build still exists after {max_attempts} attempts, proceeding anyway"
+                        );
+                    }
+                }
+                Err(crate::build::BuildError::BuildNotFound) => {
+                    // Build is gone, we can proceed
+                    println!(
+                        "      ✅ Build deletion confirmed (attempt {attempt}/{max_attempts})"
+                    );
+                    return Ok(());
+                }
+                Err(e) => {
+                    // Other error, might be temporary API issue, continue waiting
+                    println!(
+                        "      ⚠️  Error checking build status: {e} (attempt {attempt})"
+                    );
+                }
+            }
+        }
+
+        // Even if build still exists after max attempts, continue with creation
+        // The create operation might still succeed or provide a clearer error
+        Ok(())
     }
 
     /// Upload a large file with automatic build management

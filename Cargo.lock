@@ -1664,7 +1664,7 @@ dependencies = [
 
 [[package]]
 name = "veracode-platform"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "hex",
@@ -1684,7 +1684,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.1.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "clap",

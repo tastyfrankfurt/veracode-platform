@@ -230,7 +230,7 @@ pub enum Commands {
         export_results: String,
 
         /// Sandbox name for sandbox assessment scans
-        #[arg(long = "sandbox-name", help = "Sandbox name for sandbox assessment scans (enables sandbox mode)", value_parser = validate_name_field)]
+        #[arg(long = "sandbox-name", help = "Sandbox name for sandbox assessment scans (enables sandbox mode). Forward slashes (/) will be replaced with underscores (_)", value_parser = validate_sandbox_name)]
         sandbox_name: Option<String>,
 
         /// Selected modules for scanning (comma-separated)
@@ -409,6 +409,23 @@ fn validate_name_field(s: &str) -> Result<String, String> {
     }
 
     Ok(s.to_string())
+}
+
+/// Validate sandbox name with forward slash replacement
+/// Replaces forward slashes (/) with underscores (_) and then validates using validate_name_field
+fn validate_sandbox_name(s: &str) -> Result<String, String> {
+    // Replace forward slashes with underscores
+    let sanitized_name = s.replace('/', "_");
+
+    // Show user the transformation if any forward slashes were replaced
+    if s.contains('/') {
+        println!(
+            "📝 Sandbox name transformed: '{s}' → '{sanitized_name}'"
+        );
+    }
+
+    // Use the existing validate_name_field function for standard validation
+    validate_name_field(&sanitized_name)
 }
 
 /// Validate project URL
