@@ -4,8 +4,8 @@ use veracode_platform::{VeracodeClient, VeracodeConfig, VeracodeError};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
+        &std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        &std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
     let search_name = std::env::var("APP_NAME").unwrap_or_else(|_| {
         println!("💡 Tip: Set APP_NAME environment variable to search for specific applications");
@@ -229,7 +229,7 @@ mod tests {
         // This test doesn't make actual API calls
         // It just tests the validation logic
 
-        let config = VeracodeConfig::new("test-api-id".to_string(), "test-api-key".to_string());
+        let config = VeracodeConfig::new("test-api-id", "test-api-key");
 
         let client = VeracodeClient::new(config).unwrap();
         let sandbox_api = SandboxApi::new(&client);

@@ -9,8 +9,8 @@ use veracode_platform::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
+        &std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        &std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
 
     let client = VeracodeClient::new(config)?;
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
-    let created_app = match client.create_application(create_request).await {
+    let created_app = match client.create_application(&create_request).await {
         Ok(app) => {
             println!(
                 "✅ Created application: {} ({})",
@@ -86,7 +86,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let updated_app = match client
-        .update_application(&created_app.guid, update_request)
+        .update_application(&created_app.guid, &update_request)
         .await
     {
         Ok(app) => {

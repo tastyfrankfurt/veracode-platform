@@ -35,7 +35,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable is required");
 
     // Create configuration
-    let config = VeracodeConfig::new(api_id, api_key).with_region(VeracodeRegion::Commercial);
+    let config = VeracodeConfig::new(&api_id, &api_key).with_region(VeracodeRegion::Commercial);
 
     println!("🔧 Creating Veracode client...");
     let client = VeracodeClient::new(config)?;
@@ -193,7 +193,7 @@ async fn demonstrate_create_builds(
         sandbox_id: Some(sandbox_id.to_string()),
     };
 
-    match build_api.create_build(create_request).await {
+    match build_api.create_build(&create_request).await {
         Ok(build) => {
             println!("   ✅ Sandbox build created successfully:");
             println!("      - Build ID: {}", build.build_id);
@@ -309,7 +309,7 @@ async fn demonstrate_get_build_info(
         sandbox_id: Some(sandbox_id.to_string()),
     };
 
-    match build_api.get_build_info(get_request).await {
+    match build_api.get_build_info(&get_request).await {
         Ok(build) => {
             println!("   ✅ Specific build info retrieved:");
             println!("      - Build ID: {}", build.build_id);
@@ -408,7 +408,7 @@ async fn demonstrate_list_builds(
         sandbox_id: None, // Get all builds
     };
 
-    match build_api.get_build_list(list_request).await {
+    match build_api.get_build_list(&list_request).await {
         Ok(build_list) => {
             println!("   ✅ Custom build list retrieved:");
             println!("      - Total builds (all): {}", build_list.builds.len());
@@ -454,7 +454,7 @@ async fn demonstrate_update_builds(
         sandbox_id: None,
     };
 
-    match build_api.update_build(update_request).await {
+    match build_api.update_build(&update_request).await {
         Ok(build) => {
             println!("   ✅ Application build updated successfully:");
             println!("      - Build ID: {}", build.build_id);
@@ -491,7 +491,7 @@ async fn demonstrate_update_builds(
         sandbox_id: Some(sandbox_id.to_string()),
     };
 
-    match build_api.update_build(sandbox_update_request).await {
+    match build_api.update_build(&sandbox_update_request).await {
         Ok(build) => {
             println!("   ✅ Sandbox build updated successfully:");
             println!("      - Build ID: {}", build.build_id);
@@ -545,7 +545,7 @@ async fn demonstrate_delete_builds(
         sandbox_id: None,
     };
 
-    match build_api.delete_build(delete_request).await {
+    match build_api.delete_build(&delete_request).await {
         Ok(result) => {
             println!("   ✅ Application build deletion result:");
             println!("      - Result: {}", result.result);

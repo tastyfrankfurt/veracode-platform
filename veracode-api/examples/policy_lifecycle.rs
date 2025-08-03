@@ -3,8 +3,8 @@ use veracode_platform::{VeracodeClient, VeracodeConfig, policy::PolicyError};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
+        &std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        &std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
 
     let client = VeracodeClient::new(config)?;
