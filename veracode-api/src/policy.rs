@@ -334,24 +334,58 @@ pub struct PolicyListParams {
 impl PolicyListParams {
     /// Convert to query parameters for HTTP requests
     pub fn to_query_params(&self) -> Vec<(String, String)> {
+        Vec::from(self) // Delegate to trait
+    }
+}
+
+// Trait implementations for memory optimization
+impl From<&PolicyListParams> for Vec<(String, String)> {
+    fn from(query: &PolicyListParams) -> Self {
         let mut params = Vec::new();
 
-        if let Some(name) = &self.name {
-            params.push(("name".to_string(), name.clone()));
+        if let Some(ref name) = query.name {
+            params.push(("name".to_string(), name.clone())); // Still clone for borrowing
         }
-        if let Some(policy_type) = &self.policy_type {
+        if let Some(ref policy_type) = query.policy_type {
             params.push(("type".to_string(), policy_type.clone()));
         }
-        if let Some(is_active) = self.is_active {
+        if let Some(is_active) = query.is_active {
             params.push(("active".to_string(), is_active.to_string()));
         }
-        if let Some(default_only) = self.default_only {
+        if let Some(default_only) = query.default_only {
             params.push(("default".to_string(), default_only.to_string()));
         }
-        if let Some(page) = self.page {
+        if let Some(page) = query.page {
             params.push(("page".to_string(), page.to_string()));
         }
-        if let Some(size) = self.size {
+        if let Some(size) = query.size {
+            params.push(("size".to_string(), size.to_string()));
+        }
+
+        params
+    }
+}
+
+impl From<PolicyListParams> for Vec<(String, String)> {
+    fn from(query: PolicyListParams) -> Self {
+        let mut params = Vec::new();
+
+        if let Some(name) = query.name {
+            params.push(("name".to_string(), name)); // MOVE - no clone!
+        }
+        if let Some(policy_type) = query.policy_type {
+            params.push(("type".to_string(), policy_type)); // MOVE - no clone!
+        }
+        if let Some(is_active) = query.is_active {
+            params.push(("active".to_string(), is_active.to_string()));
+        }
+        if let Some(default_only) = query.default_only {
+            params.push(("default".to_string(), default_only.to_string()));
+        }
+        if let Some(page) = query.page {
+            params.push(("page".to_string(), page.to_string()));
+        }
+        if let Some(size) = query.size {
             params.push(("size".to_string(), size.to_string()));
         }
 
@@ -474,7 +508,7 @@ impl<'a> PolicyApi<'a> {
     ) -> Result<Vec<SecurityPolicy>, PolicyError> {
         let endpoint = "/appsec/v1/policies";
 
-        let query_params = params.map(|p| p.to_query_params());
+        let query_params = params.as_ref().map(Vec::from);
 
         let response = self.client.get(endpoint, query_params.as_deref()).await?;
 
@@ -788,7 +822,7 @@ mod tests {
             ..Default::default()
         };
 
-        let query_params = params.to_query_params();
+        let query_params: Vec<_> = params.into();
         assert_eq!(query_params.len(), 4);
         assert!(query_params.contains(&("name".to_string(), "test-policy".to_string())));
         assert!(query_params.contains(&("active".to_string(), "true".to_string())));

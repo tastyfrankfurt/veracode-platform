@@ -212,6 +212,19 @@ impl FileFinder {
                                     }
                                     // Don't add to matched_files - filter it out
                                 }
+                                Err(ValidationError::FileTooLarge {
+                                    file_path: _,
+                                    size_mb,
+                                    max_size_mb,
+                                }) => {
+                                    if config.debug {
+                                        println!("⚠️  File too large: {}", file_path.display());
+                                        println!(
+                                            "   Size: {size_mb:.2} MB exceeds {max_size_mb:.0} MB limit"
+                                        );
+                                    }
+                                    // Don't add to matched_files - filter it out
+                                }
                             }
                         } else {
                             // No validation - just add the file
@@ -324,6 +337,19 @@ impl FileFinder {
                                             file_path.display()
                                         );
                                         println!("   Reason: {msg}");
+                                    }
+                                    // Don't add to matched_files - filter it out
+                                }
+                                Err(ValidationError::FileTooLarge {
+                                    file_path: _,
+                                    size_mb,
+                                    max_size_mb,
+                                }) => {
+                                    if config.debug {
+                                        println!("⚠️  File too large: {}", file_path.display());
+                                        println!(
+                                            "   Size: {size_mb:.2} MB exceeds {max_size_mb:.0} MB limit"
+                                        );
                                     }
                                     // Don't add to matched_files - filter it out
                                 }

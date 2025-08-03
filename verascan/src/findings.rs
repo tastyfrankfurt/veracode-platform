@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use veracode_platform::pipeline::{Finding, FindingsSummary, ScanResults, ScanStatus};
@@ -22,8 +23,22 @@ pub fn create_finding_hash(finding: &Finding) -> String {
 }
 
 /// Extract hash from finding_id (format: "cwe_id:file:line:hash")
-pub fn extract_hash_from_finding_id(finding_id: &str) -> String {
-    finding_id.split(':').next_back().unwrap_or("").to_string()
+pub fn extract_hash_from_finding_id(finding_id: &str) -> &str {
+    finding_id.split(':').next_back().unwrap_or("")
+}
+
+/// Convert severity number to static string - avoids repeated allocations
+#[inline]
+fn severity_to_static_str(severity: u32) -> &'static str {
+    match severity {
+        5 => "Very High",
+        4 => "High",
+        3 => "Medium",
+        2 => "Low",
+        1 => "Very Low",
+        0 => "Informational",
+        _ => "Unknown",
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -54,6 +69,23 @@ pub struct ScanMetadata {
     pub finding_count: u32,
 }
 
+/// COW-based version for more efficient processing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanMetadataCow<'a> {
+    /// Scan ID
+    pub scan_id: Cow<'a, str>,
+    /// Project name
+    pub project_name: Cow<'a, str>,
+    /// Scan status
+    pub scan_status: ScanStatus,
+    /// Project URI if available
+    pub project_uri: Option<Cow<'a, str>>,
+    /// Source file that was scanned
+    pub source_file: Cow<'a, str>,
+    /// Number of findings in this scan
+    pub finding_count: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FindingWithSource {
     /// Unique identifier for matching purposes (compatible with baseline files)
@@ -73,6 +105,17 @@ pub struct ScanSource {
     pub project_name: String,
     /// Source file that was scanned
     pub source_file: String,
+}
+
+/// COW-based version for more efficient processing
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanSourceCow<'a> {
+    /// Scan ID where this finding was discovered
+    pub scan_id: Cow<'a, str>,
+    /// Project name
+    pub project_name: Cow<'a, str>,
+    /// Source file that was scanned
+    pub source_file: Cow<'a, str>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -156,10 +199,9 @@ impl FindingsAggregator {
 
         // Process each scan result
         for (index, results) in scan_results.iter().enumerate() {
-            let source_file = source_files
-                .get(index)
-                .unwrap_or(&format!("file_{}", index + 1))
-                .clone();
+            // Handle default file name properly to avoid borrowing issues
+            let default_file_name = format!("file_{}", index + 1);
+            let source_file = source_files.get(index).unwrap_or(&default_file_name);
 
             if self.debug {
                 println!(
@@ -170,7 +212,7 @@ impl FindingsAggregator {
                 );
             }
 
-            // Create scan metadata
+            // Create scan metadata (minimize clones by referencing scan data)
             let metadata = ScanMetadata {
                 scan_id: results.scan.scan_id.clone(),
                 project_name: results.scan.project_name.clone(),
@@ -202,7 +244,7 @@ impl FindingsAggregator {
                     source_scan: ScanSource {
                         scan_id: results.scan.scan_id.clone(),
                         project_name: results.scan.project_name.clone(),
-                        source_file: source_file.clone(),
+                        source_file: source_file.into(),
                     },
                 };
                 all_findings.push(finding_with_source);
@@ -278,31 +320,24 @@ impl FindingsAggregator {
         let mut file_counts: HashMap<String, u32> = HashMap::new();
         let mut severity_counts: HashMap<String, u32> = HashMap::new();
 
-        // Count occurrences
+        // Count occurrences - optimize by using references where possible
         for finding_with_source in findings {
             let finding = &finding_with_source.finding;
 
-            // Count CWE IDs
-            *cwe_counts.entry(finding.cwe_id.clone()).or_insert(0) += 1;
+            // Count CWE IDs - use entry API more efficiently
+            let cwe_count = cwe_counts.entry(finding.cwe_id.clone()).or_insert(0);
+            *cwe_count += 1;
 
-            // Count files with findings
-            *file_counts
+            // Count files with findings - reuse file reference
+            let file_count = file_counts
                 .entry(finding.files.source_file.file.clone())
-                .or_insert(0) += 1;
+                .or_insert(0);
+            *file_count += 1;
 
-            // Count by severity
-            let severity_name = match finding.severity {
-                5 => "Very High",
-                4 => "High",
-                3 => "Medium",
-                2 => "Low",
-                1 => "Very Low",
-                0 => "Informational",
-                _ => "Unknown",
-            };
-            *severity_counts
-                .entry(severity_name.to_string())
-                .or_insert(0) += 1;
+            // Count by severity - use static strings to avoid allocations
+            let severity_name = severity_to_static_str(finding.severity);
+            let severity_count = severity_counts.entry(severity_name.into()).or_insert(0);
+            *severity_count += 1;
         }
 
         // Get top 5 CWE IDs
@@ -395,7 +430,10 @@ impl FindingsAggregator {
         let baseline_findings: Vec<BaselineFinding> = aggregated
             .findings
             .iter()
-            .map(|finding_with_source| self.convert_to_baseline_finding(finding_with_source))
+            .map(|finding_with_source| {
+                self.convert_to_baseline_finding(finding_with_source)
+                    .into_owned()
+            })
             .collect();
 
         // Create metadata from the first scan if available
@@ -405,7 +443,7 @@ impl FindingsAggregator {
             .ok_or("No scan metadata available for baseline creation")?;
 
         let metadata = BaselineMetadata {
-            version: "1.0".to_string(),
+            version: "1.0".into(),
             created_at: Utc::now().to_rfc3339(),
             source_scan: BaselineScanInfo {
                 scan_id: first_scan.scan_id.clone(),
@@ -414,7 +452,8 @@ impl FindingsAggregator {
                 source_files: aggregated
                     .scan_metadata
                     .iter()
-                    .map(|scan| scan.source_file.clone())
+                    .map(|scan| &scan.source_file)
+                    .cloned()
                     .collect(),
             },
             project_info: BaselineProjectInfo {
@@ -444,7 +483,8 @@ impl FindingsAggregator {
                 .stats
                 .top_cwe_ids
                 .iter()
-                .map(|cwe_stat| cwe_stat.cwe_id.clone())
+                .map(|cwe_stat| &cwe_stat.cwe_id)
+                .cloned()
                 .collect(),
         };
 
@@ -456,25 +496,30 @@ impl FindingsAggregator {
     }
 
     /// Convert FindingWithSource to BaselineFinding
-    fn convert_to_baseline_finding(
+    fn convert_to_baseline_finding<'a>(
         &self,
-        finding_with_source: &FindingWithSource,
-    ) -> crate::baseline::BaselineFinding {
+        finding_with_source: &'a FindingWithSource,
+    ) -> crate::baseline::BaselineFinding<'a> {
         let finding = &finding_with_source.finding;
 
         // Extract the full hash from the finding_id (finding_id contains hash prefix, we need full hash)
         let finding_hash = create_finding_hash(finding);
 
         crate::baseline::BaselineFinding {
-            finding_id: finding_with_source.finding_id.clone(),
-            cwe_id: finding.cwe_id.clone(),
-            issue_type: finding.issue_type.clone(),
+            finding_id: finding_with_source.finding_id.as_str().into(),
+            cwe_id: finding.cwe_id.as_str().into(),
+            issue_type: finding.issue_type.as_str().into(),
             severity: finding.severity,
-            file_path: finding.files.source_file.file.clone(),
+            file_path: finding.files.source_file.file.as_str().into(),
             line_number: finding.files.source_file.line,
-            function_name: finding.files.source_file.function_name.clone(),
-            title: finding.title.clone(),
-            finding_hash,
+            function_name: finding
+                .files
+                .source_file
+                .function_name
+                .as_ref()
+                .map(|s| s.as_str().into()),
+            title: finding.title.as_str().into(),
+            finding_hash: finding_hash.into(), // finding_hash is owned, so we can move it
         }
     }
 
@@ -781,7 +826,7 @@ fn escape_csv(value: &str) -> String {
     if value.contains(',') || value.contains('"') || value.contains('\n') {
         format!("\"{}\"", value.replace('"', "\"\""))
     } else {
-        value.to_string()
+        value.into()
     }
 }
 

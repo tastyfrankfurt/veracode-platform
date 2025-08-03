@@ -39,8 +39,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let api_key =
         env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable is required");
 
-    // Create configuration
-    let config = VeracodeConfig::new(api_id, api_key).with_region(VeracodeRegion::Commercial);
+    // Create configuration with extended timeouts for large file uploads
+    let config = VeracodeConfig::new(&api_id, &api_key)
+        .with_region(VeracodeRegion::Commercial)
+        .with_timeouts(120, 1800); // 2 minutes connect, 30 minutes request timeout for large files
 
     println!("🔧 Creating Veracode client...");
     let client = VeracodeClient::new(config)?;
@@ -241,7 +243,7 @@ async fn demonstrate_smart_upload(
         sandbox_id: Some(sandbox_id.to_string()),
     };
 
-    match scan_api.upload_file_smart(small_request).await {
+    match scan_api.upload_file_smart(&small_request).await {
         Ok(_) => println!("         ✅ Small file uploaded via uploadfile.do"),
         Err(e) => println!("         ⚠️  Small file upload: {e}"),
     }
@@ -257,7 +259,7 @@ async fn demonstrate_smart_upload(
         sandbox_id: Some(sandbox_id.to_string()),
     };
 
-    match scan_api.upload_file_smart(large_request).await {
+    match scan_api.upload_file_smart(&large_request).await {
         Ok(_) => println!("         ✅ Large file uploaded via uploadlargefile.do"),
         Err(e) => println!("         ⚠️  Large file upload: {e}"),
     }

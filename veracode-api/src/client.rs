@@ -8,14 +8,24 @@ use hmac::{Hmac, Mac};
 use reqwest::{Client, multipart};
 use serde::Serialize;
 use sha2::Sha256;
+use std::borrow::Cow;
 use std::collections::HashMap;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::fs::File;
+use std::io::{Read, Seek, SeekFrom};
+use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
 use crate::{VeracodeConfig, VeracodeError};
 
 // Type aliases for HMAC
 type HmacSha256 = Hmac<Sha256>;
+
+// Constants for authentication error messages to avoid repeated allocations
+const INVALID_URL_MSG: &str = "Invalid URL";
+const INVALID_API_KEY_MSG: &str = "Invalid API key format - must be hex string";
+const INVALID_NONCE_MSG: &str = "Invalid nonce format";
+const HMAC_CREATION_FAILED_MSG: &str = "Failed to create HMAC";
 
 /// Core Veracode API client.
 ///
@@ -28,6 +38,31 @@ pub struct VeracodeClient {
 }
 
 impl VeracodeClient {
+    /// Build URL with query parameters - centralized helper
+    fn build_url_with_params(&self, endpoint: &str, query_params: &[(&str, &str)]) -> String {
+        // Pre-allocate string capacity for better performance
+        let estimated_capacity =
+            self.config.base_url.len() + endpoint.len() + query_params.len() * 32; // Rough estimate for query params
+
+        let mut url = String::with_capacity(estimated_capacity);
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
+
+        if !query_params.is_empty() {
+            url.push('?');
+            for (i, (key, value)) in query_params.iter().enumerate() {
+                if i > 0 {
+                    url.push('&');
+                }
+                url.push_str(&urlencoding::encode(key));
+                url.push('=');
+                url.push_str(&urlencoding::encode(value));
+            }
+        }
+
+        url
+    }
+
     /// Create a new Veracode API client.
     ///
     /// # Arguments
@@ -46,6 +81,11 @@ impl VeracodeClient {
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
         }
+
+        // Configure HTTP timeouts from config
+        client_builder = client_builder
+            .connect_timeout(Duration::from_secs(config.connect_timeout))
+            .timeout(Duration::from_secs(config.request_timeout));
 
         let client = client_builder.build().map_err(VeracodeError::Http)?;
         Ok(Self { config, client })
@@ -66,6 +106,178 @@ impl VeracodeClient {
         &self.client
     }
 
+    /// Execute an HTTP request with retry logic and exponential backoff.
+    ///
+    /// This method implements the retry strategy defined in the client's configuration.
+    /// It will retry requests that fail due to transient errors (network issues,
+    /// server errors, rate limiting) using exponential backoff. For rate limiting (429),
+    /// it uses intelligent delays based on Veracode's minute-window rate limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `request_builder` - A closure that creates the reqwest::RequestBuilder
+    /// * `operation_name` - A human-readable name for logging/error messages
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the HTTP response or a VeracodeError.
+    async fn execute_with_retry<F>(
+        &self,
+        request_builder: F,
+        operation_name: Cow<'_, str>,
+    ) -> Result<reqwest::Response, VeracodeError>
+    where
+        F: Fn() -> reqwest::RequestBuilder,
+    {
+        let retry_config = &self.config.retry_config;
+        let start_time = Instant::now();
+        let mut total_delay = std::time::Duration::from_millis(0);
+
+        // If retries are disabled, make a single attempt
+        if retry_config.max_attempts == 0 {
+            return match request_builder().send().await {
+                Ok(response) => Ok(response),
+                Err(e) => Err(VeracodeError::Http(e)),
+            };
+        }
+
+        let mut last_error = None;
+        let mut rate_limit_attempts = 0;
+
+        for attempt in 1..=retry_config.max_attempts + 1 {
+            // Build and send the request
+            match request_builder().send().await {
+                Ok(response) => {
+                    // Check for rate limiting before treating as success
+                    if response.status().as_u16() == 429 {
+                        // Extract Retry-After header if present
+                        let retry_after_seconds = response
+                            .headers()
+                            .get("retry-after")
+                            .and_then(|h| h.to_str().ok())
+                            .and_then(|s| s.parse::<u64>().ok());
+
+                        let message = "HTTP 429: Rate limit exceeded".to_string();
+                        let veracode_error = VeracodeError::RateLimited {
+                            retry_after_seconds,
+                            message,
+                        };
+
+                        // Increment rate limit attempt counter
+                        rate_limit_attempts += 1;
+
+                        // Check if we should retry based on rate limit specific limits
+                        if attempt > retry_config.max_attempts
+                            || rate_limit_attempts > retry_config.rate_limit_max_attempts
+                        {
+                            last_error = Some(veracode_error);
+                            break;
+                        }
+
+                        // Calculate rate limit specific delay
+                        let delay = retry_config.calculate_rate_limit_delay(retry_after_seconds);
+                        total_delay += delay;
+
+                        // Check total delay limit
+                        if total_delay.as_millis() > retry_config.max_total_delay_ms as u128 {
+                            let msg = format!(
+                                "{} exceeded maximum total retry time of {}ms after {} attempts",
+                                operation_name, retry_config.max_total_delay_ms, attempt
+                            );
+                            last_error = Some(VeracodeError::RetryExhausted(msg));
+                            break;
+                        }
+
+                        // Log rate limit with specific formatting
+                        let wait_time = match retry_after_seconds {
+                            Some(seconds) => format!("{seconds}s (from Retry-After header)"),
+                            None => format!("{}s (until next minute window)", delay.as_secs()),
+                        };
+                        eprintln!(
+                            "🚦 {operation_name} rate limited on attempt {attempt}, waiting {wait_time}"
+                        );
+
+                        // Wait and continue to next attempt
+                        tokio::time::sleep(delay).await;
+                        last_error = Some(veracode_error);
+                        continue;
+                    }
+
+                    if attempt > 1 {
+                        // Log successful retry for debugging
+                        eprintln!("✅ {operation_name} succeeded on attempt {attempt}");
+                    }
+                    return Ok(response);
+                }
+                Err(e) => {
+                    // For connection errors, network issues, etc., use normal retry logic
+                    let veracode_error = VeracodeError::Http(e);
+
+                    // Check if this is the last attempt or if the error is not retryable
+                    if attempt > retry_config.max_attempts
+                        || !retry_config.is_retryable_error(&veracode_error)
+                    {
+                        last_error = Some(veracode_error);
+                        break;
+                    }
+
+                    // Use normal exponential backoff for non-429 errors
+                    let delay = retry_config.calculate_delay(attempt);
+                    total_delay += delay;
+
+                    // Check if we've exceeded the maximum total delay
+                    if total_delay.as_millis() > retry_config.max_total_delay_ms as u128 {
+                        // Format error message once
+                        let msg = format!(
+                            "{} exceeded maximum total retry time of {}ms after {} attempts",
+                            operation_name, retry_config.max_total_delay_ms, attempt
+                        );
+                        last_error = Some(VeracodeError::RetryExhausted(msg));
+                        break;
+                    }
+
+                    // Log retry attempt for debugging
+                    eprintln!(
+                        "⚠️  {operation_name} failed on attempt {attempt}, retrying in {}ms: {veracode_error}",
+                        delay.as_millis()
+                    );
+
+                    // Wait before next attempt
+                    tokio::time::sleep(delay).await;
+                    last_error = Some(veracode_error);
+                }
+            }
+        }
+
+        // All attempts failed - create error message efficiently
+        match last_error {
+            Some(error) => {
+                let elapsed = start_time.elapsed();
+                match error {
+                    VeracodeError::RetryExhausted(_) => Err(error),
+                    _ => {
+                        let msg = format!(
+                            "{} failed after {} attempts over {}ms: {}",
+                            operation_name,
+                            retry_config.max_attempts + 1,
+                            elapsed.as_millis(),
+                            error
+                        );
+                        Err(VeracodeError::RetryExhausted(msg))
+                    }
+                }
+            }
+            None => {
+                let msg = format!(
+                    "{} failed after {} attempts with unknown error",
+                    operation_name,
+                    retry_config.max_attempts + 1
+                );
+                Err(VeracodeError::RetryExhausted(msg))
+            }
+        }
+    }
+
     /// Generate HMAC signature for authentication based on official Veracode JavaScript implementation
     fn generate_hmac_signature(
         &self,
@@ -75,7 +287,7 @@ impl VeracodeClient {
         nonce: &str,
     ) -> Result<String, VeracodeError> {
         let url_parsed = Url::parse(url)
-            .map_err(|_| VeracodeError::Authentication("Invalid URL".to_string()))?;
+            .map_err(|_| VeracodeError::Authentication(INVALID_URL_MSG.to_string()))?;
 
         let path_and_query = match url_parsed.query() {
             Some(query) => format!("{}?{}", url_parsed.path(), query),
@@ -98,34 +310,33 @@ impl VeracodeClient {
         let ver_str = "vcode_request_version_1";
 
         // Convert hex strings to bytes
-        let key_bytes = hex::decode(self.config.api_key.as_str()).map_err(|_| {
-            VeracodeError::Authentication("Invalid API key format - must be hex string".to_string())
-        })?;
+        let key_bytes = hex::decode(self.config.api_key.as_str())
+            .map_err(|_| VeracodeError::Authentication(INVALID_API_KEY_MSG.to_string()))?;
 
         let nonce_bytes = hex::decode(nonce)
-            .map_err(|_| VeracodeError::Authentication("Invalid nonce format".to_string()))?;
+            .map_err(|_| VeracodeError::Authentication(INVALID_NONCE_MSG.to_string()))?;
 
         // Step 1: HMAC(nonce, key)
         let mut mac1 = HmacSha256::new_from_slice(&key_bytes)
-            .map_err(|_| VeracodeError::Authentication("Failed to create HMAC".to_string()))?;
+            .map_err(|_| VeracodeError::Authentication(HMAC_CREATION_FAILED_MSG.to_string()))?;
         mac1.update(&nonce_bytes);
         let hashed_nonce = mac1.finalize().into_bytes();
 
         // Step 2: HMAC(timestamp, hashed_nonce)
         let mut mac2 = HmacSha256::new_from_slice(&hashed_nonce)
-            .map_err(|_| VeracodeError::Authentication("Failed to create HMAC".to_string()))?;
+            .map_err(|_| VeracodeError::Authentication(HMAC_CREATION_FAILED_MSG.to_string()))?;
         mac2.update(timestamp_str.as_bytes());
         let hashed_timestamp = mac2.finalize().into_bytes();
 
         // Step 3: HMAC(ver_str, hashed_timestamp)
         let mut mac3 = HmacSha256::new_from_slice(&hashed_timestamp)
-            .map_err(|_| VeracodeError::Authentication("Failed to create HMAC".to_string()))?;
+            .map_err(|_| VeracodeError::Authentication(HMAC_CREATION_FAILED_MSG.to_string()))?;
         mac3.update(ver_str.as_bytes());
         let hashed_ver_str = mac3.finalize().into_bytes();
 
         // Step 4: HMAC(data, hashed_ver_str)
         let mut mac4 = HmacSha256::new_from_slice(&hashed_ver_str)
-            .map_err(|_| VeracodeError::Authentication("Failed to create HMAC".to_string()))?;
+            .map_err(|_| VeracodeError::Authentication(HMAC_CREATION_FAILED_MSG.to_string()))?;
         mac4.update(data.as_bytes());
         let signature = mac4.finalize().into_bytes();
 
@@ -170,32 +381,49 @@ impl VeracodeClient {
         endpoint: &str,
         query_params: Option<&[(String, String)]>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = format!("{}{}", self.config.base_url, endpoint);
+        // Pre-allocate URL capacity
+        let param_count = query_params.map_or(0, |p| p.len());
+        let estimated_capacity = self.config.base_url.len() + endpoint.len() + param_count * 32;
+        let mut url = String::with_capacity(estimated_capacity);
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
 
         if let Some(params) = query_params {
             if !params.is_empty() {
                 url.push('?');
-                url.push_str(
-                    &params
-                        .iter()
-                        .map(|(k, v)| format!("{k}={v}"))
-                        .collect::<Vec<_>>()
-                        .join("&"),
-                );
+                for (i, (key, value)) in params.iter().enumerate() {
+                    if i > 0 {
+                        url.push('&');
+                    }
+                    url.push_str(key);
+                    url.push('=');
+                    url.push_str(value);
+                }
             }
         }
 
-        let auth_header = self.generate_auth_header("GET", &url)?;
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("GET", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.get("invalid://url"), // This will fail immediately
+            };
 
-        let response = self
-            .client
-            .get(&url)
-            .header("Authorization", auth_header)
-            .header("Content-Type", "application/json")
-            .send()
-            .await?;
+            self.client
+                .get(&url)
+                .header("Authorization", auth_header)
+                .header("Content-Type", "application/json")
+        };
 
-        Ok(response)
+        // Use Cow::Borrowed for simple operations when possible
+        let operation_name = if endpoint.len() < 50 {
+            Cow::Owned(format!("GET {endpoint}"))
+        } else {
+            Cow::Borrowed("GET [long endpoint]")
+        };
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 
     /// Make a POST request to the specified endpoint.
@@ -213,21 +441,45 @@ impl VeracodeClient {
         endpoint: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let url = format!("{}{}", self.config.base_url, endpoint);
-        let auth_header = self.generate_auth_header("POST", &url)?;
+        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
 
-        let mut request = self
-            .client
-            .post(&url)
-            .header("Authorization", auth_header)
-            .header("Content-Type", "application/json");
+        // Serialize body once outside the retry loop for efficiency
+        let serialized_body = if let Some(body) = body {
+            Some(serde_json::to_string(body)?)
+        } else {
+            None
+        };
 
-        if let Some(body) = body {
-            request = request.json(body);
-        }
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("POST", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            };
 
-        let response = request.send().await?;
-        Ok(response)
+            let mut request = self
+                .client
+                .post(&url)
+                .header("Authorization", auth_header)
+                .header("Content-Type", "application/json");
+
+            if let Some(ref body_str) = serialized_body {
+                request = request.body(body_str.clone());
+            }
+
+            request
+        };
+
+        let operation_name = if endpoint.len() < 50 {
+            Cow::Owned(format!("POST {endpoint}"))
+        } else {
+            Cow::Borrowed("POST [long endpoint]")
+        };
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 
     /// Make a PUT request to the specified endpoint.
@@ -245,21 +497,45 @@ impl VeracodeClient {
         endpoint: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let url = format!("{}{}", self.config.base_url, endpoint);
-        let auth_header = self.generate_auth_header("PUT", &url)?;
+        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
 
-        let mut request = self
-            .client
-            .put(&url)
-            .header("Authorization", auth_header)
-            .header("Content-Type", "application/json");
+        // Serialize body once outside the retry loop for efficiency
+        let serialized_body = if let Some(body) = body {
+            Some(serde_json::to_string(body)?)
+        } else {
+            None
+        };
 
-        if let Some(body) = body {
-            request = request.json(body);
-        }
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("PUT", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.put("invalid://url"), // This will fail immediately
+            };
 
-        let response = request.send().await?;
-        Ok(response)
+            let mut request = self
+                .client
+                .put(&url)
+                .header("Authorization", auth_header)
+                .header("Content-Type", "application/json");
+
+            if let Some(ref body_str) = serialized_body {
+                request = request.body(body_str.clone());
+            }
+
+            request
+        };
+
+        let operation_name = if endpoint.len() < 50 {
+            Cow::Owned(format!("PUT {endpoint}"))
+        } else {
+            Cow::Borrowed("PUT [long endpoint]")
+        };
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 
     /// Make a DELETE request to the specified endpoint.
@@ -272,18 +548,31 @@ impl VeracodeClient {
     ///
     /// A `Result` containing the HTTP response.
     pub async fn delete(&self, endpoint: &str) -> Result<reqwest::Response, VeracodeError> {
-        let url = format!("{}{}", self.config.base_url, endpoint);
-        let auth_header = self.generate_auth_header("DELETE", &url)?;
+        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
 
-        let response = self
-            .client
-            .delete(&url)
-            .header("Authorization", auth_header)
-            .header("Content-Type", "application/json")
-            .send()
-            .await?;
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("DELETE", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.delete("invalid://url"), // This will fail immediately
+            };
 
-        Ok(response)
+            self.client
+                .delete(&url)
+                .header("Authorization", auth_header)
+                .header("Content-Type", "application/json")
+        };
+
+        let operation_name = if endpoint.len() < 50 {
+            Cow::Owned(format!("DELETE {endpoint}"))
+        } else {
+            Cow::Borrowed("DELETE [long endpoint]")
+        };
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 
     /// Helper method to handle common response processing.
@@ -502,7 +791,9 @@ impl VeracodeClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        let url = format!("{}{}", self.config.base_url, endpoint);
+        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
         let mut request_url =
             Url::parse(&url).map_err(|e| VeracodeError::InvalidConfig(e.to_string()))?;
 
@@ -542,13 +833,12 @@ impl VeracodeClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        let url = format!("{}{}", self.config.base_url, endpoint);
+        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
 
-        // Build form data
-        let mut form_data = Vec::new();
-        for (key, value) in params {
-            form_data.push((key.to_string(), value.to_string()));
-        }
+        // Build form data - avoid unnecessary allocations
+        let form_data: Vec<(&str, &str)> = params.to_vec();
 
         let auth_header = self.generate_auth_header("POST", &url)?;
 
@@ -585,7 +875,9 @@ impl VeracodeClient {
         filename: &str,
         file_data: Vec<u8>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let url = format!("{}{}", self.config.base_url, endpoint);
+        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        url.push_str(&self.config.base_url);
+        url.push_str(endpoint);
 
         // Build multipart form
         let mut form = multipart::Form::new();
@@ -671,6 +963,9 @@ impl VeracodeClient {
     /// This method mimics the Java API wrapper's approach where parameters
     /// are added to the query string and the file is uploaded separately.
     ///
+    /// Memory optimization: Uses Cow for strings and Arc for file data to minimize cloning
+    /// during retry attempts. Automatically retries on transient failures.
+    ///
     /// # Arguments
     ///
     /// * `endpoint` - The API endpoint to call
@@ -690,44 +985,63 @@ impl VeracodeClient {
         filename: &str,
         file_data: Vec<u8>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        // Build URL with query parameters (URL encoded)
-        let mut url = format!("{}{}", self.config.base_url, endpoint);
+        // Build URL with query parameters using centralized helper for consistency
+        let url = self.build_url_with_params(endpoint, query_params);
 
-        if !query_params.is_empty() {
-            url.push('?');
-            let encoded_params: Vec<String> = query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        urlencoding::encode(key),
-                        urlencoding::encode(value)
-                    )
-                })
-                .collect();
-            url.push_str(&encoded_params.join("&"));
-        }
+        // Wrap file data in Arc to avoid cloning during retries
+        let file_data_arc = Arc::new(file_data);
 
-        // Build multipart form with only the file
-        let part = multipart::Part::bytes(file_data)
-            .file_name(filename.to_string())
-            .mime_str("application/octet-stream")
-            .map_err(|e| VeracodeError::InvalidConfig(e.to_string()))?;
+        // Use Cow for strings to minimize allocations - borrow for short strings, own for long ones
+        let filename_cow: Cow<str> = if filename.len() < 128 {
+            Cow::Borrowed(filename)
+        } else {
+            Cow::Owned(filename.to_string())
+        };
 
-        let form = multipart::Form::new().part(file_field_name.to_string(), part);
+        let field_name_cow: Cow<str> = if file_field_name.len() < 32 {
+            Cow::Borrowed(file_field_name)
+        } else {
+            Cow::Owned(file_field_name.to_string())
+        };
 
-        let auth_header = self.generate_auth_header("POST", &url)?;
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Clone Arc (cheap - just increments reference count)
+            let file_data_clone = Arc::clone(&file_data_arc);
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", auth_header)
-            .header("User-Agent", "Veracode Rust Client")
-            .multipart(form)
-            .send()
-            .await?;
+            // Re-create multipart form for each attempt
+            let part = match multipart::Part::bytes((*file_data_clone).clone())
+                .file_name(filename_cow.to_string())
+                .mime_str("application/octet-stream")
+            {
+                Ok(part) => part,
+                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            };
 
-        Ok(response)
+            let form = multipart::Form::new().part(field_name_cow.to_string(), part);
+
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("POST", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            };
+
+            self.client
+                .post(&url)
+                .header("Authorization", auth_header)
+                .header("User-Agent", "Veracode Rust Client")
+                .multipart(form)
+        };
+
+        // Use Cow for operation name based on endpoint length to minimize allocations
+        let operation_name: Cow<str> = if endpoint.len() < 50 {
+            Cow::Owned(format!("File Upload POST {endpoint}"))
+        } else {
+            Cow::Borrowed("File Upload POST [long endpoint]")
+        };
+
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 
     /// Make a POST request with query parameters (like Java implementation for XML API)
@@ -748,23 +1062,8 @@ impl VeracodeClient {
         endpoint: &str,
         query_params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        // Build URL with query parameters (URL encoded)
-        let mut url = format!("{}{}", self.config.base_url, endpoint);
-
-        if !query_params.is_empty() {
-            url.push('?');
-            let encoded_params: Vec<String> = query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        urlencoding::encode(key),
-                        urlencoding::encode(value)
-                    )
-                })
-                .collect();
-            url.push_str(&encoded_params.join("&"));
-        }
+        // Build URL with query parameters using centralized helper
+        let url = self.build_url_with_params(endpoint, query_params);
 
         let auth_header = self.generate_auth_header("POST", &url)?;
 
@@ -797,23 +1096,8 @@ impl VeracodeClient {
         endpoint: &str,
         query_params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        // Build URL with query parameters (URL encoded)
-        let mut url = format!("{}{}", self.config.base_url, endpoint);
-
-        if !query_params.is_empty() {
-            url.push('?');
-            let encoded_params: Vec<String> = query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        urlencoding::encode(key),
-                        urlencoding::encode(value)
-                    )
-                })
-                .collect();
-            url.push_str(&encoded_params.join("&"));
-        }
+        // Build URL with query parameters using centralized helper
+        let url = self.build_url_with_params(endpoint, query_params);
 
         let auth_header = self.generate_auth_header("GET", &url)?;
 
@@ -855,26 +1139,8 @@ impl VeracodeClient {
     where
         F: Fn(u64, u64, f64) + Send + Sync,
     {
-        use std::fs::File;
-        use std::io::{Read, Seek, SeekFrom};
-
-        // Build URL with query parameters
-        let mut url = format!("{}{}", self.config.base_url, endpoint);
-
-        if !query_params.is_empty() {
-            url.push('?');
-            let encoded_params: Vec<String> = query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        urlencoding::encode(key),
-                        urlencoding::encode(value)
-                    )
-                })
-                .collect();
-            url.push_str(&encoded_params.join("&"));
-        }
+        // Build URL with query parameters using centralized helper
+        let url = self.build_url_with_params(endpoint, query_params);
 
         // Open file and get size
         let mut file = File::open(file_path)
@@ -901,35 +1167,60 @@ impl VeracodeClient {
         file.read_to_end(&mut file_data)
             .map_err(|e| VeracodeError::InvalidConfig(format!("Failed to read file: {e}")))?;
 
-        // Generate auth header
-        let auth_header = self.generate_auth_header("POST", &url)?;
+        // Memory optimization: Wrap file data in Arc to avoid cloning during retries
+        let file_data_arc = Arc::new(file_data);
+        let content_type_cow: Cow<str> =
+            content_type.map_or(Cow::Borrowed("binary/octet-stream"), |ct| {
+                if ct.len() < 64 {
+                    Cow::Borrowed(ct)
+                } else {
+                    Cow::Owned(ct.to_string())
+                }
+            });
 
-        // Create request with streaming body
-        let request = self
-            .client
-            .post(&url)
-            .header("Authorization", auth_header)
-            .header("User-Agent", "Veracode Rust Client")
-            .header(
-                "Content-Type",
-                content_type.unwrap_or("binary/octet-stream"),
-            )
-            .header("Content-Length", file_size.to_string())
-            .body(file_data);
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Clone Arc (cheap - just increments reference count)
+            let file_data_clone = Arc::clone(&file_data_arc);
 
-        // Track progress if callback provided
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("POST", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            };
+
+            self.client
+                .post(&url)
+                .header("Authorization", auth_header)
+                .header("User-Agent", "Veracode Rust Client")
+                .header("Content-Type", content_type_cow.as_ref())
+                .header("Content-Length", file_size.to_string())
+                .body((*file_data_clone).clone())
+        };
+
+        // Track progress if callback provided (do this before retry loop)
         if let Some(callback) = progress_callback {
             callback(file_size, file_size, 100.0);
         }
 
-        let response = request.send().await?;
-        Ok(response)
+        // Use optimized operation name
+        let operation_name: Cow<str> = if endpoint.len() < 50 {
+            Cow::Owned(format!("Large File Upload POST {endpoint}"))
+        } else {
+            Cow::Borrowed("Large File Upload POST [long endpoint]")
+        };
+
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 
     /// Upload a file with binary data (optimized for uploadlargefile.do)
     ///
     /// This method uploads a file as raw binary data without multipart encoding,
     /// which is the expected format for the uploadlargefile.do endpoint.
+    ///
+    /// Memory optimization: Uses Arc for file data and Cow for strings to minimize
+    /// allocations during retry attempts. Automatically retries on transient failures.
     ///
     /// # Arguments
     ///
@@ -948,37 +1239,48 @@ impl VeracodeClient {
         file_data: Vec<u8>,
         content_type: &str,
     ) -> Result<reqwest::Response, VeracodeError> {
-        // Build URL with query parameters
-        let mut url = format!("{}{}", self.config.base_url, endpoint);
+        // Build URL with query parameters using centralized helper
+        let url = self.build_url_with_params(endpoint, query_params);
 
-        if !query_params.is_empty() {
-            url.push('?');
-            let encoded_params: Vec<String> = query_params
-                .iter()
-                .map(|(key, value)| {
-                    format!(
-                        "{}={}",
-                        urlencoding::encode(key),
-                        urlencoding::encode(value)
-                    )
-                })
-                .collect();
-            url.push_str(&encoded_params.join("&"));
-        }
+        // Memory optimization: Wrap file data in Arc to avoid cloning during retries
+        let file_data_arc = Arc::new(file_data);
+        let file_size = file_data_arc.len();
 
-        let auth_header = self.generate_auth_header("POST", &url)?;
+        // Use Cow for content type to minimize allocations
+        let content_type_cow: Cow<str> = if content_type.len() < 64 {
+            Cow::Borrowed(content_type)
+        } else {
+            Cow::Owned(content_type.to_string())
+        };
 
-        let response = self
-            .client
-            .post(&url)
-            .header("Authorization", auth_header)
-            .header("User-Agent", "Veracode Rust Client")
-            .header("Content-Type", content_type)
-            .header("Content-Length", file_data.len().to_string())
-            .body(file_data)
-            .send()
-            .await?;
+        // Create request builder closure for retry logic
+        let request_builder = || {
+            // Clone Arc (cheap - just increments reference count)
+            let file_data_clone = Arc::clone(&file_data_arc);
 
-        Ok(response)
+            // Re-generate auth header for each attempt to avoid signature expiry
+            let auth_header = match self.generate_auth_header("POST", &url) {
+                Ok(header) => header,
+                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            };
+
+            self.client
+                .post(&url)
+                .header("Authorization", auth_header)
+                .header("User-Agent", "Veracode Rust Client")
+                .header("Content-Type", content_type_cow.as_ref())
+                .header("Content-Length", file_size.to_string())
+                .body((*file_data_clone).clone())
+        };
+
+        // Use optimized operation name based on endpoint length
+        let operation_name: Cow<str> = if endpoint.len() < 50 {
+            Cow::Owned(format!("Binary File Upload POST {endpoint}"))
+        } else {
+            Cow::Borrowed("Binary File Upload POST [long endpoint]")
+        };
+
+        self.execute_with_retry(request_builder, operation_name)
+            .await
     }
 }

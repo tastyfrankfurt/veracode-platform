@@ -1,6 +1,16 @@
-use std::path::PathBuf;
+use std::borrow::Cow;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinSet;
+
+use crate::filevalidator::{FileValidator, ValidationError};
+
+// Constants for commonly used strings to reduce allocations
+const DEFAULT_EXPORT_RESULTS_PATH: &str = "assessment-results.json";
+const SANDBOX_NAME_REQUIRED_ERROR: &str = "Sandbox name required for sandbox scans";
+const SANDBOX_ID_REQUIRED_ERROR: &str = "Sandbox legacy ID required for sandbox scans";
+const UNKNOWN_UPLOAD_ERROR: &str = "Unknown upload error";
+const TOOL_NAME: &str = "verascan";
 use veracode_platform::scan::{UploadFileRequest, UploadLargeFileRequest};
 use veracode_platform::workflow::VeracodeWorkflow;
 use veracode_platform::{VeracodeClient, VeracodeConfig, VeracodeRegion};
@@ -9,15 +19,21 @@ use veracode_platform::{VeracodeClient, VeracodeConfig, VeracodeRegion};
 #[derive(Debug, Clone)]
 pub struct ApplicationId {
     /// Application GUID - used for REST API calls (sandbox operations)
-    pub guid: String,
+    pub guid: Cow<'static, str>,
     /// Application numeric ID - used for XML API calls (build, scan operations)
-    pub legacy_id: String,
+    pub legacy_id: Cow<'static, str>,
 }
 
 impl ApplicationId {
     /// Create new ApplicationId from both identifiers
-    pub fn new(guid: String, legacy_id: String) -> Self {
-        Self { guid, legacy_id }
+    pub fn new(
+        guid: impl Into<Cow<'static, str>>,
+        legacy_id: impl Into<Cow<'static, str>>,
+    ) -> Self {
+        Self {
+            guid: guid.into(),
+            legacy_id: legacy_id.into(),
+        }
     }
 
     /// Get the appropriate ID for REST API calls (sandbox operations)
@@ -35,24 +51,24 @@ impl ApplicationId {
 #[derive(Debug, Clone)]
 pub struct SandboxId {
     /// Sandbox GUID - used for REST API calls (sandbox management)
-    pub guid: String,
+    pub guid: Cow<'static, str>,
     /// Sandbox numeric ID - used for XML API calls (build, scan operations)
-    pub legacy_id: String,
+    pub legacy_id: Cow<'static, str>,
     /// Sandbox name for reference
-    pub name: String,
+    pub name: Cow<'static, str>,
 }
 
 /// Build identifier for Veracode assessment scans
 #[derive(Debug, Clone)]
 pub struct BuildId {
     /// Build ID - used for XML API calls (scan operations)
-    pub id: String,
+    pub id: Cow<'static, str>,
 }
 
 impl BuildId {
     /// Create new BuildId from identifier
-    pub fn new(id: String) -> Self {
-        Self { id }
+    pub fn new(id: impl Into<Cow<'static, str>>) -> Self {
+        Self { id: id.into() }
     }
 
     /// Get the build ID as string
@@ -69,11 +85,15 @@ impl std::fmt::Display for BuildId {
 
 impl SandboxId {
     /// Create new SandboxId from all identifiers
-    pub fn new(guid: String, legacy_id: String, name: String) -> Self {
+    pub fn new(
+        guid: impl Into<Cow<'static, str>>,
+        legacy_id: impl Into<Cow<'static, str>>,
+        name: impl Into<Cow<'static, str>>,
+    ) -> Self {
         Self {
-            guid,
-            legacy_id,
-            name,
+            guid: guid.into(),
+            legacy_id: legacy_id.into(),
+            name: name.into(),
         }
     }
 
@@ -120,6 +140,7 @@ pub enum AssessmentError {
     UploadError(String),
     SandboxError(String),
     PolicyError(String),
+    ValidationError(ValidationError),
 }
 
 impl std::fmt::Display for AssessmentError {
@@ -132,6 +153,7 @@ impl std::fmt::Display for AssessmentError {
             AssessmentError::UploadError(msg) => write!(f, "Upload error: {msg}"),
             AssessmentError::SandboxError(msg) => write!(f, "Sandbox error: {msg}"),
             AssessmentError::PolicyError(msg) => write!(f, "Policy error: {msg}"),
+            AssessmentError::ValidationError(e) => write!(f, "File validation error: {e}"),
         }
     }
 }
@@ -141,6 +163,12 @@ impl std::error::Error for AssessmentError {}
 impl From<veracode_platform::VeracodeError> for AssessmentError {
     fn from(err: veracode_platform::VeracodeError) -> Self {
         AssessmentError::VeracodeError(err)
+    }
+}
+
+impl From<ValidationError> for AssessmentError {
+    fn from(err: ValidationError) -> Self {
+        AssessmentError::ValidationError(err)
     }
 }
 
@@ -179,7 +207,7 @@ impl Default for AssessmentScanConfig {
             debug: false,
             autoscan: true,           // Enable autoscan by default
             monitor_completion: true, // Default to monitoring completion
-            export_results_path: "assessment-results.json".to_string(),
+            export_results_path: DEFAULT_EXPORT_RESULTS_PATH.into(),
             deleteincompletescan: 1, // Default to policy 1 (delete safe builds only)
         }
     }
@@ -256,9 +284,12 @@ impl AssessmentSubmitter {
 
                     // Create SandboxId from sandbox information
                     let sandbox_id = SandboxId::new(
-                        sandbox.guid.clone(),
-                        sandbox.id.map(|id| id.to_string()).unwrap_or_default(),
-                        sandbox.name.clone(),
+                        Cow::Owned(sandbox.guid),
+                        sandbox
+                            .id
+                            .map(|id| Cow::Owned(id.to_string()))
+                            .unwrap_or(Cow::Borrowed("")),
+                        Cow::Owned(sandbox.name),
                     );
 
                     if self.config.debug {
@@ -272,7 +303,7 @@ impl AssessmentSubmitter {
                     Ok(Some(sandbox_id))
                 } else {
                     Err(AssessmentError::ConfigError(
-                        "Sandbox name required for sandbox scans".to_string(),
+                        SANDBOX_NAME_REQUIRED_ERROR.into(),
                     ))
                 }
             }
@@ -311,7 +342,7 @@ impl AssessmentSubmitter {
                 if self.config.debug {
                     println!("✅ Build ready for uploads: {}", build.build_id);
                 }
-                Ok(BuildId::new(build.build_id))
+                Ok(BuildId::new(Cow::Owned(build.build_id)))
             }
             Err(e) => {
                 eprintln!("❌ Failed to ensure build exists: {e}");
@@ -336,6 +367,19 @@ impl AssessmentSubmitter {
     ) -> Result<Vec<String>, AssessmentError> {
         if files.is_empty() {
             return Err(AssessmentError::NoValidFiles);
+        }
+
+        // Validate cumulative file size (5GB limit for assessment scans)
+        let validator = FileValidator::new();
+        let file_paths: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
+        let total_size_bytes = validator.validate_assessment_cumulative_size(&file_paths)?;
+
+        if self.config.debug {
+            let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
+            println!(
+                "✅ Cumulative file size validation passed: {total_size_mb:.2} MB total (within 5120 MB limit)"
+            );
+            println!("📊 Files to process: {}", files.len());
         }
 
         // Get sandbox legacy ID if sandbox scan
@@ -464,41 +508,46 @@ impl AssessmentSubmitter {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(num_threads));
         let mut join_set = JoinSet::new();
 
+        // Use Arc to avoid cloning expensive data for each task
+        let submitter_arc = Arc::new(self.clone());
+        let app_id_arc = Arc::new(app_id.clone());
+        let sandbox_legacy_id_arc = sandbox_legacy_id.map(|s| Arc::new(s.to_string()));
+
         // Submit each file as a separate task
         for (index, file) in files.iter().enumerate() {
-            let file_clone = file.clone();
-            let semaphore_clone = semaphore.clone();
-            let submitter_clone = self.clone();
-            let app_id_clone = app_id.clone();
-            let sandbox_legacy_id_clone = sandbox_legacy_id.map(|s| s.to_string());
+            let file_path = file.clone(); // Only clone the PathBuf
+            let semaphore_ref = semaphore.clone();
+            let submitter_ref = submitter_arc.clone();
+            let app_id_ref = app_id_arc.clone();
+            let sandbox_id_ref = sandbox_legacy_id_arc.clone();
 
             join_set.spawn(async move {
-                let _permit = semaphore_clone.acquire().await.unwrap();
+                let _permit = semaphore_ref.acquire().await.unwrap();
 
-                let file_name = file_clone
+                let file_name = file_path
                     .file_name()
                     .and_then(|name| name.to_str())
                     .unwrap_or("unknown")
                     .to_string();
 
-                if submitter_clone.config.debug {
+                if submitter_ref.config.debug {
                     println!(
                         "📤 Thread {}: Starting upload for {}",
                         index + 1,
-                        file_clone.display()
+                        file_path.display()
                     );
                 }
 
-                match submitter_clone
+                match submitter_ref
                     .upload_single_file_internal(
-                        &file_clone,
-                        &app_id_clone,
-                        sandbox_legacy_id_clone.as_deref(),
+                        &file_path,
+                        &app_id_ref,
+                        sandbox_id_ref.as_ref().map(|arc| arc.as_str()),
                     )
                     .await
                 {
                     Ok(_) => {
-                        if submitter_clone.config.debug {
+                        if submitter_ref.config.debug {
                             println!(
                                 "✅ Thread {}: Upload completed for {}",
                                 index + 1,
@@ -522,8 +571,8 @@ impl AssessmentSubmitter {
             });
         }
 
-        // Collect results from all tasks
-        let mut uploaded_files = vec![String::new(); files.len()];
+        // Collect results from all tasks using Option for sparse storage
+        let mut uploaded_files: Vec<Option<String>> = vec![None; files.len()];
         let mut has_error = false;
         let mut first_error = None;
 
@@ -531,7 +580,7 @@ impl AssessmentSubmitter {
             match task_result {
                 Ok(upload_result) => match upload_result {
                     Ok((index, file_name)) => {
-                        uploaded_files[index] = file_name;
+                        uploaded_files[index] = Some(file_name);
                     }
                     Err((index, e)) => {
                         has_error = true;
@@ -551,15 +600,12 @@ impl AssessmentSubmitter {
 
         if has_error {
             return Err(AssessmentError::UploadError(
-                first_error.unwrap_or_else(|| "Unknown upload error".to_string()),
+                first_error.unwrap_or_else(|| UNKNOWN_UPLOAD_ERROR.into()),
             ));
         }
 
-        // Filter out empty entries and collect successfully uploaded files
-        let successful_uploads: Vec<String> = uploaded_files
-            .into_iter()
-            .filter(|name| !name.is_empty())
-            .collect();
+        // Filter out None entries and collect successfully uploaded files
+        let successful_uploads: Vec<String> = uploaded_files.into_iter().flatten().collect();
 
         if self.config.debug {
             println!(
@@ -580,7 +626,7 @@ impl AssessmentSubmitter {
     /// Upload a single file using smart upload logic (internal helper for concurrent uploads)
     async fn upload_single_file_internal(
         &self,
-        file: &PathBuf,
+        file: &Path,
         app_id: &ApplicationId,
         sandbox_legacy_id: Option<&str>,
     ) -> Result<(), AssessmentError> {
@@ -592,19 +638,14 @@ impl AssessmentSubmitter {
             .unwrap_or("unknown")
             .to_string();
 
-        // Get file size
-        let file_size = match std::fs::metadata(file) {
-            Ok(metadata) => metadata.len(),
-            Err(e) => {
-                return Err(AssessmentError::UploadError(format!(
-                    "Failed to get file size for {file_name}: {e}"
-                )));
-            }
-        };
+        // Validate file size (2GB limit for assessment scans)
+        let validator = FileValidator::new();
+        let file_size = validator.validate_assessment_file_size(file)?;
 
         if self.config.debug {
             let size_mb = file_size as f64 / (1024.0 * 1024.0);
             println!("📁 File: {file_name} ({size_mb:.2} MB)");
+            println!("✅ File size validation passed (within 2048 MB limit)");
 
             if file_size > SIZE_THRESHOLD {
                 println!("   Using large file upload (>100MB)");
@@ -635,10 +676,11 @@ impl AssessmentSubmitter {
                                 }
                             };
 
+                        let file_path_str = file.to_string_lossy();
                         scan_api
                             .upload_large_file_to_sandbox_with_progress(
                                 app_id.for_xml_api(),
-                                &file.to_string_lossy(),
+                                &file_path_str,
                                 sandbox_id,
                                 Some(&file_name),
                                 progress_callback,
@@ -647,14 +689,15 @@ impl AssessmentSubmitter {
                             .map(|_| ())
                     } else {
                         return Err(AssessmentError::ConfigError(
-                            "Sandbox legacy ID required for sandbox scans".to_string(),
+                            SANDBOX_ID_REQUIRED_ERROR.into(),
                         ));
                     }
                 }
                 ScanType::Policy => {
+                    let file_path_owned = file.to_string_lossy().into_owned();
                     let request = UploadLargeFileRequest {
                         app_id: app_id.for_xml_api().to_string(),
-                        file_path: file.to_string_lossy().to_string(),
+                        file_path: file_path_owned,
                         filename: Some(file_name.clone()),
                         sandbox_id: None,
                     };
@@ -683,28 +726,30 @@ impl AssessmentSubmitter {
             match self.config.scan_type {
                 ScanType::Sandbox => {
                     if let Some(sandbox_id) = sandbox_legacy_id {
+                        let file_path_str = file.to_string_lossy();
                         scan_api
                             .upload_file_to_sandbox(
                                 app_id.for_xml_api(),
-                                &file.to_string_lossy(),
+                                &file_path_str,
                                 sandbox_id,
                             )
                             .await
                             .map(|_| ())
                     } else {
                         return Err(AssessmentError::ConfigError(
-                            "Sandbox legacy ID required for sandbox scans".to_string(),
+                            SANDBOX_ID_REQUIRED_ERROR.into(),
                         ));
                     }
                 }
                 ScanType::Policy => {
+                    let file_path_owned = file.to_string_lossy().into_owned();
                     let request = UploadFileRequest {
                         app_id: app_id.for_xml_api().to_string(),
-                        file_path: file.to_string_lossy().to_string(),
+                        file_path: file_path_owned,
                         save_as: None,
                         sandbox_id: sandbox_legacy_id.map(|s| s.to_string()),
                     };
-                    scan_api.upload_file(request).await.map(|_| ())
+                    scan_api.upload_file(&request).await.map(|_| ())
                 }
             }
         };
@@ -751,7 +796,7 @@ impl AssessmentSubmitter {
                         );
                     }
 
-                    scan_api.begin_prescan(request).await
+                    scan_api.begin_prescan(&request).await
                 } else {
                     return Err(AssessmentError::ConfigError(
                         "Sandbox ID required for sandbox scans".to_string(),
@@ -766,7 +811,7 @@ impl AssessmentSubmitter {
                     scan_all_nonfatal_top_level_modules: Some(true),
                     include_new_modules: Some(true),
                 };
-                scan_api.begin_prescan(request).await
+                scan_api.begin_prescan(&request).await
             }
         };
 
@@ -828,7 +873,7 @@ impl AssessmentSubmitter {
                             },
                             scan_previously_selected_modules: None,
                         };
-                        scan_api.begin_scan(request).await
+                        scan_api.begin_scan(&request).await
                     } else {
                         // Scan all modules for sandbox
                         scan_api
@@ -837,7 +882,7 @@ impl AssessmentSubmitter {
                     }
                 } else {
                     return Err(AssessmentError::ConfigError(
-                        "Sandbox legacy ID required for sandbox scans".to_string(),
+                        SANDBOX_ID_REQUIRED_ERROR.to_string(),
                     ));
                 }
             }
@@ -860,7 +905,7 @@ impl AssessmentSubmitter {
                     },
                     scan_previously_selected_modules: None,
                 };
-                scan_api.begin_scan(request).await
+                scan_api.begin_scan(&request).await
             }
         };
 
@@ -1397,7 +1442,7 @@ impl AssessmentSubmitter {
                     },
                     "export_metadata": {
                         "exported_at": chrono::Utc::now().to_rfc3339(),
-                        "tool": "verascan",
+                        "tool": TOOL_NAME,
                         "scan_configuration": {
                             "autoscan": self.config.autoscan,
                             "scan_all_nonfatal_top_level_modules": true,
