@@ -4,8 +4,12 @@
 //! allowing you to submit applications for static analysis and retrieve scan results.
 
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 
 use crate::{VeracodeClient, VeracodeError};
+
+/// Plugin version constant to avoid repeated allocations
+const PLUGIN_VERSION: &str = "25.2.0-0";
 
 /// Error types specific to pipeline scan operations
 #[derive(Debug, thiserror::Error)]
@@ -241,7 +245,7 @@ impl Finding {
             line: self.files.source_file.line,
             issue_type: self.issue_type.clone(),
             severity: self.severity,
-            message: strip_html_tags(&self.display_text),
+            message: strip_html_tags(&self.display_text).into_owned(),
             cwe_id: self.cwe_id.parse().unwrap_or(0),
             details_link: None,
             issue_id: Some(self.issue_id.to_string()),
@@ -252,7 +256,12 @@ impl Finding {
 }
 
 /// Strip HTML tags from display text to get plain text message
-fn strip_html_tags(html: &str) -> String {
+fn strip_html_tags(html: &str) -> Cow<'_, str> {
+    // Check if HTML tags are present to avoid unnecessary allocation
+    if !html.contains('<') {
+        return Cow::Borrowed(html);
+    }
+
     // Simple HTML tag removal without regex dependency
     let mut result = String::new();
     let mut in_tag = false;
@@ -267,7 +276,8 @@ fn strip_html_tags(html: &str) -> String {
     }
 
     // Clean up extra whitespace
-    result.split_whitespace().collect::<Vec<&str>>().join(" ")
+    let cleaned = result.split_whitespace().collect::<Vec<&str>>().join(" ");
+    Cow::Owned(cleaned)
 }
 
 /// Pipeline scan request for creating a new scan
@@ -465,33 +475,47 @@ pub struct StandardCompliance {
 pub struct PipelineApi {
     client: VeracodeClient,
     debug: bool,
+    // Cached base URL to avoid repeated string operations
+    base_url: String,
 }
 
 impl PipelineApi {
     /// Create a new Pipeline API client
     pub fn new(client: VeracodeClient) -> Self {
+        let base_url = Self::compute_base_url(&client);
         Self {
             client,
             debug: false,
+            base_url,
         }
     }
 
     /// Create a new Pipeline API client with debug enabled
     pub fn new_with_debug(client: VeracodeClient, debug: bool) -> Self {
-        Self { client, debug }
+        let base_url = Self::compute_base_url(&client);
+        Self {
+            client,
+            debug,
+            base_url,
+        }
     }
 
-    /// Get the pipeline scan v1 base URL for file uploads
-    fn get_pipeline_base_url(&self) -> String {
-        if self.client.config().base_url.contains("api.veracode.com") {
+    /// Compute the pipeline scan v1 base URL for file uploads
+    fn compute_base_url(client: &VeracodeClient) -> String {
+        if client.config().base_url.contains("api.veracode.com") {
             "https://api.veracode.com/pipeline_scan/v1".to_string()
         } else {
             // For other environments, use the configured base URL with pipeline_scan/v1 path
             format!(
                 "{}/pipeline_scan/v1",
-                self.client.config().base_url.trim_end_matches('/')
+                client.config().base_url.trim_end_matches('/')
             )
         }
+    }
+
+    /// Get the cached pipeline scan v1 base URL
+    fn get_pipeline_base_url(&self) -> &str {
+        &self.base_url
     }
 
     /// Look up application ID by application name
@@ -507,7 +531,7 @@ impl PipelineApi {
         let applications = self.client.search_applications_by_name(app_name).await?;
 
         match applications.len() {
-            0 => Err(PipelineError::ApplicationNotFound(app_name.to_string())),
+            0 => Err(PipelineError::ApplicationNotFound(app_name.to_owned())),
             1 => Ok(applications[0].id.to_string()),
             _ => {
                 // Print the found applications to help the user
@@ -545,7 +569,7 @@ impl PipelineApi {
     /// A `Result` containing the scan details if successful
     pub async fn create_scan_with_app_lookup(
         &self,
-        mut request: CreateScanRequest,
+        request: &mut CreateScanRequest,
         app_name: Option<&str>,
     ) -> Result<ScanCreationResult, PipelineError> {
         // Look up app_id if app_name is provided
@@ -575,11 +599,11 @@ impl PipelineApi {
     /// A `Result` containing the scan details if successful
     pub async fn create_scan(
         &self,
-        mut request: CreateScanRequest,
+        request: &mut CreateScanRequest,
     ) -> Result<ScanCreationResult, PipelineError> {
         // Set plugin version to match Java implementation (from MANIFEST.MF)
         if request.plugin_version.is_none() {
-            request.plugin_version = Some("25.2.0-0".to_string());
+            request.plugin_version = Some(PLUGIN_VERSION.to_string());
         }
 
         // Set default scan timeout to 30 minutes if not supplied
@@ -593,7 +617,7 @@ impl PipelineApi {
 
         let response = self
             .client
-            .post_with_response("/pipeline_scan/v1/scans", Some(&request))
+            .post_with_response("/pipeline_scan/v1/scans", Some(request))
             .await?;
 
         let response_text = response.text().await?;
@@ -607,7 +631,7 @@ impl PipelineApi {
                 .ok_or_else(|| {
                     PipelineError::InvalidRequest("Missing scan_id in response".to_string())
                 })?
-                .to_string();
+                .to_owned();
 
             // Extract all useful URIs from _links
             let links = json_value.get("_links");
@@ -616,25 +640,25 @@ impl PipelineApi {
                 .and_then(|links| links.get("upload"))
                 .and_then(|upload| upload.get("href"))
                 .and_then(|href| href.as_str())
-                .map(|s| s.to_string());
+                .map(str::to_owned);
 
             let details_uri = links
                 .and_then(|links| links.get("details"))
                 .and_then(|details| details.get("href"))
                 .and_then(|href| href.as_str())
-                .map(|s| s.to_string());
+                .map(str::to_owned);
 
             let start_uri = links
                 .and_then(|links| links.get("start"))
                 .and_then(|start| start.get("href"))
                 .and_then(|href| href.as_str())
-                .map(|s| s.to_string());
+                .map(str::to_owned);
 
             let cancel_uri = links
                 .and_then(|links| links.get("cancel"))
                 .and_then(|cancel| cancel.get("href"))
                 .and_then(|href| href.as_str())
-                .map(|s| s.to_string());
+                .map(str::to_owned);
 
             // Extract expected segments
             let expected_segments = json_value
@@ -801,7 +825,7 @@ impl PipelineApi {
         // Prepare additional headers for pipeline scan
         let mut headers = std::collections::HashMap::new();
         headers.insert("accept", "application/json");
-        headers.insert("PLUGIN-VERSION", "25.2.0-0"); // CRITICAL: Java adds this header! (from MANIFEST.MF)
+        headers.insert("PLUGIN-VERSION", PLUGIN_VERSION); // CRITICAL: Java adds this header! (from MANIFEST.MF)
 
         // Use the client's multipart PUT upload method
         let response = self
@@ -839,14 +863,14 @@ impl PipelineApi {
             if let Some(links) = json_value.get("_links") {
                 if let Some(upload) = links.get("upload") {
                     if let Some(href) = upload.get("href") {
-                        return href.as_str().map(|s| s.to_string());
+                        return href.as_str().map(str::to_owned);
                     }
                 }
             }
 
             // Alternative: look for upload_url field
             if let Some(upload_url) = json_value.get("upload_url") {
-                return upload_url.as_str().map(|s| s.to_string());
+                return upload_url.as_str().map(str::to_owned);
             }
         }
 

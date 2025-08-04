@@ -1,4 +1,4 @@
-use crate::baseline::BaselineFile;
+use crate::baseline::OwnedBaselineFile;
 use crate::cli::{Args, Commands};
 use crate::findings::FindingWithSource;
 use crate::{
@@ -7,6 +7,8 @@ use crate::{
     PolicyAssessment, ScanType, check_secure_pipeline_credentials, execute_baseline_compare,
     execute_policy_file_assessment, execute_policy_name_assessment, load_secure_api_credentials,
 };
+use std::borrow::Cow;
+use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use veracode_platform::identity::IdentityApi;
@@ -66,7 +68,7 @@ pub fn validate_baseline_file_early(baseline_path: &str, args: &Args) -> Result<
     })?;
 
     // Try to parse as BaselineFile structure
-    let baseline: BaselineFile = serde_json::from_value(json_value.clone()).map_err(|e| {
+    let baseline: OwnedBaselineFile = serde_json::from_value(json_value.clone()).map_err(|e| {
         eprintln!(
             "❌ Baseline file '{baseline_path}' does not match expected baseline format: {e}"
         );
@@ -143,7 +145,7 @@ pub fn execute_pipeline_scan(matched_files: &[PathBuf], args: &Args) -> Result<(
         let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
 
         let region = parse_region(&args.region)?;
-        let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
+        let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
 
         // Check environment variable for certificate validation
         if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
@@ -393,13 +395,18 @@ fn create_pipeline_config(args: &Args, region: VeracodeRegion) -> PipelineScanCo
     {
         // Auto-resolve project URL from git if not provided
         let project_uri = project_url
-            .clone()
+            .as_deref()
+            .map(|s| s.to_owned())
             .or_else(|| resolve_git_project_url(args.debug));
 
+        // Use Cow to avoid allocating default project name unless needed
+        let project_name_cow: Cow<str> = project_name
+            .as_ref()
+            .map(|s| Cow::Borrowed(s.as_str()))
+            .unwrap_or(Cow::Borrowed("Verascan Pipeline Scan"));
+
         PipelineScanConfig {
-            project_name: project_name
-                .clone()
-                .unwrap_or_else(|| "Verascan Pipeline Scan".to_string()),
+            project_name: project_name_cow.into_owned(),
             project_uri,
             dev_stage: parse_dev_stage(development_stage),
             region,
@@ -568,15 +575,16 @@ async fn handle_findings_export(
         let export_path = export_findings;
         println!("\n📄 Aggregating findings for export...");
 
-        // Create source file names from the matched files
-        let source_files: Vec<String> = matched_files
+        // Create source file names from the matched files (avoid unnecessary string allocations)
+        let source_file_names: Vec<&str> = matched_files
             .iter()
-            .map(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            })
+            .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
+            .collect();
+
+        // Only create owned strings when needed for the aggregator
+        let source_files: Vec<String> = source_file_names
+            .iter()
+            .map(|&name| name.to_string())
             .collect();
 
         // Create findings aggregator
@@ -707,11 +715,13 @@ async fn handle_findings_export(
                             // Export GitLab SAST report (use different filename to avoid conflict)
                             let gitlab_sast_path = {
                                 let mut path = gitlab_path;
-                                let file_stem = path
-                                    .file_stem()
-                                    .and_then(|s| s.to_str())
-                                    .unwrap_or("export");
-                                path.set_file_name(format!("{file_stem}_gitlab_sast.json"));
+                                if let Some(file_stem) = path.file_stem() {
+                                    let mut new_name = file_stem.to_os_string();
+                                    new_name.push("_gitlab_sast.json");
+                                    path.set_file_name(new_name);
+                                } else {
+                                    path.set_file_name("export_gitlab_sast.json");
+                                }
                                 path
                             };
                             let gitlab_config = GitLabExportConfig::default();
@@ -842,8 +852,8 @@ fn ensure_extension(path: &str, extension: &str) -> Result<PathBuf, String> {
         }
     }
 
-    // Ensure the file has the correct extension
-    let final_path = if path_buf.extension().and_then(|ext| ext.to_str()) == Some(extension) {
+    // Ensure the file has the correct extension (optimized OsStr comparison)
+    let final_path = if path_buf.extension() == Some(extension.as_ref()) {
         path_buf
     } else {
         path_buf.with_extension(extension)
@@ -869,15 +879,16 @@ async fn handle_gitlab_issues_creation_from_results_async(
     if let Commands::Pipeline { min_severity, .. } = &args.command {
         println!("\n🔗 Creating GitLab issues from scan findings...");
 
-        // Create source file names from the matched files
-        let source_files: Vec<String> = matched_files
+        // Create source file names from the matched files (avoid unnecessary string allocations)
+        let source_file_names: Vec<&str> = matched_files
             .iter()
-            .map(|path| {
-                path.file_name()
-                    .and_then(|name| name.to_str())
-                    .unwrap_or("unknown")
-                    .to_string()
-            })
+            .filter_map(|path| path.file_name().and_then(|name| name.to_str()))
+            .collect();
+
+        // Only create owned strings when needed for the aggregator
+        let source_files: Vec<String> = source_file_names
+            .iter()
+            .map(|&name| name.to_string())
             .collect();
 
         // Create findings aggregator
@@ -949,8 +960,11 @@ async fn handle_gitlab_issues_creation_async(
     }
 }
 
-/// Handle baseline operations: filter findings against baseline (Java-style)
-fn handle_baseline_operations(aggregated: &AggregatedFindings, args: &Args) -> AggregatedFindings {
+/// Handle baseline operations: filter findings against baseline (optimized to avoid clones)
+fn handle_baseline_operations<'a>(
+    aggregated: &'a AggregatedFindings,
+    args: &Args,
+) -> Cow<'a, AggregatedFindings> {
     // If baseline file is provided, filter the findings to show only new ones
     if let Commands::Pipeline {
         baseline_file: Some(baseline_path),
@@ -1018,41 +1032,47 @@ fn handle_baseline_operations(aggregated: &AggregatedFindings, args: &Args) -> A
                     println!("\n✅ Baseline comparison PASSED - no new findings");
                 }
 
-                // Create a new aggregated findings with only the new findings
-                let mut filtered_aggregated = aggregated.clone();
-                filtered_aggregated.findings = comparison.new_findings;
+                // Only clone when we actually need to modify the findings
+                if comparison.new_findings.len() != aggregated.findings.len() {
+                    // Create a new aggregated findings with only the new findings
+                    let mut filtered_aggregated = aggregated.clone();
+                    filtered_aggregated.findings = comparison.new_findings;
 
-                // Recalculate summary for filtered findings
-                let aggregator = FindingsAggregator::new(args.debug);
-                let updated_summary =
-                    aggregator.calculate_summary_from_findings(&filtered_aggregated.findings);
-                filtered_aggregated.summary = updated_summary;
+                    // Recalculate summary for filtered findings
+                    let aggregator = FindingsAggregator::new(args.debug);
+                    let updated_summary =
+                        aggregator.calculate_summary_from_findings(&filtered_aggregated.findings);
+                    filtered_aggregated.summary = updated_summary;
 
-                // Update stats
-                filtered_aggregated.stats.total_findings =
-                    filtered_aggregated.findings.len() as u32;
+                    // Update stats
+                    filtered_aggregated.stats.total_findings =
+                        filtered_aggregated.findings.len() as u32;
 
-                return filtered_aggregated;
+                    return Cow::Owned(filtered_aggregated);
+                } else {
+                    // No filtering needed, return borrowed reference
+                    return Cow::Borrowed(aggregated);
+                }
             }
             Err(_) => {
                 eprintln!(
                     "❌ The \"baseline_file\" does not contain JSON formatting. Correct the file and try again."
                 );
                 // Return original aggregated findings if baseline filtering fails
-                return aggregated.clone();
+                return Cow::Borrowed(aggregated);
             }
         }
     }
 
     // Return original aggregated findings if no baseline file specified
-    aggregated.clone()
+    Cow::Borrowed(aggregated)
 }
 
 /// Handle policy assessment operations: assess findings against policy and export violations
-async fn handle_policy_assessment(
-    aggregated: &AggregatedFindings,
+async fn handle_policy_assessment<'a>(
+    aggregated: &'a AggregatedFindings,
     args: &Args,
-) -> (Option<PolicyAssessment>, AggregatedFindings) {
+) -> (Option<PolicyAssessment>, Cow<'a, AggregatedFindings>) {
     // Check if policy assessment is requested
     if let Commands::Pipeline {
         policy_file,
@@ -1073,7 +1093,7 @@ async fn handle_policy_assessment(
                 // Use policy name (requires async)
                 execute_policy_name_assessment(aggregated, policy_name_str, None, args).await
             } else {
-                return (None, aggregated.clone());
+                return (None, Cow::Borrowed(aggregated));
             };
 
             match assessment_result {
@@ -1095,23 +1115,23 @@ async fn handle_policy_assessment(
                         filtered_aggregated.stats.total_findings =
                             filtered_aggregated.findings.len() as u32;
 
-                        return (Some(assessment), filtered_aggregated);
+                        return (Some(assessment), Cow::Owned(filtered_aggregated));
                     }
 
-                    (Some(assessment), aggregated.clone())
+                    (Some(assessment), Cow::Borrowed(aggregated))
                 }
                 Err(exit_code) => {
                     eprintln!("❌ Policy assessment failed with exit code: {exit_code}");
-                    (None, aggregated.clone())
+                    (None, Cow::Borrowed(aggregated))
                 }
             }
         } else {
             // No policy assessment requested
-            (None, aggregated.clone())
+            (None, Cow::Borrowed(aggregated))
         }
     } else {
         // No policy assessment requested
-        (None, aggregated.clone())
+        (None, Cow::Borrowed(aggregated))
     }
 }
 
@@ -1169,8 +1189,8 @@ async fn export_pass_fail_violations(
     }
 
     // Determine which findings violate pass-fail criteria
-    let mut violating_findings = Vec::new();
-    let mut criteria_description = Vec::new();
+    let mut violating_findings = Vec::with_capacity(final_filtered.findings.len());
+    let mut criteria_description = Vec::with_capacity(4); // Max 4 criteria types
 
     // 1. Policy violations (highest priority)
     if let Some(assessment) = policy_assessment {
@@ -1242,31 +1262,22 @@ async fn export_pass_fail_violations(
         }
     }
 
-    // Remove duplicates (findings might violate multiple criteria)
-    violating_findings.sort_by(|a, b| {
-        a.finding
-            .title
-            .cmp(&b.finding.title)
-            .then_with(|| {
-                a.finding
-                    .files
-                    .source_file
-                    .file
-                    .cmp(&b.finding.files.source_file.file)
-            })
-            .then_with(|| {
-                a.finding
-                    .files
-                    .source_file
-                    .line
-                    .cmp(&b.finding.files.source_file.line)
-            })
-    });
-    violating_findings.dedup_by(|a, b| {
-        a.finding.title == b.finding.title
-            && a.finding.files.source_file.file == b.finding.files.source_file.file
-            && a.finding.files.source_file.line == b.finding.files.source_file.line
-    });
+    // Remove duplicates using HashSet for better performance
+    let mut seen = HashSet::new();
+    let mut unique_findings = Vec::with_capacity(violating_findings.len());
+
+    for finding in violating_findings {
+        let key = (
+            finding.finding.title.clone(),
+            finding.finding.files.source_file.file.clone(),
+            finding.finding.files.source_file.line,
+        );
+        if seen.insert(key) {
+            unique_findings.push(finding);
+        }
+    }
+
+    violating_findings = unique_findings;
 
     // Export violations if any criteria were violated
     if !violating_findings.is_empty() {
@@ -1354,11 +1365,14 @@ fn evaluate_fail_on_severity(
     findings: &[FindingWithSource],
     severity_list: &str,
 ) -> Vec<FindingWithSource> {
-    // Parse severity list
-    let target_severities: Vec<u32> = severity_list
-        .split(',')
-        .filter_map(|s| parse_severity_name_to_level(s.trim()))
-        .collect();
+    // Parse severity list (pre-size for common case)
+    let severity_parts: Vec<&str> = severity_list.split(',').collect();
+    let mut target_severities = Vec::with_capacity(severity_parts.len());
+    for s in severity_parts {
+        if let Some(level) = parse_severity_name_to_level(s.trim()) {
+            target_severities.push(level);
+        }
+    }
 
     if target_severities.is_empty() {
         return Vec::new();
@@ -1374,18 +1388,20 @@ fn evaluate_fail_on_severity(
 
 /// Evaluate fail-on-cwe criteria and return violating findings
 fn evaluate_fail_on_cwe(findings: &[FindingWithSource], cwe_list: &str) -> Vec<FindingWithSource> {
-    // Parse CWE list
-    let target_cwes: Vec<String> = cwe_list
-        .split(',')
-        .map(|s| {
-            let cwe = s.trim();
-            if cwe.to_lowercase().starts_with("cwe-") {
-                cwe[4..].to_string()
-            } else {
-                cwe.to_string()
-            }
-        })
-        .collect();
+    // Parse CWE list (pre-size and optimize string operations)
+    let cwe_parts: Vec<&str> = cwe_list.split(',').collect();
+    let mut target_cwes = Vec::with_capacity(cwe_parts.len());
+    for s in cwe_parts {
+        let cwe = s.trim();
+        if let Some(stripped) = cwe
+            .strip_prefix("cwe-")
+            .or_else(|| cwe.strip_prefix("CWE-"))
+        {
+            target_cwes.push(stripped.to_string());
+        } else {
+            target_cwes.push(cwe.to_string());
+        }
+    }
 
     if target_cwes.is_empty() {
         return Vec::new();
@@ -1557,7 +1573,7 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         };
 
         let region = parse_region(&args.region)?;
-        let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
+        let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
 
         // Check environment variable for certificate validation
         if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {

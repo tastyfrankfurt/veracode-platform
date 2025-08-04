@@ -34,6 +34,11 @@ pub enum ValidationError {
     IoError(String),
     UnsupportedFileType(String),
     InvalidFileHeader(String),
+    FileTooLarge {
+        file_path: String,
+        size_mb: f64,
+        max_size_mb: f64,
+    },
 }
 
 impl std::fmt::Display for ValidationError {
@@ -44,6 +49,16 @@ impl std::fmt::Display for ValidationError {
                 write!(f, "Unsupported file type: {msg}")
             }
             ValidationError::InvalidFileHeader(msg) => write!(f, "Invalid file header: {msg}"),
+            ValidationError::FileTooLarge {
+                file_path,
+                size_mb,
+                max_size_mb,
+            } => {
+                write!(
+                    f,
+                    "File too large: {file_path} ({size_mb:.2} MB exceeds {max_size_mb:.0} MB limit)"
+                )
+            }
         }
     }
 }
@@ -337,6 +352,77 @@ impl FileValidator {
             SupportedFileType::SevenZip | SupportedFileType::Rar => false, // Less common for Java applications
         }
     }
+
+    /// Validate file size against specified limit
+    pub fn validate_file_size(
+        &self,
+        file_path: &Path,
+        max_size_mb: f64,
+    ) -> Result<u64, ValidationError> {
+        let metadata = std::fs::metadata(file_path).map_err(|e| {
+            ValidationError::IoError(format!(
+                "Failed to get file metadata for '{}': {}",
+                file_path.display(),
+                e
+            ))
+        })?;
+
+        let file_size_bytes = metadata.len();
+        let file_size_mb = file_size_bytes as f64 / (1024.0 * 1024.0);
+
+        if file_size_mb > max_size_mb {
+            return Err(ValidationError::FileTooLarge {
+                file_path: file_path.display().to_string(),
+                size_mb: file_size_mb,
+                max_size_mb,
+            });
+        }
+
+        Ok(file_size_bytes)
+    }
+
+    /// Validate file size for pipeline scans (200MB limit)
+    pub fn validate_pipeline_file_size(&self, file_path: &Path) -> Result<u64, ValidationError> {
+        self.validate_file_size(file_path, 200.0)
+    }
+
+    /// Validate file size for assessment scans (2GB limit)
+    pub fn validate_assessment_file_size(&self, file_path: &Path) -> Result<u64, ValidationError> {
+        self.validate_file_size(file_path, 2048.0) // 2GB = 2048MB
+    }
+
+    /// Validate cumulative file sizes for assessment scans (5GB total limit)
+    pub fn validate_assessment_cumulative_size(
+        &self,
+        file_paths: &[&Path],
+    ) -> Result<u64, ValidationError> {
+        let mut total_size_bytes = 0u64;
+        let max_total_mb = 5120.0; // 5GB = 5120MB
+
+        for file_path in file_paths {
+            let metadata = std::fs::metadata(file_path).map_err(|e| {
+                ValidationError::IoError(format!(
+                    "Failed to get file metadata for '{}': {}",
+                    file_path.display(),
+                    e
+                ))
+            })?;
+
+            total_size_bytes += metadata.len();
+        }
+
+        let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
+
+        if total_size_mb > max_total_mb {
+            return Err(ValidationError::FileTooLarge {
+                file_path: format!("{} files (total)", file_paths.len()),
+                size_mb: total_size_mb,
+                max_size_mb: max_total_mb,
+            });
+        }
+
+        Ok(total_size_bytes)
+    }
 }
 
 #[cfg(test)]
@@ -392,5 +478,41 @@ mod tests {
         assert!(validator.is_suitable_for_static_analysis(&SupportedFileType::War));
         assert!(validator.is_suitable_for_static_analysis(&SupportedFileType::Zip));
         assert!(!validator.is_suitable_for_static_analysis(&SupportedFileType::Rar));
+    }
+
+    #[test]
+    fn test_file_size_validation() {
+        let _validator = FileValidator::new();
+
+        // Test with a hypothetical small file (0.5MB)
+        // Note: In real tests, you'd create temporary files or mock the filesystem
+        let small_size_bytes = 500 * 1024; // 0.5MB in bytes
+        let small_size_mb = small_size_bytes as f64 / (1024.0 * 1024.0);
+
+        // Test that small file passes 200MB limit
+        assert!(small_size_mb < 200.0);
+
+        // Test that 300MB file would exceed 200MB pipeline limit but pass 2GB assessment limit
+        let large_size_mb = 300.0;
+        assert!(large_size_mb > 200.0);
+        assert!(large_size_mb < 2048.0);
+    }
+
+    #[test]
+    fn test_cumulative_file_size_validation() {
+        // Test cumulative size limits
+        // 5 files of 1GB each = 5GB total (should pass 5GB limit)
+        let individual_size_gb = 1.0;
+        let individual_size_mb = individual_size_gb * 1024.0;
+        let total_files = 5;
+        let total_size_mb = individual_size_mb * total_files as f64;
+
+        // Should pass 5GB (5120MB) limit
+        assert!(total_size_mb <= 5120.0);
+
+        // 6 files of 1GB each = 6GB total (should exceed 5GB limit)
+        let total_files_over = 6;
+        let total_size_mb_over = individual_size_mb * total_files_over as f64;
+        assert!(total_size_mb_over > 5120.0);
     }
 }

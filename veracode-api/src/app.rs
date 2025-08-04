@@ -374,26 +374,26 @@ impl ApplicationQuery {
     }
 
     /// Filter applications by name (partial match).
-    pub fn with_name(mut self, name: String) -> Self {
-        self.name = Some(name);
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
         self
     }
 
     /// Filter applications by policy compliance status.
-    pub fn with_policy_compliance(mut self, compliance: String) -> Self {
-        self.policy_compliance = Some(compliance);
+    pub fn with_policy_compliance(mut self, compliance: &str) -> Self {
+        self.policy_compliance = Some(compliance.to_string());
         self
     }
 
     /// Filter applications modified after the specified date.
-    pub fn with_modified_after(mut self, date: String) -> Self {
-        self.modified_after = Some(date);
+    pub fn with_modified_after(mut self, date: &str) -> Self {
+        self.modified_after = Some(date.to_string());
         self
     }
 
     /// Filter applications modified before the specified date.
-    pub fn with_modified_before(mut self, date: String) -> Self {
-        self.modified_before = Some(date);
+    pub fn with_modified_before(mut self, date: &str) -> Self {
+        self.modified_before = Some(date.to_string());
         self
     }
 
@@ -411,39 +411,89 @@ impl ApplicationQuery {
 
     /// Convert the query to URL query parameters.
     pub fn to_query_params(&self) -> Vec<(String, String)> {
+        Vec::from(self)
+    }
+}
+
+/// Convert ApplicationQuery to query parameters by borrowing (allows reuse)
+impl From<&ApplicationQuery> for Vec<(String, String)> {
+    fn from(query: &ApplicationQuery) -> Self {
         let mut params = Vec::new();
 
-        if let Some(ref name) = self.name {
+        if let Some(ref name) = query.name {
             params.push(("name".to_string(), name.clone()));
         }
-        if let Some(ref compliance) = self.policy_compliance {
+        if let Some(ref compliance) = query.policy_compliance {
             params.push(("policy_compliance".to_string(), compliance.clone()));
         }
-        if let Some(ref date) = self.modified_after {
+        if let Some(ref date) = query.modified_after {
             params.push(("modified_after".to_string(), date.clone()));
         }
-        if let Some(ref date) = self.modified_before {
+        if let Some(ref date) = query.modified_before {
             params.push(("modified_before".to_string(), date.clone()));
         }
-        if let Some(ref date) = self.created_after {
+        if let Some(ref date) = query.created_after {
             params.push(("created_after".to_string(), date.clone()));
         }
-        if let Some(ref date) = self.created_before {
+        if let Some(ref date) = query.created_before {
             params.push(("created_before".to_string(), date.clone()));
         }
-        if let Some(ref scan_type) = self.scan_type {
+        if let Some(ref scan_type) = query.scan_type {
             params.push(("scan_type".to_string(), scan_type.clone()));
         }
-        if let Some(ref tags) = self.tags {
+        if let Some(ref tags) = query.tags {
             params.push(("tags".to_string(), tags.clone()));
         }
-        if let Some(ref business_unit) = self.business_unit {
+        if let Some(ref business_unit) = query.business_unit {
             params.push(("business_unit".to_string(), business_unit.clone()));
         }
-        if let Some(page) = self.page {
+        if let Some(page) = query.page {
             params.push(("page".to_string(), page.to_string()));
         }
-        if let Some(size) = self.size {
+        if let Some(size) = query.size {
+            params.push(("size".to_string(), size.to_string()));
+        }
+
+        params
+    }
+}
+
+/// Convert ApplicationQuery to query parameters by consuming (better performance)
+impl From<ApplicationQuery> for Vec<(String, String)> {
+    fn from(query: ApplicationQuery) -> Self {
+        let mut params = Vec::new();
+
+        if let Some(name) = query.name {
+            params.push(("name".to_string(), name));
+        }
+        if let Some(compliance) = query.policy_compliance {
+            params.push(("policy_compliance".to_string(), compliance));
+        }
+        if let Some(date) = query.modified_after {
+            params.push(("modified_after".to_string(), date));
+        }
+        if let Some(date) = query.modified_before {
+            params.push(("modified_before".to_string(), date));
+        }
+        if let Some(date) = query.created_after {
+            params.push(("created_after".to_string(), date));
+        }
+        if let Some(date) = query.created_before {
+            params.push(("created_before".to_string(), date));
+        }
+        if let Some(scan_type) = query.scan_type {
+            params.push(("scan_type".to_string(), scan_type));
+        }
+        if let Some(tags) = query.tags {
+            params.push(("tags".to_string(), tags));
+        }
+        if let Some(business_unit) = query.business_unit {
+            params.push(("business_unit".to_string(), business_unit));
+        }
+        if let Some(page) = query.page {
+            params.push(("page".to_string(), page.to_string()));
+        }
+        if let Some(size) = query.size {
             params.push(("size".to_string(), size.to_string()));
         }
 
@@ -467,7 +517,7 @@ impl VeracodeClient {
         query: Option<ApplicationQuery>,
     ) -> Result<ApplicationsResponse, VeracodeError> {
         let endpoint = "/appsec/v1/applications";
-        let query_params = query.as_ref().map(|q| q.to_query_params());
+        let query_params = query.as_ref().map(Vec::from);
 
         let response = self.get(endpoint, query_params.as_deref()).await?;
         let response = Self::handle_response(response).await?;
@@ -506,7 +556,7 @@ impl VeracodeClient {
     /// A `Result` containing the created `Application`.
     pub async fn create_application(
         &self,
-        request: CreateApplicationRequest,
+        request: &CreateApplicationRequest,
     ) -> Result<Application, VeracodeError> {
         let endpoint = "/appsec/v1/applications";
 
@@ -530,7 +580,7 @@ impl VeracodeClient {
     pub async fn update_application(
         &self,
         guid: &str,
-        request: UpdateApplicationRequest,
+        request: &UpdateApplicationRequest,
     ) -> Result<Application, VeracodeError> {
         let endpoint = format!("/appsec/v1/applications/{guid}");
 
@@ -565,7 +615,7 @@ impl VeracodeClient {
     ///
     /// A `Result` containing a `Vec<Application>` of non-compliant applications.
     pub async fn get_non_compliant_applications(&self) -> Result<Vec<Application>, VeracodeError> {
-        let query = ApplicationQuery::new().with_policy_compliance("DID_NOT_PASS".to_string());
+        let query = ApplicationQuery::new().with_policy_compliance("DID_NOT_PASS");
 
         let response = self.get_applications(Some(query)).await?;
 
@@ -589,7 +639,7 @@ impl VeracodeClient {
         &self,
         date: &str,
     ) -> Result<Vec<Application>, VeracodeError> {
-        let query = ApplicationQuery::new().with_modified_after(date.to_string());
+        let query = ApplicationQuery::new().with_modified_after(date);
 
         let response = self.get_applications(Some(query)).await?;
 
@@ -613,7 +663,7 @@ impl VeracodeClient {
         &self,
         name: &str,
     ) -> Result<Vec<Application>, VeracodeError> {
-        let query = ApplicationQuery::new().with_name(name.to_string());
+        let query = ApplicationQuery::new().with_name(name);
 
         let response = self.get_applications(Some(query)).await?;
 
@@ -764,7 +814,7 @@ impl VeracodeClient {
             },
         };
 
-        self.create_application(create_request).await
+        self.create_application(&create_request).await
     }
 
     /// Create application if it doesn't exist, or return existing application (without teams).
@@ -799,8 +849,8 @@ mod tests {
     #[test]
     fn test_query_params() {
         let query = ApplicationQuery::new()
-            .with_name("test_app".to_string())
-            .with_policy_compliance("PASSED".to_string())
+            .with_name("test_app")
+            .with_policy_compliance("PASSED")
             .with_page(1)
             .with_size(50);
 
@@ -814,9 +864,9 @@ mod tests {
     #[test]
     fn test_application_query_builder() {
         let query = ApplicationQuery::new()
-            .with_name("MyApp".to_string())
-            .with_policy_compliance("DID_NOT_PASS".to_string())
-            .with_modified_after("2023-01-01T00:00:00.000Z".to_string())
+            .with_name("MyApp")
+            .with_policy_compliance("DID_NOT_PASS")
+            .with_modified_after("2023-01-01T00:00:00.000Z")
             .with_page(2)
             .with_size(25);
 

@@ -7,8 +7,8 @@ use veracode_platform::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
+        &std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        &std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
 
     let client = VeracodeClient::new(config)?;
@@ -40,7 +40,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
     };
 
-    let app_id = match client.create_application(app_request).await {
+    let app_id = match client.create_application(&app_request).await {
         Ok(app) => {
             println!("✅ Application created successfully:");
             println!("   Application ID: {}", app.guid);
@@ -148,7 +148,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sandbox_id: Some(sandbox_id.clone()),
     };
 
-    match scan_api.upload_file(upload_request).await {
+    match scan_api.upload_file(&upload_request).await {
         Ok(uploaded_file) => {
             println!("✅ File uploaded successfully:");
             println!("   File ID: {}", uploaded_file.file_id);
@@ -193,7 +193,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         include_new_modules: Some(false),
     };
 
-    match scan_api.begin_prescan(prescan_request).await {
+    match scan_api.begin_prescan(&prescan_request).await {
         Ok(()) => {
             println!("✅ Pre-scan started successfully");
 
@@ -247,7 +247,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         scan_previously_selected_modules: None,
                     };
 
-                    match scan_api.begin_scan(scan_request).await {
+                    match scan_api.begin_scan(&scan_request).await {
                         Ok(()) => {
                             println!("✅ Scan started successfully");
 

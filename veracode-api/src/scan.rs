@@ -12,6 +12,12 @@ use std::path::Path;
 
 use crate::{VeracodeClient, VeracodeError};
 
+/// Helper function to efficiently convert XML attribute bytes to string
+/// Avoids unnecessary allocation when possible
+fn attr_to_string(value: &[u8]) -> String {
+    String::from_utf8_lossy(value).into_owned()
+}
+
 /// Represents an uploaded file in a sandbox
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadedFile {
@@ -180,6 +186,18 @@ pub struct BeginScanRequest {
     pub scan_previously_selected_modules: Option<bool>,
 }
 
+// Trait implementations for memory optimization
+impl From<&UploadFileRequest> for UploadLargeFileRequest {
+    fn from(request: &UploadFileRequest) -> Self {
+        UploadLargeFileRequest {
+            app_id: request.app_id.clone(),
+            file_path: request.file_path.clone(),
+            filename: request.save_as.clone(),
+            sandbox_id: request.sandbox_id.clone(),
+        }
+    }
+}
+
 /// Scan specific error types
 #[derive(Debug)]
 pub enum ScanError {
@@ -289,10 +307,13 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
-    pub async fn upload_file(&self, request: UploadFileRequest) -> Result<UploadedFile, ScanError> {
+    pub async fn upload_file(
+        &self,
+        request: &UploadFileRequest,
+    ) -> Result<UploadedFile, ScanError> {
         // Validate file exists
         if !Path::new(&request.file_path).exists() {
-            return Err(ScanError::FileNotFound(request.file_path));
+            return Err(ScanError::FileNotFound(request.file_path.clone()));
         }
 
         let endpoint = "/api/5.0/uploadfile.do";
@@ -556,11 +577,11 @@ impl ScanApi {
     /// A `Result` containing the uploaded file information or an error.
     pub async fn upload_file_smart(
         &self,
-        request: UploadFileRequest,
+        request: &UploadFileRequest,
     ) -> Result<UploadedFile, ScanError> {
         // Check if file exists
         if !Path::new(&request.file_path).exists() {
-            return Err(ScanError::FileNotFound(request.file_path));
+            return Err(ScanError::FileNotFound(request.file_path.clone()));
         }
 
         // Get file size to determine upload method
@@ -571,13 +592,8 @@ impl ScanApi {
         const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024; // 100MB
 
         if file_size > LARGE_FILE_THRESHOLD {
-            // Convert to large file request format
-            let large_request = UploadLargeFileRequest {
-                app_id: request.app_id.clone(),
-                file_path: request.file_path.clone(),
-                filename: request.save_as.clone(),
-                sandbox_id: request.sandbox_id.clone(),
-            };
+            // Convert to large file request format using From trait
+            let large_request = UploadLargeFileRequest::from(request);
 
             // Try large file upload first, fall back to regular upload if needed
             match self.upload_large_file(large_request).await {
@@ -603,7 +619,7 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
-    pub async fn begin_prescan(&self, request: BeginPreScanRequest) -> Result<(), ScanError> {
+    pub async fn begin_prescan(&self, request: &BeginPreScanRequest) -> Result<(), ScanError> {
         let endpoint = "/api/5.0/beginprescan.do";
 
         // Build query parameters like Java implementation
@@ -730,7 +746,7 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
-    pub async fn begin_scan(&self, request: BeginScanRequest) -> Result<(), ScanError> {
+    pub async fn begin_scan(&self, request: &BeginScanRequest) -> Result<(), ScanError> {
         let endpoint = "/api/5.0/beginscan.do";
 
         // Build query parameters like Java implementation
@@ -1053,7 +1069,7 @@ impl ScanApi {
                         // Extract file_id from attributes
                         for attr in e.attributes().flatten() {
                             if attr.key.as_ref() == b"file_id" {
-                                file_id = Some(String::from_utf8_lossy(&attr.value).to_string());
+                                file_id = Some(attr_to_string(&attr.value));
                             }
                         }
                     }
@@ -1109,8 +1125,7 @@ impl ScanApi {
                             // Extract build_id from attributes
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"build_id" {
-                                    build_id =
-                                        Some(String::from_utf8_lossy(&attr.value).to_string());
+                                    build_id = Some(attr_to_string(&attr.value));
                                 }
                             }
                         }
@@ -1220,8 +1235,7 @@ impl ScanApi {
                             // Extract build_id from prescanresults attributes if present
                             for attr in e.attributes().flatten() {
                                 if attr.key.as_ref() == b"build_id" {
-                                    build_id =
-                                        Some(String::from_utf8_lossy(&attr.value).to_string());
+                                    build_id = Some(attr_to_string(&attr.value));
                                 }
                             }
                         }
@@ -1238,17 +1252,9 @@ impl ScanApi {
 
                             for attr in e.attributes().flatten() {
                                 match attr.key.as_ref() {
-                                    b"id" => {
-                                        module.id = String::from_utf8_lossy(&attr.value).to_string()
-                                    }
-                                    b"name" => {
-                                        module.name =
-                                            String::from_utf8_lossy(&attr.value).to_string()
-                                    }
-                                    b"type" => {
-                                        module.module_type =
-                                            String::from_utf8_lossy(&attr.value).to_string()
-                                    }
+                                    b"id" => module.id = attr_to_string(&attr.value),
+                                    b"name" => module.name = attr_to_string(&attr.value),
+                                    b"type" => module.module_type = attr_to_string(&attr.value),
                                     b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
                                     b"selected" => module.selected = attr.value.as_ref() == b"true",
                                     b"has_fatal_errors" => {
@@ -1263,8 +1269,7 @@ impl ScanApi {
                                         }
                                     }
                                     b"platform" => {
-                                        module.platform =
-                                            Some(String::from_utf8_lossy(&attr.value).to_string())
+                                        module.platform = Some(attr_to_string(&attr.value))
                                     }
                                     _ => {}
                                 }
@@ -1330,22 +1335,14 @@ impl ScanApi {
 
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"file_id" => {
-                                    file.file_id = String::from_utf8_lossy(&attr.value).to_string()
-                                }
-                                b"file_name" => {
-                                    file.file_name =
-                                        String::from_utf8_lossy(&attr.value).to_string()
-                                }
+                                b"file_id" => file.file_id = attr_to_string(&attr.value),
+                                b"file_name" => file.file_name = attr_to_string(&attr.value),
                                 b"file_size" => {
                                     if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
                                         file.file_size = size_str.parse().unwrap_or(0);
                                     }
                                 }
-                                b"file_status" => {
-                                    file.file_status =
-                                        String::from_utf8_lossy(&attr.value).to_string()
-                                }
+                                b"file_status" => file.file_status = attr_to_string(&attr.value),
                                 b"md5" => {
                                     file.md5 =
                                         Some(String::from_utf8_lossy(&attr.value).to_string())
@@ -1402,20 +1399,16 @@ impl ScanApi {
                             // Parse buildinfo attributes
                             for attr in e.attributes().flatten() {
                                 match attr.key.as_ref() {
-                                    b"build_id" => {
-                                        scan_info.build_id =
-                                            String::from_utf8_lossy(&attr.value).to_string()
-                                    }
+                                    b"build_id" => scan_info.build_id = attr_to_string(&attr.value),
                                     b"analysis_unit" => {
                                         // Fallback status from buildinfo (older API format)
                                         if scan_info.status == "Unknown" {
-                                            scan_info.status =
-                                                String::from_utf8_lossy(&attr.value).to_string();
+                                            scan_info.status = attr_to_string(&attr.value);
                                         }
                                     }
                                     b"analysis_unit_id" => {
                                         scan_info.analysis_unit_id =
-                                            Some(String::from_utf8_lossy(&attr.value).to_string())
+                                            Some(attr_to_string(&attr.value))
                                     }
                                     b"scan_progress_percentage" => {
                                         if let Ok(progress_str) =
@@ -1445,12 +1438,10 @@ impl ScanApi {
                                 match attr.key.as_ref() {
                                     b"status" => {
                                         // Primary status source from analysis_unit
-                                        scan_info.status =
-                                            String::from_utf8_lossy(&attr.value).to_string();
+                                        scan_info.status = attr_to_string(&attr.value);
                                     }
                                     b"analysis_type" => {
-                                        scan_info.scan_type =
-                                            String::from_utf8_lossy(&attr.value).to_string();
+                                        scan_info.scan_type = attr_to_string(&attr.value);
                                     }
                                     _ => {}
                                 }
@@ -1470,12 +1461,10 @@ impl ScanApi {
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
                                 b"status" => {
-                                    scan_info.status =
-                                        String::from_utf8_lossy(&attr.value).to_string();
+                                    scan_info.status = attr_to_string(&attr.value);
                                 }
                                 b"analysis_type" => {
-                                    scan_info.scan_type =
-                                        String::from_utf8_lossy(&attr.value).to_string();
+                                    scan_info.scan_type = attr_to_string(&attr.value);
                                 }
                                 _ => {}
                             }
@@ -1522,7 +1511,7 @@ impl ScanApi {
             sandbox_id: Some(sandbox_id.to_string()),
         };
 
-        self.upload_file(request).await
+        self.upload_file(&request).await
     }
 
     /// Upload a file to an application (non-sandbox)
@@ -1547,7 +1536,7 @@ impl ScanApi {
             sandbox_id: None,
         };
 
-        self.upload_file(request).await
+        self.upload_file(&request).await
     }
 
     /// Upload a large file to a sandbox using uploadlargefile.do
@@ -1664,7 +1653,7 @@ impl ScanApi {
             include_new_modules: Some(true),
         };
 
-        self.begin_prescan(request).await
+        self.begin_prescan(&request).await
     }
 
     /// Begin a simple scan for a sandbox with all modules
@@ -1691,7 +1680,7 @@ impl ScanApi {
             scan_previously_selected_modules: None,
         };
 
-        self.begin_scan(request).await
+        self.begin_scan(&request).await
     }
 
     /// Complete workflow: upload file, pre-scan, and begin scan for sandbox
@@ -1857,7 +1846,7 @@ mod tests {
         use crate::{VeracodeClient, VeracodeConfig};
 
         async fn _test_delete_methods() -> Result<(), Box<dyn std::error::Error>> {
-            let config = VeracodeConfig::new("test".to_string(), "test".to_string());
+            let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
             let api = client.scan_api();
 
@@ -1924,7 +1913,7 @@ mod tests {
     #[tokio::test]
     async fn test_large_file_upload_method_signatures() {
         async fn _test_large_file_methods() -> Result<(), Box<dyn std::error::Error>> {
-            let config = VeracodeConfig::new("test".to_string(), "test".to_string());
+            let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
             let api = client.scan_api();
 

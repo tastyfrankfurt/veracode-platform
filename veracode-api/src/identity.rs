@@ -409,18 +409,25 @@ impl UserQuery {
 
     /// Convert to query parameters
     pub fn to_query_params(&self) -> Vec<(String, String)> {
+        Vec::from(self) // Delegate to trait
+    }
+}
+
+// Trait implementations for memory optimization
+impl From<&UserQuery> for Vec<(String, String)> {
+    fn from(query: &UserQuery) -> Self {
         let mut params = Vec::new();
 
-        if let Some(ref username) = self.user_name {
-            params.push(("user_name".to_string(), username.clone()));
+        if let Some(ref username) = query.user_name {
+            params.push(("user_name".to_string(), username.clone())); // Still clone for borrowing
         }
-        if let Some(ref email) = self.email_address {
+        if let Some(ref email) = query.email_address {
             params.push(("email_address".to_string(), email.clone()));
         }
-        if let Some(ref role_id) = self.role_id {
+        if let Some(ref role_id) = query.role_id {
             params.push(("role_id".to_string(), role_id.clone()));
         }
-        if let Some(ref user_type) = self.user_type {
+        if let Some(ref user_type) = query.user_type {
             let type_str = match user_type {
                 UserType::Human => "HUMAN",
                 UserType::ApiService => "API",
@@ -429,13 +436,49 @@ impl UserQuery {
             };
             params.push(("user_type".to_string(), type_str.to_string()));
         }
-        if let Some(ref login_status) = self.login_status {
+        if let Some(ref login_status) = query.login_status {
             params.push(("login_status".to_string(), login_status.clone()));
         }
-        if let Some(page) = self.page {
+        if let Some(page) = query.page {
             params.push(("page".to_string(), page.to_string()));
         }
-        if let Some(size) = self.size {
+        if let Some(size) = query.size {
+            params.push(("size".to_string(), size.to_string()));
+        }
+
+        params
+    }
+}
+
+impl From<UserQuery> for Vec<(String, String)> {
+    fn from(query: UserQuery) -> Self {
+        let mut params = Vec::new();
+
+        if let Some(username) = query.user_name {
+            params.push(("user_name".to_string(), username)); // MOVE - no clone!
+        }
+        if let Some(email) = query.email_address {
+            params.push(("email_address".to_string(), email)); // MOVE - no clone!
+        }
+        if let Some(role_id) = query.role_id {
+            params.push(("role_id".to_string(), role_id)); // MOVE - no clone!
+        }
+        if let Some(user_type) = query.user_type {
+            let type_str = match user_type {
+                UserType::Human => "HUMAN",
+                UserType::ApiService => "API",
+                UserType::Saml => "SAML",
+                UserType::Vosp => "VOSP",
+            };
+            params.push(("user_type".to_string(), type_str.to_string()));
+        }
+        if let Some(login_status) = query.login_status {
+            params.push(("login_status".to_string(), login_status)); // MOVE - no clone!
+        }
+        if let Some(page) = query.page {
+            params.push(("page".to_string(), page.to_string()));
+        }
+        if let Some(size) = query.size {
             params.push(("size".to_string(), size.to_string()));
         }
 
@@ -521,7 +564,7 @@ impl<'a> IdentityApi<'a> {
     /// A `Result` containing a list of users or an error
     pub async fn list_users(&self, query: Option<UserQuery>) -> Result<Vec<User>, IdentityError> {
         let endpoint = "/api/authn/v2/users";
-        let query_params = query.as_ref().map(|q| q.to_query_params());
+        let query_params = query.as_ref().map(Vec::from);
 
         let response = self.client.get(endpoint, query_params.as_deref()).await?;
 
@@ -1434,7 +1477,7 @@ mod tests {
             .with_user_type(UserType::Human)
             .with_pagination(1, 50);
 
-        let params = query.to_query_params();
+        let params: Vec<_> = query.into();
         assert_eq!(params.len(), 5); // username, email, user_type, page, size
         assert!(params.contains(&("user_name".to_string(), "testuser".to_string())));
         assert!(params.contains(&("email_address".to_string(), "test@example.com".to_string())));

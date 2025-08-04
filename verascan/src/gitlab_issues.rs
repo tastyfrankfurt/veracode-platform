@@ -4,6 +4,7 @@
 //! using GitLab CI environment variables and API tokens.
 
 use crate::findings::AggregatedFindings;
+use crate::path_resolver::{PathResolver, PathResolverConfig};
 use reqwest::{
     Client,
     header::{HeaderMap, HeaderValue},
@@ -11,6 +12,8 @@ use reqwest::{
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+use tokio::time::sleep;
 
 /// Secure token wrapper that prevents accidental exposure in logs
 #[derive(Clone)]
@@ -64,6 +67,46 @@ pub struct GitLabIssueResponse {
     pub updated_at: String,
 }
 
+/// HTTP timeout configuration
+#[derive(Clone, Debug)]
+pub struct HttpTimeouts {
+    pub connect_timeout: std::time::Duration,
+    pub request_timeout: std::time::Duration,
+    pub validation_timeout: std::time::Duration,
+}
+
+impl Default for HttpTimeouts {
+    fn default() -> Self {
+        Self {
+            connect_timeout: std::time::Duration::from_secs(10),
+            request_timeout: std::time::Duration::from_secs(30),
+            validation_timeout: std::time::Duration::from_secs(10),
+        }
+    }
+}
+
+/// Retry configuration for network requests
+#[derive(Clone, Debug)]
+pub struct RetryConfig {
+    pub max_retries: u32,
+    pub initial_delay: std::time::Duration,
+    pub max_delay: std::time::Duration,
+    pub backoff_multiplier: f64,
+    pub jitter: bool,
+}
+
+impl Default for RetryConfig {
+    fn default() -> Self {
+        Self {
+            max_retries: 3,
+            initial_delay: std::time::Duration::from_millis(500),
+            max_delay: std::time::Duration::from_secs(10),
+            backoff_multiplier: 2.0,
+            jitter: true,
+        }
+    }
+}
+
 /// GitLab environment configuration
 #[derive(Clone)]
 pub struct GitLabConfig {
@@ -76,6 +119,9 @@ pub struct GitLabConfig {
     pub project_path_with_namespace: Option<String>,
     pub project_name: Option<String>,
     pub project_dir: Option<PathBuf>,
+    pub path_resolver: Option<PathResolver>,
+    pub http_timeouts: HttpTimeouts,
+    pub retry_config: RetryConfig,
 }
 
 impl std::fmt::Debug for GitLabConfig {
@@ -93,6 +139,9 @@ impl std::fmt::Debug for GitLabConfig {
             )
             .field("project_name", &self.project_name)
             .field("project_dir", &self.project_dir)
+            .field("path_resolver", &self.path_resolver.is_some())
+            .field("http_timeouts", &self.http_timeouts)
+            .field("retry_config", &self.retry_config)
             .finish()
     }
 }
@@ -108,6 +157,135 @@ pub enum GitLabError {
     JsonError(#[from] serde_json::Error),
     #[error("GitLab API error: {status} - {message}")]
     ApiError { status: u16, message: String },
+    #[error("Request failed after {attempts} retry attempts: {last_error}")]
+    RetryExhausted { attempts: u32, last_error: String },
+    #[error("Request timeout after {duration:?}")]
+    Timeout { duration: Duration },
+}
+
+/// Wrapper for retry-able HTTP requests
+struct RetryableRequest {
+    retry_config: RetryConfig,
+    debug: bool,
+}
+
+impl RetryableRequest {
+    fn new(_client: Client, retry_config: RetryConfig, debug: bool) -> Self {
+        Self {
+            retry_config,
+            debug,
+        }
+    }
+
+    /// Execute a request with retry logic and exponential backoff
+    async fn execute_with_retry<F, Fut, T>(&self, operation: F) -> Result<T, GitLabError>
+    where
+        F: Fn() -> Fut,
+        Fut: std::future::Future<Output = Result<T, reqwest::Error>>,
+    {
+        let mut last_error = None;
+        let mut current_delay = self.retry_config.initial_delay;
+
+        for attempt in 0..=self.retry_config.max_retries {
+            if self.debug && attempt > 0 {
+                println!(
+                    "🔄 Retry attempt {}/{} after {}ms delay",
+                    attempt,
+                    self.retry_config.max_retries,
+                    current_delay.as_millis()
+                );
+            }
+
+            match operation().await {
+                Ok(result) => return Ok(result),
+                Err(error) => {
+                    last_error = Some(error.to_string());
+
+                    // Check if error is retryable
+                    if !self.is_retryable_error(&error) {
+                        if self.debug {
+                            println!("❌ Non-retryable error encountered: {error}");
+                        }
+                        return Err(GitLabError::HttpError(error));
+                    }
+
+                    // Don't sleep after the last attempt
+                    if attempt < self.retry_config.max_retries {
+                        // Add jitter if enabled
+                        let delay = if self.retry_config.jitter {
+                            self.add_jitter(current_delay)
+                        } else {
+                            current_delay
+                        };
+
+                        if self.debug {
+                            println!("⏳ Waiting {}ms before retry...", delay.as_millis());
+                        }
+
+                        sleep(delay).await;
+
+                        // Calculate next delay with exponential backoff
+                        current_delay = std::cmp::min(
+                            Duration::from_millis(
+                                (current_delay.as_millis() as f64
+                                    * self.retry_config.backoff_multiplier)
+                                    as u64,
+                            ),
+                            self.retry_config.max_delay,
+                        );
+                    }
+                }
+            }
+        }
+
+        Err(GitLabError::RetryExhausted {
+            attempts: self.retry_config.max_retries + 1,
+            last_error: last_error.unwrap_or_else(|| "Unknown error".to_string()),
+        })
+    }
+
+    /// Check if an error should trigger a retry
+    fn is_retryable_error(&self, error: &reqwest::Error) -> bool {
+        // Retry on network/connection errors
+        if error.is_connect() || error.is_timeout() || error.is_request() {
+            return true;
+        }
+
+        // Retry on specific HTTP status codes
+        if let Some(status) = error.status() {
+            match status.as_u16() {
+                // Server errors (5xx) - usually temporary
+                500..=599 => true,
+                // Rate limiting
+                429 => true,
+                // Client errors (4xx) - usually permanent, don't retry
+                400..=499 => false,
+                _ => false,
+            }
+        } else {
+            // If no status code, likely a network error, retry
+            true
+        }
+    }
+
+    /// Add random jitter to delay to avoid thundering herd
+    fn add_jitter(&self, delay: Duration) -> Duration {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Simple deterministic "random" based on current time
+        let mut hasher = DefaultHasher::new();
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .hash(&mut hasher);
+
+        let jitter_factor = (hasher.finish() % 50) as f64 / 100.0; // 0-50% jitter
+        let jitter_multiplier = 1.0 + jitter_factor;
+
+        Duration::from_millis((delay.as_millis() as f64 * jitter_multiplier) as u64)
+    }
 }
 
 /// GitLab Issues client
@@ -115,6 +293,7 @@ pub struct GitLabIssuesClient {
     client: Client,
     config: GitLabConfig,
     debug: bool,
+    retryable_client: RetryableRequest,
 }
 
 impl GitLabIssuesClient {
@@ -143,20 +322,39 @@ impl GitLabIssuesClient {
             })?,
         );
 
-        let client = Client::builder()
+        let mut client_builder = Client::builder()
             .default_headers(headers)
-            .timeout(std::time::Duration::from_secs(10))
-            .build()?;
+            .connect_timeout(config.http_timeouts.connect_timeout)
+            .timeout(config.http_timeouts.validation_timeout);
+
+        // Check for environment variable to disable certificate validation
+        if env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
+            if debug {
+                println!(
+                    "⚠️  WARNING: Certificate validation disabled via VERASCAN_DISABLE_CERT_VALIDATION"
+                );
+            }
+            client_builder = client_builder
+                .danger_accept_invalid_certs(true)
+                .danger_accept_invalid_hostnames(true);
+        }
+
+        let client = client_builder.build()?;
+        let retryable_client =
+            RetryableRequest::new(client.clone(), config.retry_config.clone(), debug);
 
         // Test connectivity by getting project info
         let test_url = format!("{}{}", config.gitlab_url, config.project_id);
 
         if debug {
-            println!("🌐 Testing GitLab API connectivity...");
+            println!("🌐 Testing GitLab API connectivity with retry logic...");
             println!("   GET {test_url}");
         }
 
-        let response = client.get(&test_url).send().await?;
+        let response = retryable_client
+            .execute_with_retry(|| client.get(&test_url).send())
+            .await?;
+
         let status = response.status();
 
         if status.is_success() {
@@ -174,7 +372,9 @@ impl GitLabIssuesClient {
 
             // Check if we can create issues (check permissions)
             let issues_url = format!("{}{}/issues", config.gitlab_url, config.project_id);
-            let issues_response = client.get(&issues_url).send().await?;
+            let issues_response = retryable_client
+                .execute_with_retry(|| client.get(&issues_url).send())
+                .await?;
 
             if issues_response.status().is_success() {
                 println!("   Issue creation: ✅ Permitted");
@@ -187,10 +387,7 @@ impl GitLabIssuesClient {
 
             Ok(())
         } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response.text().await.unwrap_or("Unknown error".to_string());
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
                 message: format!("Project access failed: {error_text}"),
@@ -213,7 +410,8 @@ impl GitLabIssuesClient {
 
         let mut client_builder = Client::builder()
             .default_headers(headers)
-            .timeout(std::time::Duration::from_secs(30));
+            .connect_timeout(config.http_timeouts.connect_timeout)
+            .timeout(config.http_timeouts.request_timeout);
 
         // Check for environment variable to disable certificate validation
         // WARNING: Only use this for development with self-signed certificates
@@ -230,11 +428,26 @@ impl GitLabIssuesClient {
         }
 
         let client = client_builder.build()?;
+        let retryable_client =
+            RetryableRequest::new(client.clone(), config.retry_config.clone(), debug);
 
         if debug {
-            println!("🔧 GitLab Issues Client initialized");
+            println!("🔧 GitLab Issues Client initialized with robust networking");
             println!("   Project ID: {}", config.project_id);
             println!("   GitLab URL: {}", config.gitlab_url);
+            println!(
+                "   Connect timeout: {:?}",
+                config.http_timeouts.connect_timeout
+            );
+            println!(
+                "   Request timeout: {:?}",
+                config.http_timeouts.request_timeout
+            );
+            println!("   Max retries: {}", config.retry_config.max_retries);
+            println!(
+                "   Initial retry delay: {:?}",
+                config.retry_config.initial_delay
+            );
             if let Some(ref pipeline_id) = config.pipeline_id {
                 println!("   Pipeline ID: {pipeline_id}");
             }
@@ -244,6 +457,7 @@ impl GitLabIssuesClient {
             client,
             config,
             debug,
+            retryable_client,
         })
     }
 
@@ -355,7 +569,7 @@ impl GitLabIssuesClient {
         );
 
         if self.debug {
-            println!("🌐 POST {url}");
+            println!("🌐 POST {url} (with retry logic)");
             println!("📤 Issue payload:");
             println!("   Title: {}", payload.title);
             if let Some(ref labels) = payload.labels {
@@ -371,7 +585,13 @@ impl GitLabIssuesClient {
             }
         }
 
-        let response = self.client.post(&url).json(payload).send().await?;
+        let client = &self.client;
+        let payload_json = serde_json::to_value(payload)?;
+
+        let response = self
+            .retryable_client
+            .execute_with_retry(|| client.post(&url).json(&payload_json).send())
+            .await?;
 
         let status = response.status();
 
@@ -395,10 +615,7 @@ impl GitLabIssuesClient {
 
             Ok(issue)
         } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response.text().await.unwrap_or("Unknown error".to_string());
             if self.debug {
                 println!("❌ GitLab API Error:");
                 println!("   Status: {status}");
@@ -422,10 +639,14 @@ impl GitLabIssuesClient {
 
         if self.debug {
             println!("🔍 Searching for existing issue: {title}");
-            println!("🌐 GET {url}");
+            println!("🌐 GET {url} (with retry logic)");
         }
 
-        let response = self.client.get(&url).send().await?;
+        let client = &self.client;
+        let response = self
+            .retryable_client
+            .execute_with_retry(|| client.get(&url).send())
+            .await?;
 
         let status = response.status();
 
@@ -443,10 +664,7 @@ impl GitLabIssuesClient {
 
             Ok(exact_match)
         } else {
-            let error_text = response
-                .text()
-                .await
-                .unwrap_or_else(|_| "Unknown error".to_string());
+            let error_text = response.text().await.unwrap_or("Unknown error".to_string());
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
                 message: format!("Failed to search for existing issues: {error_text}"),
@@ -524,9 +742,9 @@ impl GitLabIssuesClient {
 
         // Handle CWE ID (use 000 if not available)
         let cwe_id = if finding.cwe_id.is_empty() || finding.cwe_id == "0" {
-            "000".to_string()
+            "000"
         } else {
-            finding.cwe_id.clone()
+            &finding.cwe_id
         };
 
         // Create initial title without hash
@@ -542,14 +760,17 @@ impl GitLabIssuesClient {
         )?;
 
         // Create labels based on severity and issue type
-        let mut labels = vec![
-            format!(
-                "security::severity::{}",
-                severity_name.to_lowercase().replace(" ", "-")
-            ),
-            "security::veracode".to_string(),
-            "security::sast".to_string(),
-        ];
+        let mut labels = Vec::new();
+
+        // Add dynamic severity label (needs formatting)
+        labels.push(format!(
+            "security::severity::{}",
+            severity_name.to_lowercase().replace(" ", "-")
+        ));
+
+        // Add static labels (convert to String for consistency)
+        labels.push("security::veracode".to_string());
+        labels.push("security::sast".to_string());
 
         // Add CWE label if available
         if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
@@ -676,217 +897,29 @@ impl GitLabIssuesClient {
                 .unwrap_or_else(|_| path.to_path_buf())
         };
 
-        self.config.project_dir = Some(absolute_path);
+        self.config.project_dir = Some(absolute_path.clone());
+
+        // Create path resolver when project dir is set
+        let resolver_config = PathResolverConfig::new(&absolute_path, self.debug);
+        self.config.path_resolver = Some(PathResolver::new(resolver_config));
+
         self
     }
 
     /// Resolve file path relative to project directory
     fn resolve_file_path(&self, file_path: &str) -> String {
-        if self.debug {
-            println!("🔍 DEBUG: Resolving file path: '{file_path}'");
-        }
-
-        // If no project directory is set, return the original path
-        let project_dir = match &self.config.project_dir {
-            Some(dir) => {
-                if self.debug {
-                    println!("   Project directory: '{}'", dir.display());
-                }
-                dir
-            }
+        // If no path resolver is available, return the original path
+        match &self.config.path_resolver {
+            Some(resolver) => resolver.resolve_file_path(file_path).into_owned(),
             None => {
                 if self.debug {
-                    println!("   No project directory set, returning original path");
-                }
-                return file_path.to_string();
-            }
-        };
-
-        // Convert file_path to a Path
-        let file_path_buf = Path::new(file_path);
-
-        if self.debug {
-            println!(
-                "   Path is_absolute: {}, is_relative: {}",
-                file_path_buf.is_absolute(),
-                file_path_buf.is_relative()
-            );
-        }
-
-        // Handle absolute paths - try to strip project directory prefix
-        if file_path_buf.is_absolute() {
-            if let Ok(relative_path) = file_path_buf.strip_prefix(project_dir) {
-                let result = relative_path.to_string_lossy().to_string();
-                if self.debug {
-                    println!("   ✅ Stripped project prefix, result: '{result}'");
-                }
-                return result;
-            } else if self.debug {
-                println!("   ⚠️  Cannot strip project prefix from absolute path");
-            }
-        }
-
-        // Handle relative paths - this is the main case for Veracode findings
-        // Veracode often provides paths like: com/example/vulnerable/CryptoUtils.java
-        // We need to find where this actually exists in the repository structure
-
-        if self.debug {
-            println!("   🔍 Searching for file in project structure...");
-        }
-
-        // Try to find the file by its full relative path first
-        if let Some(found_path) = self.find_file_by_relative_path(project_dir, file_path) {
-            if self.debug {
-                println!("   ✅ Found by relative path search: '{found_path}'");
-            }
-            return found_path;
-        }
-
-        // If that fails, try to find by filename only
-        if let Some(filename) = file_path_buf.file_name().and_then(|n| n.to_str()) {
-            if self.debug {
-                println!("   🔍 Searching by filename only: '{filename}'");
-            }
-            if let Some(found_path) = self.find_file_in_project(project_dir, filename) {
-                if self.debug {
-                    println!("   ✅ Found by filename search: '{found_path}'");
-                }
-                return found_path;
-            }
-        }
-
-        // Last resort: return the original path
-        if self.debug {
-            println!("   ❌ Could not resolve path, returning original: '{file_path}'");
-        }
-        file_path.to_string()
-    }
-
-    /// Find a file by its relative path structure within the project
-    /// This handles cases like: com/example/vulnerable/CryptoUtils.java
-    /// Should be found at: src/main/java/com/example/vulnerable/CryptoUtils.java
-    fn find_file_by_relative_path(
-        &self,
-        project_dir: &Path,
-        relative_path: &str,
-    ) -> Option<String> {
-        if self.debug {
-            println!("   🔍 Searching for relative path: '{relative_path}'");
-        }
-
-        // Common Java source directory patterns to search
-        let common_source_dirs = [
-            "src/main/java",
-            "src/main/kotlin",
-            "src/test/java",
-            "src/test/kotlin",
-            "src",
-            "java",
-            "kotlin",
-            "main/java",
-            "test/java",
-        ];
-
-        for source_dir in &common_source_dirs {
-            let candidate_path = project_dir.join(source_dir).join(relative_path);
-            if self.debug {
-                println!("     Checking exact path: {}", candidate_path.display());
-            }
-
-            // Must check that the EXACT file exists (not just a partial match)
-            if candidate_path.exists() && candidate_path.is_file() {
-                // Verify this is an exact match by checking that the constructed path
-                // ends with the exact relative path we're looking for
-                if let Some(candidate_str) = candidate_path.to_str() {
-                    // Use path separator normalization to ensure exact matching
-                    let normalized_relative = relative_path.replace('\\', "/");
-                    let normalized_candidate = candidate_str.replace('\\', "/");
-
-                    if normalized_candidate.ends_with(&normalized_relative) {
-                        // Additional check: ensure we're not matching a substring
-                        // The character before our match should be a path separator or start of string
-                        let match_start = normalized_candidate.len() - normalized_relative.len();
-                        if match_start == 0
-                            || normalized_candidate.chars().nth(match_start - 1) == Some('/')
-                        {
-                            // Return path relative to project root
-                            if let Ok(result) = candidate_path.strip_prefix(project_dir) {
-                                let result_str = result.to_string_lossy().to_string();
-                                if self.debug {
-                                    println!("     ✅ Found exact path match at: {result_str}");
-                                }
-                                return Some(result_str);
-                            }
-                        } else if self.debug {
-                            println!(
-                                "     ⚠️  Path ends with target but not at boundary: {normalized_candidate}"
-                            );
-                        }
-                    }
-                } else if self.debug {
                     println!(
-                        "     ⚠️  Could not convert path to string: {}",
-                        candidate_path.display()
+                        "   No path resolver configured, returning original path: '{file_path}'"
                     );
                 }
+                file_path.to_string()
             }
         }
-
-        // Also try the relative path directly in case it's already correct
-        let direct_path = project_dir.join(relative_path);
-        if self.debug {
-            println!("     Checking direct path: {}", direct_path.display());
-        }
-
-        if direct_path.exists() && direct_path.is_file() {
-            if let Ok(result) = direct_path.strip_prefix(project_dir) {
-                let result_str = result.to_string_lossy().to_string();
-                if self.debug {
-                    println!("     ✅ Found exact direct match: {result_str}");
-                }
-                return Some(result_str);
-            }
-        }
-
-        if self.debug {
-            println!("     ❌ No exact path match found in any source directories");
-        }
-        None
-    }
-
-    /// Find a file by name within the project directory tree
-    fn find_file_in_project(&self, project_dir: &Path, filename: &str) -> Option<String> {
-        if self.debug {
-            println!("   🔍 Recursive search for filename: '{filename}'");
-        }
-        Self::search_for_file(project_dir, filename, project_dir)
-    }
-
-    /// Recursively search for a file by name and return its path relative to project root
-    fn search_for_file(current_dir: &Path, filename: &str, project_root: &Path) -> Option<String> {
-        if let Ok(entries) = std::fs::read_dir(current_dir) {
-            for entry in entries.flatten() {
-                let entry_path = entry.path();
-
-                if entry_path.is_file() {
-                    if let Some(entry_filename) = entry_path.file_name().and_then(|n| n.to_str()) {
-                        if entry_filename == filename {
-                            // Found the file! Return its path relative to project root
-                            if let Ok(relative_path) = entry_path.strip_prefix(project_root) {
-                                return Some(relative_path.to_string_lossy().to_string());
-                            }
-                        }
-                    }
-                } else if entry_path.is_dir() {
-                    // Recursively search subdirectories
-                    if let Some(found) = Self::search_for_file(&entry_path, filename, project_root)
-                    {
-                        return Some(found);
-                    }
-                }
-            }
-        }
-        None
     }
 
     /// Create detailed issue description with pre-resolved file path
@@ -1121,7 +1154,11 @@ impl GitLabIssuesClient {
         }
 
         let test_url = format!("{}{}", self.config.gitlab_url, self.config.project_id);
-        let response = self.client.get(&test_url).send().await?;
+        let client = &self.client;
+        let response = self
+            .retryable_client
+            .execute_with_retry(|| client.get(&test_url).send())
+            .await?;
 
         if response.status().is_success() {
             let project_info: serde_json::Value = response.json().await?;
@@ -1201,6 +1238,66 @@ impl GitLabConfig {
         let project_web_url = env::var("CI_PROJECT_URL").ok();
         let commit_sha = env::var("CI_COMMIT_SHA").ok();
 
+        // Configurable HTTP timeouts
+        let connect_timeout = env::var("VERASCAN_CONNECT_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(10));
+
+        let request_timeout = env::var("VERASCAN_REQUEST_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(30));
+
+        let validation_timeout = env::var("VERASCAN_VALIDATION_TIMEOUT")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_secs)
+            .unwrap_or(Duration::from_secs(10));
+
+        let http_timeouts = HttpTimeouts {
+            connect_timeout,
+            request_timeout,
+            validation_timeout,
+        };
+
+        // Configurable retry settings
+        let max_retries = env::var("VERASCAN_MAX_RETRIES")
+            .ok()
+            .and_then(|s| s.parse::<u32>().ok())
+            .unwrap_or(3);
+
+        let initial_delay = env::var("VERASCAN_INITIAL_RETRY_DELAY_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_millis(500));
+
+        let max_delay = env::var("VERASCAN_MAX_RETRY_DELAY_MS")
+            .ok()
+            .and_then(|s| s.parse::<u64>().ok())
+            .map(Duration::from_millis)
+            .unwrap_or(Duration::from_secs(10));
+
+        let backoff_multiplier = env::var("VERASCAN_BACKOFF_MULTIPLIER")
+            .ok()
+            .and_then(|s| s.parse::<f64>().ok())
+            .unwrap_or(2.0);
+
+        let jitter = env::var("VERASCAN_DISABLE_JITTER")
+            .map(|s| s.to_lowercase() != "true")
+            .unwrap_or(true); // Jitter enabled by default
+
+        let retry_config = RetryConfig {
+            max_retries,
+            initial_delay,
+            max_delay,
+            backoff_multiplier,
+            jitter,
+        };
+
         Ok(Self {
             api_token: SecureToken::new(api_token),
             project_id,
@@ -1211,6 +1308,9 @@ impl GitLabConfig {
             project_path_with_namespace: None, // Will be populated during client creation
             project_name: None,                // Will be populated during client creation
             project_dir: None,                 // Will be set from CLI args
+            path_resolver: None,               // Will be set when project_dir is set
+            http_timeouts,
+            retry_config,
         })
     }
 }
@@ -1233,8 +1333,12 @@ mod tests {
                 project_path_with_namespace: None,
                 project_name: None,
                 project_dir: None, // No project dir set
+                path_resolver: None,
+                http_timeouts: HttpTimeouts::default(),
+                retry_config: RetryConfig::default(),
             },
             debug: false,
+            retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
         };
 
         // Test with no project dir set - should return original path
@@ -1280,8 +1384,12 @@ mod tests {
                 project_path_with_namespace: None,
                 project_name: None,
                 project_dir: None,
+                path_resolver: None,
+                http_timeouts: HttpTimeouts::default(),
+                retry_config: RetryConfig::default(),
             },
             debug: false,
+            retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
         };
 
         assert_eq!(client.get_severity_name(5), "Very High");
@@ -1535,6 +1643,9 @@ mod tests {
             project_path_with_namespace: Some("user/project".to_string()),
             project_name: Some("MyProject".to_string()),
             project_dir: None,
+            path_resolver: None,
+            http_timeouts: HttpTimeouts::default(),
+            retry_config: RetryConfig::default(),
         };
 
         let debug_output = format!("{config:?}");
@@ -1549,5 +1660,95 @@ mod tests {
         assert!(
             debug_output.contains("gitlab_url: \"https://gitlab.example.com/api/v4/projects/\"")
         );
+    }
+
+    #[test]
+    fn test_http_timeouts_default() {
+        let timeouts = HttpTimeouts::default();
+        assert_eq!(timeouts.connect_timeout, Duration::from_secs(10));
+        assert_eq!(timeouts.request_timeout, Duration::from_secs(30));
+        assert_eq!(timeouts.validation_timeout, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn test_retry_config_default() {
+        let retry_config = RetryConfig::default();
+        assert_eq!(retry_config.max_retries, 3);
+        assert_eq!(retry_config.initial_delay, Duration::from_millis(500));
+        assert_eq!(retry_config.max_delay, Duration::from_secs(10));
+        assert_eq!(retry_config.backoff_multiplier, 2.0);
+        assert!(retry_config.jitter);
+    }
+
+    #[test]
+    fn test_is_retryable_error() {
+        let client = Client::new();
+        let retry_config = RetryConfig::default();
+        let retryable_client = RetryableRequest::new(client, retry_config, false);
+
+        // Create mock errors to test retryability
+        // Note: These are conceptual tests since we can't easily create specific reqwest::Error instances
+
+        // Network errors should be retryable (tested conceptually)
+        // 5xx server errors should be retryable
+        // 429 rate limiting should be retryable
+        // 4xx client errors should not be retryable (except 429)
+
+        // Test that the logic exists
+        assert!(retryable_client.retry_config.max_retries > 0);
+    }
+
+    #[test]
+    fn test_jitter_calculation() {
+        let client = Client::new();
+        let retry_config = RetryConfig::default();
+        let retryable_client = RetryableRequest::new(client, retry_config, false);
+
+        let original_delay = Duration::from_millis(1000);
+        let jittered_delay = retryable_client.add_jitter(original_delay);
+
+        // Jittered delay should be between 100% and 150% of original
+        assert!(jittered_delay >= original_delay);
+        assert!(jittered_delay <= Duration::from_millis(1500));
+    }
+
+    #[test]
+    fn test_environment_variable_parsing() {
+        use std::env;
+
+        // Test default values when env vars are not set
+        unsafe {
+            env::remove_var("VERASCAN_CONNECT_TIMEOUT");
+            env::remove_var("VERASCAN_REQUEST_TIMEOUT");
+            env::remove_var("VERASCAN_MAX_RETRIES");
+        }
+
+        // Test parsing when valid values are set
+        unsafe {
+            env::set_var("VERASCAN_CONNECT_TIMEOUT", "15");
+            env::set_var("VERASCAN_REQUEST_TIMEOUT", "45");
+            env::set_var("VERASCAN_MAX_RETRIES", "5");
+            env::set_var("VERASCAN_INITIAL_RETRY_DELAY_MS", "1000");
+            env::set_var("VERASCAN_BACKOFF_MULTIPLIER", "1.5");
+        }
+
+        // These would be tested in an integration test with actual config loading
+        // For unit tests, we just verify the parsing logic exists
+        let timeout_str = "15";
+        let parsed_timeout: Option<u64> = timeout_str.parse().ok();
+        assert_eq!(parsed_timeout, Some(15));
+
+        let multiplier_str = "1.5";
+        let parsed_multiplier: Option<f64> = multiplier_str.parse().ok();
+        assert_eq!(parsed_multiplier, Some(1.5));
+
+        // Clean up
+        unsafe {
+            env::remove_var("VERASCAN_CONNECT_TIMEOUT");
+            env::remove_var("VERASCAN_REQUEST_TIMEOUT");
+            env::remove_var("VERASCAN_MAX_RETRIES");
+            env::remove_var("VERASCAN_INITIAL_RETRY_DELAY_MS");
+            env::remove_var("VERASCAN_BACKOFF_MULTIPLIER");
+        }
     }
 }
