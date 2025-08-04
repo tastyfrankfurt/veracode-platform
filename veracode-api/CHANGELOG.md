@@ -5,9 +5,17 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
-
 ## [0.3.1] - 2025-08-04
+
+### Changed
+- **Dual Licensing**: Updated to dual MIT OR Apache-2.0 licensing for maximum compatibility
+  - Added `LICENSE-MIT` file with standard MIT license text
+  - Renamed `LICENSE` to `LICENSE-APACHE` for clarity
+  - Updated `Cargo.toml` to specify `license = "MIT OR Apache-2.0"`
+  - Aligns with Rust ecosystem standards and provides users choice of license terms
+  - Maintains all existing functionality with enhanced legal flexibility
+
+## [0.3.0] - 2025-08-04
 
 ### Added
 - **Network-Level Retry System with Exponential Backoff**: Comprehensive retry mechanism for improved API reliability
