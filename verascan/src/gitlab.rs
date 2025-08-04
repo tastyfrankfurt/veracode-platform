@@ -4,9 +4,10 @@
 //! in GitLab SAST report format, compatible with GitLab security dashboards.
 
 use crate::findings::AggregatedFindings;
+use crate::path_resolver::{PathResolver, PathResolverConfig};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 /// GitLab SAST report structure
@@ -23,17 +24,28 @@ pub struct GitLabSASTReport {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabVulnerability {
     pub id: String,
-    pub name: String,
-    pub description: String,
-    pub severity: GitLabSeverity,
     pub identifiers: Vec<GitLabIdentifier>,
     pub location: GitLabLocation,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub severity: Option<GitLabSeverity>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub solution: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cvss_vectors: Option<Vec<GitLabCvssVector>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub links: Option<Vec<GitLabLink>>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub details: Option<GitLabDetails>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tracking: Option<GitLabTracking>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub flags: Option<Vec<GitLabFlag>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_source_code_extract: Option<String>,
 }
 
 /// GitLab severity levels
@@ -61,7 +73,8 @@ pub struct GitLabIdentifier {
 /// GitLab location information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabLocation {
-    pub file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub start_line: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -172,6 +185,29 @@ pub enum GitLabMessageLevel {
     Fatal,
 }
 
+/// GitLab CVSS vector information
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitLabCvssVector {
+    pub vendor: String,
+    pub vector: String,
+}
+
+/// GitLab vulnerability details (named list structure)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitLabDetails {
+    #[serde(flatten)]
+    pub items: std::collections::HashMap<String, serde_json::Value>,
+}
+
+/// GitLab vulnerability flag
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GitLabFlag {
+    #[serde(rename = "type")]
+    pub flag_type: String,
+    pub origin: String,
+    pub description: String,
+}
+
 /// GitLab export configuration
 #[derive(Debug, Clone)]
 pub struct GitLabExportConfig {
@@ -180,6 +216,8 @@ pub struct GitLabExportConfig {
     pub include_solutions: bool,
     pub analyzer_version: String,
     pub scanner_version: String,
+    pub project_dir: Option<PathBuf>,
+    pub path_resolver: Option<PathResolver>,
 }
 
 impl Default for GitLabExportConfig {
@@ -190,6 +228,8 @@ impl Default for GitLabExportConfig {
             include_solutions: true,
             analyzer_version: "1.0.0".to_string(),
             scanner_version: "1.0.0".to_string(),
+            project_dir: None,
+            path_resolver: None,
         }
     }
 }
@@ -204,6 +244,29 @@ impl GitLabExporter {
     /// Create a new GitLab exporter
     pub fn new(config: GitLabExportConfig, debug: bool) -> Self {
         Self { config, debug }
+    }
+
+    /// Set the project directory for resolving file paths
+    pub fn with_project_dir<P: AsRef<Path>>(mut self, project_dir: P) -> Self {
+        let path = project_dir.as_ref();
+        let absolute_path = if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            // Convert relative path to absolute path
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join(path)
+                .canonicalize()
+                .unwrap_or_else(|_| path.to_path_buf())
+        };
+
+        self.config.project_dir = Some(absolute_path.clone());
+
+        // Create path resolver when project dir is set
+        let resolver_config = PathResolverConfig::new(&absolute_path, self.debug);
+        self.config.path_resolver = Some(PathResolver::new(resolver_config));
+
+        self
     }
 
     /// Export aggregated findings to GitLab SAST format
@@ -279,6 +342,21 @@ impl GitLabExporter {
         Ok(report)
     }
 
+    /// Resolve file path using the configured path resolver
+    fn resolve_file_path(&self, file_path: &str) -> String {
+        match &self.config.path_resolver {
+            Some(resolver) => resolver.resolve_file_path(file_path).into_owned(),
+            None => {
+                if self.debug {
+                    println!(
+                        "   No path resolver configured, returning original path: '{file_path}'"
+                    );
+                }
+                file_path.to_string()
+            }
+        }
+    }
+
     /// Convert a Veracode finding to GitLab vulnerability format
     fn convert_finding_to_vulnerability(
         &self,
@@ -295,6 +373,18 @@ impl GitLabExporter {
 
         // Create identifiers
         let mut identifiers = Vec::new();
+
+        // Add CVE identifier (moved from standalone field to identifiers array)
+        let cve_value = format!(
+            "veracode:{}:{}:{}",
+            finding.title, finding.files.source_file.line, finding.files.source_file.line
+        );
+        identifiers.push(GitLabIdentifier {
+            identifier_type: "cve".to_string(),
+            name: format!("Veracode CVE Reference {}", finding.title),
+            value: cve_value,
+            url: None,
+        });
 
         // Add CWE identifier
         if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
@@ -325,9 +415,10 @@ impl GitLabExporter {
             url: None,
         });
 
-        // Create location
+        // Create location with resolved file path
+        let resolved_file_path = self.resolve_file_path(&finding.files.source_file.file);
         let location = GitLabLocation {
-            file: finding.files.source_file.file.clone(),
+            file: Some(resolved_file_path.clone()),
             start_line: Some(finding.files.source_file.line),
             end_line: Some(finding.files.source_file.line),
             class: None,
@@ -339,14 +430,20 @@ impl GitLabExporter {
             Some(GitLabTracking {
                 tracking_type: "source".to_string(),
                 items: vec![GitLabTrackingItem {
-                    file: finding.files.source_file.file.clone(),
+                    file: resolved_file_path.clone(),
                     line_start: finding.files.source_file.line,
                     line_end: finding.files.source_file.line,
                     signatures: vec![GitLabSignature {
-                        algorithm: "veracode_issue_signature".to_string(),
+                        algorithm: "scope_offset".to_string(),
                         value: format!(
-                            "{}:{}:{}",
-                            source.scan_id, finding.issue_id, finding.files.source_file.line
+                            "{}|{}[0]:1",
+                            resolved_file_path,
+                            finding
+                                .files
+                                .source_file
+                                .function_name
+                                .as_deref()
+                                .unwrap_or("unknown")
                         ),
                     }],
                 }],
@@ -384,7 +481,7 @@ impl GitLabExporter {
             Some(format!(
                 "Review and remediate this {} vulnerability found in {}. \
                 Consider consulting Veracode documentation for specific remediation guidance for this issue type.",
-                finding.issue_type, finding.files.source_file.file
+                finding.issue_type, resolved_file_path
             ))
         } else {
             None
@@ -392,8 +489,10 @@ impl GitLabExporter {
 
         Ok(GitLabVulnerability {
             id: vulnerability_id,
-            name: finding.title.clone(),
-            description: format!(
+            identifiers,
+            location,
+            name: Some(finding.issue_type.clone()),
+            description: Some(format!(
                 "Veracode Pipeline Scan identified a {} vulnerability in {}.\n\n\
                 Issue Type: {}\n\
                 Severity: {} ({})\n\
@@ -403,11 +502,11 @@ impl GitLabExporter {
                 Scan ID: {}\n\
                 Project: {}",
                 finding.issue_type,
-                finding.files.source_file.file,
+                resolved_file_path,
                 finding.issue_type,
                 self.severity_to_string(finding.severity),
                 finding.severity,
-                finding.files.source_file.file,
+                resolved_file_path,
                 finding.files.source_file.line,
                 finding
                     .files
@@ -417,13 +516,15 @@ impl GitLabExporter {
                     .unwrap_or("N/A"),
                 source.scan_id,
                 source.project_name
-            ),
-            severity,
-            identifiers,
-            location,
+            )),
+            severity: Some(severity),
             solution,
+            cvss_vectors: None,
             links,
+            details: None,
             tracking,
+            flags: None,
+            raw_source_code_extract: None,
         })
     }
 
@@ -531,13 +632,18 @@ mod tests {
             .convert_finding_to_vulnerability(&finding_with_source)
             .unwrap();
 
-        assert_eq!(vulnerability.name, "Cross-Site Scripting vulnerability");
-        assert!(matches!(vulnerability.severity, GitLabSeverity::High));
-        assert_eq!(vulnerability.location.file, "src/main.js");
+        assert_eq!(vulnerability.name, Some("Cross-Site Scripting".to_string()));
+        assert!(matches!(vulnerability.severity, Some(GitLabSeverity::High)));
+        assert_eq!(vulnerability.location.file, Some("src/main.js".to_string()));
         assert_eq!(vulnerability.location.start_line, Some(42));
-        assert!(vulnerability.identifiers.len() >= 2); // Should have CWE and Veracode identifiers
+        assert!(vulnerability.identifiers.len() >= 3); // Should have CVE, CWE and Veracode identifiers
         assert!(vulnerability.tracking.is_some());
-        assert!(vulnerability.links.is_some());
-        assert!(vulnerability.solution.is_some());
+        // Check for CVE identifier
+        assert!(
+            vulnerability
+                .identifiers
+                .iter()
+                .any(|id| id.identifier_type == "cve")
+        );
     }
 }

@@ -70,6 +70,11 @@ A powerful command-line application for security scanning and Veracode integrati
 - Real-time scan progress monitoring
 - Configurable timeouts and retry logic
 - Support for all Veracode regions (Commercial, European, Federal)
+- **File Size Validation**: Automatic validation with scan-type specific limits
+  - **Pipeline Scans**: 200MB per file maximum
+  - **Assessment Scans**: 2GB per file maximum + 5GB total cumulative limit
+  - Early validation with clear error messages before processing begins
+  - Oversized files are automatically filtered during file discovery
 - **Enhanced Security**: Comprehensive secure token handling with automatic credential redaction
   - All Veracode API credentials (`VERACODE_API_ID`, `VERACODE_API_KEY`) are securely wrapped
   - GitLab private tokens are automatically redacted in debug output
@@ -157,6 +162,8 @@ verascan pipeline --filepath ./build \
   --project-url "https://github.com/user/repo" \
   --export-findings scan-results.json
 ```
+
+> **📏 File Size Limits**: Pipeline scans accept files up to 200MB each. Assessment scans accept files up to 2GB each with a 5GB total limit across all files. Files exceeding these limits are automatically detected and rejected with clear error messages.
 
 ### Assessment Scanning
 

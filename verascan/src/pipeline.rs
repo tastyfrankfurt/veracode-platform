@@ -5,6 +5,8 @@ use tokio::task::JoinSet;
 use veracode_platform::pipeline::{CreateScanRequest, DevStage, ScanConfig};
 use veracode_platform::{VeracodeClient, VeracodeConfig, VeracodeRegion};
 
+use crate::filevalidator::{FileValidator, ValidationError};
+
 #[derive(Debug)]
 pub enum PipelineError {
     VeracodeError(veracode_platform::VeracodeError),
@@ -12,6 +14,7 @@ pub enum PipelineError {
     NoValidFiles,
     ConfigError(String),
     ScanError(String),
+    ValidationError(ValidationError),
 }
 
 impl std::fmt::Display for PipelineError {
@@ -22,6 +25,7 @@ impl std::fmt::Display for PipelineError {
             PipelineError::NoValidFiles => write!(f, "No valid files found for scanning"),
             PipelineError::ConfigError(msg) => write!(f, "Configuration error: {msg}"),
             PipelineError::ScanError(msg) => write!(f, "Scan error: {msg}"),
+            PipelineError::ValidationError(e) => write!(f, "File validation error: {e}"),
         }
     }
 }
@@ -37,6 +41,12 @@ impl From<veracode_platform::VeracodeError> for PipelineError {
 impl From<veracode_platform::pipeline::PipelineError> for PipelineError {
     fn from(err: veracode_platform::pipeline::PipelineError) -> Self {
         PipelineError::PlatformPipelineError(err)
+    }
+}
+
+impl From<ValidationError> for PipelineError {
+    fn from(err: ValidationError) -> Self {
+        PipelineError::ValidationError(err)
     }
 }
 
@@ -58,7 +68,7 @@ pub struct PipelineScanConfig {
 impl Default for PipelineScanConfig {
     fn default() -> Self {
         Self {
-            project_name: "Verascan Pipeline Scan".to_string(),
+            project_name: "Verascan Pipeline Scan".into(),
             project_uri: None,
             dev_stage: DevStage::Development,
             region: VeracodeRegion::Commercial,
@@ -110,12 +120,19 @@ impl PipelineSubmitter {
             }
         }
 
-        // Read file to get size and hash
+        // Validate file size (200MB limit for pipeline scans)
+        let validator = FileValidator::new();
+        let file_size = validator.validate_pipeline_file_size(file)?;
+
+        if self.config.debug {
+            let size_mb = file_size as f64 / (1024.0 * 1024.0);
+            println!("✅ File size validation passed: {size_mb:.2} MB (within 200 MB limit)");
+        }
+
+        // Read file to get hash (we already have the validated size)
         let file_data = std::fs::read(file).map_err(|e| {
             PipelineError::ConfigError(format!("Failed to read file {}: {}", file.display(), e))
         })?;
-
-        let file_size = file_data.len() as u64;
         let binary_hash = format!("{:x}", Sha256::digest(&file_data));
         let binary_name = file
             .file_name()
@@ -137,14 +154,14 @@ impl PipelineSubmitter {
             .as_ref()
             .map(|modules| modules.join(","));
 
-        // Create scan request
-        let scan_request = CreateScanRequest {
+        // Create scan request - minimize clones by using references where possible
+        let mut scan_request = CreateScanRequest {
             binary_name,
             binary_size: file_size,
             binary_hash,
-            project_name: self.config.project_name.clone(),
-            project_uri: self.config.project_uri.clone(),
-            dev_stage: self.config.dev_stage.clone(),
+            project_name: self.config.project_name.clone(), // Clone needed for owned CreateScanRequest
+            project_uri: self.config.project_uri.clone(), // Clone needed for owned CreateScanRequest
+            dev_stage: self.config.dev_stage.clone(),     // DevStage doesn't implement Copy
             app_id: None,
             project_ref: None,
             scan_timeout: self.config.timeout,
@@ -181,10 +198,10 @@ impl PipelineSubmitter {
                 println!("🔍 Looking up application profile: {app_name}");
             }
             pipeline_api
-                .create_scan_with_app_lookup(scan_request, Some(app_name))
+                .create_scan_with_app_lookup(&mut scan_request, Some(app_name))
                 .await
         } else {
-            pipeline_api.create_scan(scan_request).await
+            pipeline_api.create_scan(&mut scan_request).await
         };
 
         match scan_result {
@@ -436,27 +453,30 @@ impl PipelineSubmitter {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(num_threads));
         let mut join_set = JoinSet::new();
 
+        // Share submitter efficiently via Arc - clone once and share references
+        let submitter_arc = Arc::new(self.clone());
+
         // Submit each file as a separate task
         for (index, file) in files.iter().enumerate() {
-            let file_clone = file.clone();
-            let semaphore_clone = semaphore.clone();
-            let submitter_clone = self.clone();
+            let file_path = file.clone(); // PathBuf clone necessary for move
+            let semaphore_ref = Arc::clone(&semaphore);
+            let submitter_ref = Arc::clone(&submitter_arc);
 
             join_set.spawn(async move {
-                let _permit = semaphore_clone.acquire().await.unwrap();
+                let _permit = semaphore_ref.acquire().await.unwrap();
 
-                if submitter_clone.config.debug {
+                if submitter_ref.config.debug {
                     println!(
                         "📤 Thread {}: Starting scan for {}",
                         index + 1,
-                        file_clone.display()
+                        file_path.display()
                     );
                 }
 
-                match submitter_clone.submit_single_file(&file_clone).await {
+                match submitter_ref.submit_single_file(&file_path).await {
                     Ok(scan_id) => {
-                        let filename = file_clone.file_name().unwrap_or_default().to_string_lossy();
-                        if submitter_clone.config.debug {
+                        let filename = file_path.file_name().unwrap_or_default().to_string_lossy();
+                        if submitter_ref.config.debug {
                             println!("✅ Scan submitted: {filename} - ID: {scan_id}");
                         } else {
                             println!("✅ Scan submitted: {filename}");
@@ -466,7 +486,7 @@ impl PipelineSubmitter {
                     Err(e) => {
                         eprintln!(
                             "❌ Failed to submit scan for {}: {}",
-                            file_clone.file_name().unwrap_or_default().to_string_lossy(),
+                            file_path.file_name().unwrap_or_default().to_string_lossy(),
                             e
                         );
                         Err((index, e))
@@ -536,37 +556,33 @@ impl PipelineSubmitter {
         let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.threads));
         let mut join_set = JoinSet::new();
 
+        // Share submitter efficiently via Arc - clone once and share references
+        let submitter_arc = Arc::new(self.clone());
+
         // Wait for each scan as a separate task
         for (index, scan_id) in scan_ids.iter().enumerate() {
-            let scan_id_clone = scan_id.clone();
-            let semaphore_clone = semaphore.clone();
-            let submitter_clone = self.clone();
+            let scan_id_ref = scan_id.clone(); // String clone needed for move
+            let semaphore_ref = Arc::clone(&semaphore);
+            let submitter_ref = Arc::clone(&submitter_arc);
 
             join_set.spawn(async move {
-                let _permit = semaphore_clone.acquire().await.unwrap();
+                let _permit = semaphore_ref.acquire().await.unwrap();
 
-                if submitter_clone.config.debug {
-                    println!(
-                        "⏳ Thread {}: Waiting for scan {}",
-                        index + 1,
-                        scan_id_clone
-                    );
+                if submitter_ref.config.debug {
+                    println!("⏳ Thread {}: Waiting for scan {}", index + 1, scan_id_ref);
                 }
 
-                match submitter_clone
-                    .wait_for_scan_completion(&scan_id_clone)
-                    .await
-                {
+                match submitter_ref.wait_for_scan_completion(&scan_id_ref).await {
                     Ok(results) => {
-                        if submitter_clone.config.debug {
-                            println!("✅ Scan completed: {scan_id_clone}");
+                        if submitter_ref.config.debug {
+                            println!("✅ Scan completed: {scan_id_ref}");
                         } else {
                             println!("✅ Scan completed");
                         }
                         Ok((index, results))
                     }
                     Err(e) => {
-                        eprintln!("❌ Scan failed: {scan_id_clone} - {e}");
+                        eprintln!("❌ Scan failed: {scan_id_ref} - {e}");
                         Err((index, e))
                     }
                 }

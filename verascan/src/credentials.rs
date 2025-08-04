@@ -20,6 +20,11 @@ impl SecureApiId {
         SecureApiId(api_id)
     }
 
+    /// Create from string slice (requires allocation)
+    pub fn from_string_slice(api_id: &str) -> Self {
+        SecureApiId(api_id.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -34,6 +39,11 @@ impl SecureApiKey {
         SecureApiKey(api_key)
     }
 
+    /// Create from string slice (requires allocation)
+    pub fn from_string_slice(api_key: &str) -> Self {
+        SecureApiKey(api_key.into())
+    }
+
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -43,9 +53,33 @@ impl SecureApiKey {
     }
 }
 
+impl From<String> for SecureApiId {
+    fn from(api_id: String) -> Self {
+        SecureApiId(api_id)
+    }
+}
+
+impl From<&str> for SecureApiId {
+    fn from(api_id: &str) -> Self {
+        SecureApiId(api_id.into())
+    }
+}
+
 impl std::fmt::Debug for SecureApiId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str("[REDACTED]")
+    }
+}
+
+impl From<String> for SecureApiKey {
+    fn from(api_key: String) -> Self {
+        SecureApiKey(api_key)
+    }
+}
+
+impl From<&str> for SecureApiKey {
+    fn from(api_key: &str) -> Self {
+        SecureApiKey(api_key.into())
     }
 }
 
@@ -72,9 +106,23 @@ impl SecureApiCredentials {
         }
     }
 
+    /// Extract credentials as owned strings (for API client construction)
     pub fn extract_credentials(&self) -> Result<(String, String), Box<dyn std::error::Error>> {
         match (&self.api_id, &self.api_key) {
-            (Some(id), Some(key)) => Ok((id.as_str().to_string(), key.as_str().to_string())),
+            (Some(id), Some(key)) => Ok((id.as_str().into(), key.as_str().into())),
+            _ => {
+                eprintln!("❌ Pipeline scan requires Veracode API credentials");
+                eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
+                eprintln!("💡 API credentials must contain only alphanumeric characters");
+                Err("Missing API credentials".into())
+            }
+        }
+    }
+
+    /// Extract credentials as string references (for validation/comparison)
+    pub fn extract_credentials_ref(&self) -> Result<(&str, &str), Box<dyn std::error::Error>> {
+        match (&self.api_id, &self.api_key) {
+            (Some(id), Some(key)) => Ok((id.as_str(), key.as_str())),
             _ => {
                 eprintln!("❌ Pipeline scan requires Veracode API credentials");
                 eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
@@ -85,15 +133,36 @@ impl SecureApiCredentials {
     }
 }
 
+/// Validate API credential with optimized character checking
 pub fn validate_api_credential(value: &str, field_name: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err(format!("{field_name} cannot be empty"));
     }
 
-    if !value.chars().all(|c| c.is_alphanumeric()) {
+    // Use bytes() for ASCII-only credentials - more efficient than chars() for alphanumeric check
+    if !value.bytes().all(|b| b.is_ascii_alphanumeric()) {
         return Err(format!(
             "{field_name} must contain only alphanumeric characters"
         ));
+    }
+
+    Ok(())
+}
+
+/// Fast validation for credentials that are known to be ASCII
+#[inline]
+pub fn validate_api_credential_ascii(value: &str, field_name: &str) -> Result<(), String> {
+    if value.is_empty() {
+        return Err(format!("{field_name} cannot be empty"));
+    }
+
+    // Direct byte check for ASCII alphanumeric - fastest path
+    for &byte in value.as_bytes() {
+        if !byte.is_ascii_alphanumeric() {
+            return Err(format!(
+                "{field_name} must contain only alphanumeric characters"
+            ));
+        }
     }
 
     Ok(())
@@ -152,11 +221,27 @@ pub fn load_secure_api_credentials() -> Result<SecureApiCredentials, i32> {
     Ok(SecureApiCredentials::new(api_id, api_key))
 }
 
+/// Extract credentials from Args (for owned strings - API client construction)
 pub fn check_pipeline_credentials(
     args: &Args,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
     match (&args.api_id, &args.api_key) {
-        (Some(id), Some(key)) => Ok((id.clone(), key.clone())),
+        (Some(id), Some(key)) => Ok((id.clone(), key.clone())), // Clone needed for owned return
+        _ => {
+            eprintln!("❌ Pipeline scan requires Veracode API credentials");
+            eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
+            eprintln!("💡 API credentials must contain only alphanumeric characters");
+            Err("Missing API credentials".into())
+        }
+    }
+}
+
+/// Extract credentials from Args as references (for validation/comparison - zero-copy)
+pub fn check_pipeline_credentials_ref(
+    args: &Args,
+) -> Result<(&str, &str), Box<dyn std::error::Error>> {
+    match (&args.api_id, &args.api_key) {
+        (Some(id), Some(key)) => Ok((id, key)), // Zero-copy references
         _ => {
             eprintln!("❌ Pipeline scan requires Veracode API credentials");
             eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");

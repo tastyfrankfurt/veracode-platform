@@ -231,7 +231,7 @@ impl VeracodeWorkflow {
                         .create_application_if_not_exists(
                             &config.app_name,
                             config.business_criticality,
-                            config.app_description.clone(),
+                            config.app_description,
                             None, // No teams specified
                         )
                         .await
@@ -292,7 +292,7 @@ impl VeracodeWorkflow {
                     .create_sandbox_if_not_exists(
                         &application.guid,
                         &config.sandbox_name,
-                        config.sandbox_description.clone(),
+                        config.sandbox_description,
                     )
                     .await
                 {
@@ -404,17 +404,6 @@ impl VeracodeWorkflow {
             None
         };
 
-        let result = WorkflowResultData {
-            application,
-            sandbox,
-            app_id,
-            sandbox_id,
-            build_id: build_id.clone(),
-            app_created,
-            sandbox_created,
-            files_uploaded,
-        };
-
         println!("\n✅ Workflow completed successfully!");
         println!("   📊 Summary:");
         println!(
@@ -426,14 +415,25 @@ impl VeracodeWorkflow {
             config.sandbox_name, sandbox_created
         );
         println!("   - Files uploaded: {files_uploaded}");
-        if let Some(build_id) = &build_id {
+        if let Some(ref build_id_ref) = build_id {
             println!(
                 "   - Scan started: {} (build ID: {})",
-                config.auto_scan, build_id
+                config.auto_scan, build_id_ref
             );
         } else {
             println!("   - Scan started: {}", config.auto_scan);
         }
+
+        let result = WorkflowResultData {
+            application,
+            sandbox,
+            app_id,
+            sandbox_id,
+            build_id,
+            app_created,
+            sandbox_created,
+            files_uploaded,
+        };
 
         Ok(result)
     }
@@ -768,13 +768,14 @@ impl VeracodeWorkflow {
         let build_api = self.client.build_api();
 
         // Try to get existing build info
-        let get_request = crate::build::GetBuildInfoRequest {
-            app_id: app_id.to_string(),
-            build_id: None, // Get most recent
-            sandbox_id: sandbox_id.map(|s| s.to_string()),
-        };
-
-        match build_api.get_build_info(get_request).await {
+        match build_api
+            .get_build_info(&crate::build::GetBuildInfoRequest {
+                app_id: app_id.to_string(),
+                build_id: None, // Get most recent
+                sandbox_id: sandbox_id.map(|s| s.to_string()),
+            })
+            .await
+        {
             Ok(build) => {
                 println!("   📋 Build already exists: {}", build.build_id);
                 if let Some(build_version) = &build.version {
@@ -816,12 +817,13 @@ impl VeracodeWorkflow {
                     );
 
                     // Delete the existing build
-                    let delete_request = crate::build::DeleteBuildRequest {
-                        app_id: app_id.to_string(),
-                        sandbox_id: sandbox_id.map(|s| s.to_string()),
-                    };
-
-                    match build_api.delete_build(delete_request).await {
+                    match build_api
+                        .delete_build(&crate::build::DeleteBuildRequest {
+                            app_id: app_id.to_string(),
+                            sandbox_id: sandbox_id.map(|s| s.to_string()),
+                        })
+                        .await
+                    {
                         Ok(_) => {
                             println!("   ✅ Existing build deleted successfully");
                         }
@@ -888,15 +890,16 @@ impl VeracodeWorkflow {
             format!("build-{timestamp}")
         });
 
-        let create_request = crate::build::CreateBuildRequest {
-            app_id: app_id.to_string(),
-            version: Some(build_version.clone()),
-            lifecycle_stage: Some(crate::build::default_lifecycle_stage().to_string()),
-            launch_date: None,
-            sandbox_id: sandbox_id.map(|s| s.to_string()),
-        };
-
-        match build_api.create_build(create_request).await {
+        match build_api
+            .create_build(&crate::build::CreateBuildRequest {
+                app_id: app_id.to_string(),
+                version: Some(build_version.clone()),
+                lifecycle_stage: Some(crate::build::default_lifecycle_stage().to_string()),
+                launch_date: None,
+                sandbox_id: sandbox_id.map(|s| s.to_string()),
+            })
+            .await
+        {
             Ok(build) => {
                 println!("   ✅ Build created successfully: {}", build.build_id);
                 println!("      Version: {build_version}");
@@ -943,14 +946,15 @@ impl VeracodeWorkflow {
             // Wait 3 seconds before checking
             tokio::time::sleep(sleep_duration).await;
 
-            // Recreate request each time - cheaper than cloning
-            let get_request = crate::build::GetBuildInfoRequest {
-                app_id: app_id.to_string(),
-                build_id: None,
-                sandbox_id: sandbox_id.map(|s| s.to_string()),
-            };
-
-            match build_api.get_build_info(get_request).await {
+            // Check build status directly without intermediate variable
+            match build_api
+                .get_build_info(&crate::build::GetBuildInfoRequest {
+                    app_id: app_id.to_string(),
+                    build_id: None,
+                    sandbox_id: sandbox_id.map(|s| s.to_string()),
+                })
+                .await
+            {
                 Ok(_build) => {
                     // Build still exists, continue waiting
                     if attempt < max_attempts {
@@ -1023,14 +1027,15 @@ impl VeracodeWorkflow {
         println!("\n📤 Uploading file using uploadlargefile.do...");
         let scan_api = self.client.scan_api();
 
-        let upload_request = crate::scan::UploadLargeFileRequest {
-            app_id: app_id.to_string(),
-            file_path: file_path.to_string(),
-            filename: filename.map(|s| s.to_string()),
-            sandbox_id: sandbox_id.map(|s| s.to_string()),
-        };
-
-        match scan_api.upload_large_file(upload_request).await {
+        match scan_api
+            .upload_large_file(crate::scan::UploadLargeFileRequest {
+                app_id: app_id.to_string(),
+                file_path: file_path.to_string(),
+                filename: filename.map(|s| s.to_string()),
+                sandbox_id: sandbox_id.map(|s| s.to_string()),
+            })
+            .await
+        {
             Ok(uploaded_file) => {
                 println!("   ✅ Large file uploaded successfully:");
                 println!("      File ID: {}", uploaded_file.file_id);
@@ -1086,15 +1091,16 @@ impl VeracodeWorkflow {
         println!("\n📤 Uploading file with progress tracking...");
         let scan_api = self.client.scan_api();
 
-        let upload_request = crate::scan::UploadLargeFileRequest {
-            app_id: app_id.to_string(),
-            file_path: file_path.to_string(),
-            filename: filename.map(|s| s.to_string()),
-            sandbox_id: sandbox_id.map(|s| s.to_string()),
-        };
-
         match scan_api
-            .upload_large_file_with_progress(upload_request, progress_callback)
+            .upload_large_file_with_progress(
+                crate::scan::UploadLargeFileRequest {
+                    app_id: app_id.to_string(),
+                    file_path: file_path.to_string(),
+                    filename: filename.map(|s| s.to_string()),
+                    sandbox_id: sandbox_id.map(|s| s.to_string()),
+                },
+                progress_callback,
+            )
             .await
         {
             Ok(uploaded_file) => {
@@ -1151,14 +1157,15 @@ impl VeracodeWorkflow {
             println!("📦 Using standard file upload (uploadfile.do)");
             let scan_api = self.client.scan_api();
 
-            let upload_request = crate::scan::UploadFileRequest {
-                app_id: app_id.to_string(),
-                file_path: file_path.to_string(),
-                save_as: filename.map(|s| s.to_string()),
-                sandbox_id: sandbox_id.map(|s| s.to_string()),
-            };
-
-            match scan_api.upload_file(upload_request).await {
+            match scan_api
+                .upload_file(&crate::scan::UploadFileRequest {
+                    app_id: app_id.to_string(),
+                    file_path: file_path.to_string(),
+                    save_as: filename.map(|s| s.to_string()),
+                    sandbox_id: sandbox_id.map(|s| s.to_string()),
+                })
+                .await
+            {
                 Ok(uploaded_file) => {
                     println!("   ✅ File uploaded successfully via uploadfile.do");
                     Ok(uploaded_file)

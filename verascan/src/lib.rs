@@ -6,7 +6,11 @@ pub mod filefinder;
 pub mod filevalidator;
 pub mod findings;
 pub mod gitlab;
+pub mod gitlab_client;
 pub mod gitlab_issues;
+pub mod graphql_client;
+pub mod http_client;
+pub mod path_resolver;
 pub mod pipeline;
 pub mod policy;
 pub mod scan;
@@ -27,7 +31,16 @@ pub use filefinder::FileFinder;
 pub use filevalidator::{FileValidator, SupportedFileType, ValidationError};
 pub use findings::{AggregatedFindings, FindingsAggregator};
 pub use gitlab::{GitLabExportConfig, GitLabExporter};
+pub use gitlab_client::{GitLabClient, GitLabClientConfig, GitLabClientError};
 pub use gitlab_issues::{GitLabConfig, GitLabError, GitLabIssuesClient};
+pub use graphql_client::{
+    GitHubGraphQLClient, GraphQLClient, GraphQLClientConfig, GraphQLClientError,
+};
+pub use http_client::{
+    HttpClientConfig, HttpClientConfigBuilder, HttpClientError, HttpTimeouts, RetryConfig,
+    RobustHttpClient,
+};
+pub use path_resolver::{PathResolver, PathResolverConfig};
 pub use pipeline::{PipelineError, PipelineScanConfig, PipelineSubmitter};
 pub use policy::execute_policy_download;
 pub use scan::{execute_assessment_scan, execute_pipeline_scan};

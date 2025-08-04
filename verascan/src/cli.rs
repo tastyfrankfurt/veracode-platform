@@ -423,7 +423,7 @@ fn validate_sandbox_name(s: &str) -> Result<String, String> {
     }
 
     // Use the existing validate_name_field function for standard validation
-    validate_name_field(&sanitized_name)
+    validate_name_field(&sanitized_name).map(|_| sanitized_name)
 }
 
 /// Validate project URL

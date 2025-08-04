@@ -2,11 +2,13 @@ use veracode_platform::{VeracodeClient, VeracodeConfig};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    // Create configuration
+    // Create configuration with custom timeouts
     let config: VeracodeConfig = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
-    );
+        &std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        &std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
+    )
+    .with_connect_timeout(60) // 60 seconds connection timeout
+    .with_request_timeout(600); // 10 minutes request timeout
 
     // Create client
     let client = VeracodeClient::new(config)?;

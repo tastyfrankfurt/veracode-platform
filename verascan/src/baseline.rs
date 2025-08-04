@@ -1,16 +1,64 @@
 use crate::findings::{AggregatedFindings, FindingWithSource, create_finding_hash};
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 use veracode_platform::VeracodeRegion;
 
+// Type aliases for common usage patterns
+pub type OwnedBaselineFile = BaselineFile<'static>;
+pub type OwnedBaselineFinding = BaselineFinding<'static>;
+pub type OwnedBaselineComparison = BaselineComparison<'static>;
+
+// Conversion methods for making borrowed data owned
+impl<'a> BaselineFinding<'a> {
+    pub fn into_owned(self) -> OwnedBaselineFinding {
+        BaselineFinding {
+            finding_id: Cow::Owned(self.finding_id.into_owned()),
+            cwe_id: Cow::Owned(self.cwe_id.into_owned()),
+            issue_type: Cow::Owned(self.issue_type.into_owned()),
+            severity: self.severity,
+            file_path: Cow::Owned(self.file_path.into_owned()),
+            line_number: self.line_number,
+            function_name: self.function_name.map(|cow| Cow::Owned(cow.into_owned())),
+            title: Cow::Owned(self.title.into_owned()),
+            finding_hash: Cow::Owned(self.finding_hash.into_owned()),
+        }
+    }
+}
+
+impl<'a> BaselineComparison<'a> {
+    pub fn into_owned(self) -> OwnedBaselineComparison {
+        BaselineComparison {
+            metadata: self.metadata,
+            new_findings: self.new_findings,
+            fixed_findings: self
+                .fixed_findings
+                .into_iter()
+                .map(|f| f.into_owned())
+                .collect(),
+            unchanged_findings: self
+                .unchanged_findings
+                .into_iter()
+                .map(|f| FindingMatch {
+                    current_finding: f.current_finding,
+                    baseline_finding: f.baseline_finding.into_owned(),
+                    severity_changed: f.severity_changed,
+                    previous_severity: f.previous_severity,
+                })
+                .collect(),
+            summary: self.summary,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaselineFile {
+pub struct BaselineFile<'a> {
     /// Metadata about the baseline
     pub metadata: BaselineMetadata,
     /// Baseline findings for comparison
-    pub findings: Vec<BaselineFinding>,
+    pub findings: Vec<BaselineFinding<'a>>,
     /// Summary statistics
     pub summary: BaselineSummary,
 }
@@ -54,25 +102,25 @@ pub struct BaselineProjectInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaselineFinding {
+pub struct BaselineFinding<'a> {
     /// Unique identifier for matching purposes
-    pub finding_id: String,
+    pub finding_id: Cow<'a, str>,
     /// CWE ID for the finding
-    pub cwe_id: String,
+    pub cwe_id: Cow<'a, str>,
     /// Issue type
-    pub issue_type: String,
+    pub issue_type: Cow<'a, str>,
     /// Severity level (0-5)
     pub severity: u32,
     /// File path where the finding was discovered
-    pub file_path: String,
+    pub file_path: Cow<'a, str>,
     /// Line number (if available)
     pub line_number: u32,
     /// Function name (if available)
-    pub function_name: Option<String>,
+    pub function_name: Option<Cow<'a, str>>,
     /// Finding title/description
-    pub title: String,
+    pub title: Cow<'a, str>,
     /// Hash of the finding for exact matching
-    pub finding_hash: String,
+    pub finding_hash: Cow<'a, str>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,15 +139,15 @@ pub struct BaselineSummary {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct BaselineComparison {
+pub struct BaselineComparison<'a> {
     /// Metadata about the comparison
     pub metadata: ComparisonMetadata,
     /// New findings (not in baseline)
     pub new_findings: Vec<FindingWithSource>,
     /// Fixed findings (in baseline but not in current)
-    pub fixed_findings: Vec<BaselineFinding>,
+    pub fixed_findings: Vec<BaselineFinding<'a>>,
     /// Unchanged findings (in both baseline and current)
-    pub unchanged_findings: Vec<FindingMatch>,
+    pub unchanged_findings: Vec<FindingMatch<'a>>,
     /// Summary of the comparison
     pub summary: ComparisonSummary,
 }
@@ -125,11 +173,11 @@ pub struct CurrentScanInfo {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct FindingMatch {
+pub struct FindingMatch<'a> {
     /// Current finding
     pub current_finding: FindingWithSource,
     /// Matching baseline finding
-    pub baseline_finding: BaselineFinding,
+    pub baseline_finding: BaselineFinding<'a>,
     /// Whether severity changed
     pub severity_changed: bool,
     /// Previous severity (if changed)
@@ -294,11 +342,11 @@ impl BaselineManager {
         Ok(())
     }
 
-    /// Load a baseline file
+    /// Load a baseline file  
     pub fn load_baseline(
         &self,
         baseline_path: &Path,
-    ) -> Result<BaselineFile, Box<dyn std::error::Error>> {
+    ) -> Result<OwnedBaselineFile, Box<dyn std::error::Error>> {
         if self.debug {
             println!("📖 Loading baseline file: {}", baseline_path.display());
         }
@@ -310,7 +358,7 @@ impl BaselineManager {
         }
 
         let content = fs::read_to_string(baseline_path)?;
-        let baseline: BaselineFile = serde_json::from_str(&content)
+        let baseline: OwnedBaselineFile = serde_json::from_str(&content)
             .map_err(|e| format!("Failed to parse baseline file: {e}"))?;
 
         if self.debug {
@@ -324,11 +372,11 @@ impl BaselineManager {
     }
 
     /// Compare current findings against a baseline
-    pub fn compare_with_baseline(
+    pub fn compare_with_baseline<'a>(
         &self,
         current: &AggregatedFindings,
-        baseline: &BaselineFile,
-    ) -> Result<BaselineComparison, Box<dyn std::error::Error>> {
+        baseline: &'a BaselineFile<'a>,
+    ) -> Result<BaselineComparison<'a>, Box<dyn std::error::Error>> {
         if self.debug {
             println!(
                 "🔍 Comparing {} current findings against {} baseline findings",
@@ -354,9 +402,9 @@ impl BaselineManager {
     }
 
     /// Export comparison results
-    pub fn export_comparison(
+    pub fn export_comparison<'a>(
         &self,
-        comparison: &BaselineComparison,
+        comparison: &BaselineComparison<'a>,
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
@@ -374,7 +422,7 @@ impl BaselineManager {
     }
 
     /// Display comparison summary
-    pub fn display_comparison_summary(&self, comparison: &BaselineComparison) {
+    pub fn display_comparison_summary<'a>(&self, comparison: &BaselineComparison<'a>) {
         println!("\n📊 Baseline Comparison Summary");
         println!("═══════════════════════════════════════");
 
@@ -437,10 +485,10 @@ impl BaselineManager {
     }
 
     /// Convert aggregated findings to baseline format
-    fn convert_to_baseline(
+    fn convert_to_baseline<'a>(
         &self,
-        aggregated: &AggregatedFindings,
-    ) -> Result<BaselineFile, Box<dyn std::error::Error>> {
+        aggregated: &'a AggregatedFindings,
+    ) -> Result<BaselineFile<'a>, Box<dyn std::error::Error>> {
         let now = chrono::Utc::now().to_rfc3339();
 
         // Extract scan information
@@ -449,22 +497,25 @@ impl BaselineManager {
             .first()
             .ok_or("No scan metadata available")?;
 
+        // Collect unique source files efficiently
         let source_files: Vec<String> = aggregated
             .scan_metadata
             .iter()
-            .map(|meta| meta.source_file.clone())
+            .map(|meta| meta.source_file.as_str().into())
             .collect();
 
+        // Collect unique project names efficiently
         let project_names: Vec<String> = aggregated
             .scan_metadata
             .iter()
-            .map(|meta| meta.project_name.clone())
+            .map(|meta| meta.project_name.as_str())
             .collect::<HashSet<_>>()
             .into_iter()
+            .map(|s| s.into())
             .collect();
 
-        // Convert findings
-        let baseline_findings: Vec<BaselineFinding> = aggregated
+        // Convert findings using Cow for zero-copy when possible
+        let baseline_findings: Vec<BaselineFinding<'a>> = aggregated
             .findings
             .iter()
             .map(|finding_with_source| self.convert_finding_to_baseline(finding_with_source))
@@ -475,27 +526,27 @@ impl BaselineManager {
             .stats
             .top_cwe_ids
             .iter()
-            .map(|cwe_stat| cwe_stat.cwe_id.clone())
+            .map(|cwe_stat| cwe_stat.cwe_id.as_str().into())
             .collect();
 
         let baseline = BaselineFile {
             metadata: BaselineMetadata {
-                version: "1.0".to_string(),
+                version: "1.0".into(),
                 created_at: now,
                 source_scan: BaselineScanInfo {
                     scan_id: first_scan.scan_id.clone(),
                     project_name: project_names
                         .first()
-                        .unwrap_or(&"unknown".to_string())
-                        .clone(),
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".into()),
                     project_uri: first_scan.project_uri.clone(),
                     source_files,
                 },
                 project_info: BaselineProjectInfo {
                     name: project_names
                         .first()
-                        .unwrap_or(&"unknown".to_string())
-                        .clone(),
+                        .cloned()
+                        .unwrap_or_else(|| "unknown".into()),
                     url: first_scan.project_uri.clone(),
                     commit_hash: None, // Could be enhanced to extract from git
                     branch: None,      // Could be enhanced to extract from git
@@ -519,52 +570,65 @@ impl BaselineManager {
     }
 
     /// Convert a finding to baseline format
-    fn convert_finding_to_baseline(
+    fn convert_finding_to_baseline<'a>(
         &self,
-        finding_with_source: &FindingWithSource,
-    ) -> BaselineFinding {
+        finding_with_source: &'a FindingWithSource,
+    ) -> BaselineFinding<'a> {
         let finding = &finding_with_source.finding;
 
         // Create a hash for exact matching
         let finding_hash = create_finding_hash(finding);
 
         BaselineFinding {
-            finding_id: finding_with_source.finding_id.clone(), // Use the finding_id from FindingWithSource
-            cwe_id: finding.cwe_id.clone(),
-            issue_type: finding.issue_type.clone(),
+            finding_id: Cow::Borrowed(&finding_with_source.finding_id),
+            cwe_id: Cow::Borrowed(&finding.cwe_id),
+            issue_type: Cow::Borrowed(&finding.issue_type),
             severity: finding.severity,
-            file_path: finding.files.source_file.file.clone(),
+            file_path: Cow::Borrowed(&finding.files.source_file.file),
             line_number: finding.files.source_file.line,
-            function_name: finding.files.source_file.function_name.clone(),
-            title: finding.title.clone(),
-            finding_hash,
+            function_name: finding
+                .files
+                .source_file
+                .function_name
+                .as_deref()
+                .map(Cow::Borrowed),
+            title: Cow::Borrowed(&finding.title),
+            finding_hash: Cow::Owned(finding_hash),
         }
     }
 
     /// Perform the actual comparison between current and baseline findings
-    fn perform_comparison(
+    fn perform_comparison<'a>(
         &self,
         current: &AggregatedFindings,
-        baseline: &BaselineFile,
-    ) -> Result<BaselineComparison, Box<dyn std::error::Error>> {
+        baseline: &'a BaselineFile<'a>,
+    ) -> Result<BaselineComparison<'a>, Box<dyn std::error::Error>> {
         let now = chrono::Utc::now().to_rfc3339();
 
-        // Create lookup maps using the stored hashes from both files
-        let baseline_map: HashMap<String, &BaselineFinding> = baseline
+        // Create lookup maps using references to avoid cloning hashes
+        let baseline_map: HashMap<&str, &BaselineFinding<'a>> = baseline
             .findings
             .iter()
-            .map(|f| (f.finding_hash.clone(), f))
+            .map(|f| (f.finding_hash.as_ref(), f))
             .collect();
 
-        let current_map: HashMap<String, &FindingWithSource> = current
+        // Pre-compute hashes for current findings to avoid repeated computation
+        let current_hashes: Vec<String> = current
             .findings
             .iter()
-            .map(|f| (create_finding_hash(&f.finding), f))
+            .map(|f| create_finding_hash(&f.finding))
+            .collect();
+
+        let current_map: HashMap<&str, &FindingWithSource> = current
+            .findings
+            .iter()
+            .zip(current_hashes.iter())
+            .map(|(f, hash)| (hash.as_str(), f))
             .collect();
 
         // Find new, fixed, and unchanged findings
         let mut new_findings = Vec::new();
-        let mut unchanged_findings = Vec::new();
+        let mut unchanged_findings: Vec<FindingMatch<'a>> = Vec::new();
 
         for (hash, current_finding) in &current_map {
             if let Some(baseline_finding) = baseline_map.get(hash) {
@@ -584,18 +648,22 @@ impl BaselineManager {
                     previous_severity,
                 });
             } else {
-                // New finding
+                // New finding - still need to clone for owned result
                 new_findings.push((*current_finding).clone());
             }
         }
 
         // Find fixed findings (in baseline but not in current)
-        let mut fixed_findings = Vec::new();
-        for (hash, baseline_finding) in &baseline_map {
-            if !current_map.contains_key(hash) {
-                fixed_findings.push((*baseline_finding).clone());
-            }
-        }
+        let fixed_findings: Vec<BaselineFinding<'a>> = baseline_map
+            .iter()
+            .filter_map(|(hash, baseline_finding)| {
+                if !current_map.contains_key(hash) {
+                    Some((*baseline_finding).clone())
+                } else {
+                    None
+                }
+            })
+            .collect();
 
         // Calculate summaries
         let summary = self.calculate_comparison_summary(&new_findings, &fixed_findings);
@@ -610,9 +678,10 @@ impl BaselineManager {
                     project_names: current
                         .scan_metadata
                         .iter()
-                        .map(|meta| meta.project_name.clone())
+                        .map(|meta| meta.project_name.as_str())
                         .collect::<HashSet<_>>()
                         .into_iter()
+                        .map(|s| s.into())
                         .collect(),
                 },
             },
@@ -625,11 +694,11 @@ impl BaselineManager {
         Ok(comparison)
     }
 
-    /// Calculate comparison summary statistics
-    fn calculate_comparison_summary(
+    /// Calculate comparison summary statistics (now takes references for efficiency)
+    fn calculate_comparison_summary<'a>(
         &self,
         new_findings: &[FindingWithSource],
-        fixed_findings: &[BaselineFinding],
+        fixed_findings: &[BaselineFinding<'a>],
     ) -> ComparisonSummary {
         let new_count = new_findings.len() as u32;
         let fixed_count = fixed_findings.len() as u32;
@@ -639,18 +708,14 @@ impl BaselineManager {
         let mut new_by_severity = HashMap::new();
         for finding in new_findings {
             let severity_name = severity_to_name(finding.finding.severity);
-            *new_by_severity
-                .entry(severity_name.to_string())
-                .or_insert(0) += 1;
+            *new_by_severity.entry(severity_name.into()).or_insert(0) += 1;
         }
 
         // Count fixed findings by severity
         let mut fixed_by_severity = HashMap::new();
         for finding in fixed_findings {
             let severity_name = severity_to_name(finding.severity);
-            *fixed_by_severity
-                .entry(severity_name.to_string())
-                .or_insert(0) += 1;
+            *fixed_by_severity.entry(severity_name.into()).or_insert(0) += 1;
         }
 
         // Get new CWE breakdown
@@ -852,7 +917,7 @@ impl BaselineManager {
                         .rule
                         .severity_levels
                         .iter()
-                        .map(|&s| severity_to_name(s).to_string())
+                        .map(|&s| severity_to_name(s).into())
                         .collect();
                     println!("      Severity filter: {severity_names:?}");
                 }
@@ -876,9 +941,10 @@ impl BaselineManager {
                     project_names: findings
                         .scan_metadata
                         .iter()
-                        .map(|meta| meta.project_name.clone())
+                        .map(|meta| meta.project_name.as_str())
                         .collect::<HashSet<_>>()
                         .into_iter()
+                        .map(|s| s.into())
                         .collect(),
                 },
             },
@@ -891,7 +957,7 @@ impl BaselineManager {
         Ok(assessment)
     }
 
-    /// Evaluate a single policy rule against findings
+    /// Evaluate a single policy rule against findings (optimized to avoid cloning)
     fn evaluate_policy_rule(
         &self,
         rule: &PolicyRule,
@@ -968,31 +1034,32 @@ impl BaselineManager {
     ) -> Vec<FindingWithSource> {
         let mut violations = Vec::new();
 
-        // Check max total findings
+        // Check max total findings - use iterator to avoid copying
         if let Some(max_total) = criteria.max_total_findings {
             if findings.len() as u32 > max_total {
-                violations.extend_from_slice(findings);
+                violations.extend(findings.iter().cloned());
                 return violations;
             }
         }
 
-        // Check fail on high severity
+        // Check fail on high severity - use iterator filter
         if criteria.fail_on_high_severity {
-            for finding in findings {
-                if finding.finding.severity >= 4 {
-                    // High or Very High
-                    violations.push(finding.clone());
-                }
-            }
+            violations.extend(
+                findings
+                    .iter()
+                    .filter(|finding| finding.finding.severity >= 4)
+                    .cloned(),
+            );
         }
 
-        // Check fail on specific CWEs
+        // Check fail on specific CWEs - use iterator filter
         if !criteria.fail_on_cwe_ids.is_empty() {
-            for finding in findings {
-                if criteria.fail_on_cwe_ids.contains(&finding.finding.cwe_id) {
-                    violations.push(finding.clone());
-                }
-            }
+            violations.extend(
+                findings
+                    .iter()
+                    .filter(|finding| criteria.fail_on_cwe_ids.contains(&finding.finding.cwe_id))
+                    .cloned(),
+            );
         }
 
         // Check max by severity
@@ -1013,18 +1080,19 @@ impl BaselineManager {
                 .count() as u32;
 
             if count > *max_allowed {
-                for finding in findings {
-                    if finding.finding.severity == severity_level {
-                        violations.push(finding.clone());
-                    }
-                }
+                violations.extend(
+                    findings
+                        .iter()
+                        .filter(|finding| finding.finding.severity == severity_level)
+                        .cloned(),
+                );
             }
         }
 
         violations
     }
 
-    /// Calculate policy assessment summary
+    /// Calculate policy assessment summary (takes reference for efficiency)
     fn calculate_policy_summary(
         &self,
         violations: &[FindingWithSource],
@@ -1035,7 +1103,7 @@ impl BaselineManager {
         for violation in violations {
             let severity_name = severity_to_name(violation.finding.severity);
             *violations_by_severity
-                .entry(severity_name.to_string())
+                .entry(severity_name.into())
                 .or_insert(0) += 1;
             *cwe_counts
                 .entry(violation.finding.cwe_id.clone())
@@ -1171,7 +1239,7 @@ pub fn execute_baseline_compare(
     baseline_path: &Path,
     output_path: Option<&Path>,
     debug: bool,
-) -> Result<BaselineComparison, i32> {
+) -> Result<OwnedBaselineComparison, i32> {
     let manager = BaselineManager::new(debug);
 
     let baseline = match manager.load_baseline(baseline_path) {
@@ -1183,7 +1251,7 @@ pub fn execute_baseline_compare(
     };
 
     let comparison = match manager.compare_with_baseline(current, &baseline) {
-        Ok(comparison) => comparison,
+        Ok(comparison) => comparison.into_owned(),
         Err(e) => {
             eprintln!("❌ Failed to perform baseline comparison: {e}");
             return Err(1);
@@ -1262,7 +1330,7 @@ pub async fn execute_policy_name_assessment(
     let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
 
     let region = parse_region(&args.region)?;
-    let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
+    let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
 
     // Check environment variable for certificate validation
     if env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
@@ -1376,7 +1444,7 @@ fn convert_platform_policy_to_policy_file(
                     if !forbidden_severities.is_empty() {
                         let severity_names: Vec<String> = forbidden_severities
                             .iter()
-                            .map(|&s| severity_to_name(s).to_string())
+                            .map(|&s| severity_to_name(s).into())
                             .collect();
 
                         rules.push(PolicyRule {
@@ -1451,7 +1519,7 @@ fn convert_platform_policy_to_policy_file(
     // If no rules were created, add a default permissive rule to show the policy is working
     if rules.is_empty() {
         rules.push(PolicyRule {
-            name: "Default Policy Rule (no specific rules found)".to_string(),
+            name: "Default Policy Rule (no specific rules found)".into(),
             cwe_ids: Vec::new(),
             severity_levels: Vec::new(),
             max_allowed: 1000, // Very permissive

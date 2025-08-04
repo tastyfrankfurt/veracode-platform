@@ -131,27 +131,64 @@ pub struct SandboxListParams {
 impl SandboxListParams {
     /// Convert to query parameters for HTTP requests
     pub fn to_query_params(&self) -> Vec<(String, String)> {
+        Vec::from(self) // Delegate to trait
+    }
+}
+
+// Trait implementations for memory optimization
+impl From<&SandboxListParams> for Vec<(String, String)> {
+    fn from(query: &SandboxListParams) -> Self {
         let mut params = Vec::new();
 
-        if let Some(name) = &self.name {
-            params.push(("name".to_string(), name.clone()));
+        if let Some(ref name) = query.name {
+            params.push(("name".to_string(), name.clone())); // Still clone for borrowing
         }
-        if let Some(owner) = &self.owner {
+        if let Some(ref owner) = query.owner {
             params.push(("owner".to_string(), owner.clone()));
         }
-        if let Some(team) = &self.team {
+        if let Some(ref team) = query.team {
             params.push(("team".to_string(), team.clone()));
         }
-        if let Some(page) = self.page {
+        if let Some(page) = query.page {
             params.push(("page".to_string(), page.to_string()));
         }
-        if let Some(size) = self.size {
+        if let Some(size) = query.size {
             params.push(("size".to_string(), size.to_string()));
         }
-        if let Some(modified_after) = self.modified_after {
+        if let Some(modified_after) = query.modified_after {
             params.push(("modified_after".to_string(), modified_after.to_rfc3339()));
         }
-        if let Some(modified_before) = self.modified_before {
+        if let Some(modified_before) = query.modified_before {
+            params.push(("modified_before".to_string(), modified_before.to_rfc3339()));
+        }
+
+        params
+    }
+}
+
+impl From<SandboxListParams> for Vec<(String, String)> {
+    fn from(query: SandboxListParams) -> Self {
+        let mut params = Vec::new();
+
+        if let Some(name) = query.name {
+            params.push(("name".to_string(), name)); // MOVE - no clone!
+        }
+        if let Some(owner) = query.owner {
+            params.push(("owner".to_string(), owner)); // MOVE - no clone!
+        }
+        if let Some(team) = query.team {
+            params.push(("team".to_string(), team)); // MOVE - no clone!
+        }
+        if let Some(page) = query.page {
+            params.push(("page".to_string(), page.to_string()));
+        }
+        if let Some(size) = query.size {
+            params.push(("size".to_string(), size.to_string()));
+        }
+        if let Some(modified_after) = query.modified_after {
+            params.push(("modified_after".to_string(), modified_after.to_rfc3339()));
+        }
+        if let Some(modified_before) = query.modified_before {
             params.push(("modified_before".to_string(), modified_before.to_rfc3339()));
         }
 
@@ -237,7 +274,7 @@ impl<'a> SandboxApi<'a> {
     ) -> Result<Vec<Sandbox>, SandboxError> {
         let endpoint = format!("/appsec/v1/applications/{application_guid}/sandboxes");
 
-        let query_params = params.map(|p| p.to_query_params());
+        let query_params = params.as_ref().map(Vec::from);
 
         let response = self.client.get(&endpoint, query_params.as_deref()).await?;
 
@@ -846,7 +883,7 @@ mod tests {
             ..Default::default()
         };
 
-        let query_params = params.to_query_params();
+        let query_params: Vec<_> = params.into();
         assert_eq!(query_params.len(), 3);
         assert!(query_params.contains(&("name".to_string(), "test".to_string())));
         assert!(query_params.contains(&("page".to_string(), "1".to_string())));

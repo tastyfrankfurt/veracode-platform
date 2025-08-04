@@ -4,6 +4,16 @@ use std::fs;
 use std::path::PathBuf;
 use veracode_platform::{VeracodeConfig, VeracodeRegion};
 
+/// Efficiently create a sanitized filename for policy download
+#[inline]
+fn create_policy_filename(policy_name: &str) -> String {
+    if policy_name.contains(' ') {
+        format!("{}.json", policy_name.replace(' ', "_"))
+    } else {
+        format!("{policy_name}.json")
+    }
+}
+
 pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32> {
     println!("🔍 Policy Download requested for: {policy_name}");
 
@@ -12,7 +22,7 @@ pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32
     let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
 
     let region = parse_region(&args.region)?;
-    let mut veracode_config = VeracodeConfig::new(api_id, api_key).with_region(region);
+    let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
 
     // Check environment variable for certificate validation
     if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
@@ -27,10 +37,11 @@ pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32
 }
 
 fn parse_region(region_str: &str) -> Result<VeracodeRegion, i32> {
-    match region_str.to_lowercase().as_str() {
-        "commercial" => Ok(VeracodeRegion::Commercial),
-        "european" => Ok(VeracodeRegion::European),
-        "federal" => Ok(VeracodeRegion::Federal),
+    // Use case-insensitive matching without allocating
+    match region_str {
+        s if s.eq_ignore_ascii_case("commercial") => Ok(VeracodeRegion::Commercial),
+        s if s.eq_ignore_ascii_case("european") => Ok(VeracodeRegion::European),
+        s if s.eq_ignore_ascii_case("federal") => Ok(VeracodeRegion::Federal),
         _ => {
             eprintln!("❌ Invalid region '{region_str}'. Use: commercial, european, or federal");
             Err(1)
@@ -79,10 +90,10 @@ async fn download_policy_by_name(
         println!("📋 Found {} total policies", policies.len());
     }
 
-    // Find policy by name (case-insensitive)
+    // Find policy by name (case-insensitive) - avoid double allocation
     let target_policy = policies
         .iter()
-        .find(|policy| policy.name.to_lowercase() == policy_name.to_lowercase())
+        .find(|policy| policy.name.eq_ignore_ascii_case(policy_name))
         .ok_or_else(|| {
             eprintln!("❌ Policy '{policy_name}' not found");
             eprintln!("💡 Available policies:");
@@ -108,9 +119,8 @@ async fn download_policy_by_name(
             1
         })?;
 
-    // Create filename by replacing spaces with underscores and adding .json extension
-    let sanitized_name = policy_name.replace(' ', "_");
-    let filename = format!("{sanitized_name}.json");
+    // Create filename efficiently using helper function
+    let filename = create_policy_filename(policy_name);
     let filepath = PathBuf::from(&filename);
 
     if args.debug {

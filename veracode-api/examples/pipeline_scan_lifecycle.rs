@@ -6,8 +6,8 @@ use veracode_platform::{
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let config = VeracodeConfig::new(
-        std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
-        std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
+        &std::env::var("VERACODE_API_ID").expect("VERACODE_API_ID environment variable required"),
+        &std::env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable required"),
     );
 
     let client = VeracodeClient::new(config)?;
@@ -70,7 +70,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Generate proper SHA-256 hash (64 characters) as required by Veracode API
     let binary_hash = calculate_sha256_hash(&binary_data);
 
-    let scan_request = CreateScanRequest {
+    let mut scan_request = CreateScanRequest {
         binary_name: binary_name.clone(),
         binary_size: binary_data.len() as u64,
         binary_hash: binary_hash.clone(),
@@ -98,7 +98,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("   Dev Stage: {:?}", scan_request.dev_stage);
     println!();
 
-    let scan_result = match pipeline_api.create_scan(scan_request).await {
+    let scan_result = match pipeline_api.create_scan(&mut scan_request).await {
         Ok(result) => {
             println!("✅ Created scan with ID: {}", result.scan_id);
             result

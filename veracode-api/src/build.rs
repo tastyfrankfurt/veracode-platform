@@ -350,7 +350,7 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the created build information or an error.
-    pub async fn create_build(&self, request: CreateBuildRequest) -> Result<Build, BuildError> {
+    pub async fn create_build(&self, request: &CreateBuildRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/createbuild.do";
 
         // Build query parameters
@@ -409,7 +409,7 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the updated build information or an error.
-    pub async fn update_build(&self, request: UpdateBuildRequest) -> Result<Build, BuildError> {
+    pub async fn update_build(&self, request: &UpdateBuildRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/updatebuild.do";
 
         // Build query parameters
@@ -480,7 +480,7 @@ impl BuildApi {
     /// A `Result` containing the deletion result or an error.
     pub async fn delete_build(
         &self,
-        request: DeleteBuildRequest,
+        request: &DeleteBuildRequest,
     ) -> Result<DeleteBuildResult, BuildError> {
         let endpoint = "/api/5.0/deletebuild.do";
 
@@ -534,7 +534,7 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
-    pub async fn get_build_info(&self, request: GetBuildInfoRequest) -> Result<Build, BuildError> {
+    pub async fn get_build_info(&self, request: &GetBuildInfoRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/getbuildinfo.do";
 
         // Build query parameters
@@ -593,7 +593,7 @@ impl BuildApi {
     /// A `Result` containing the build list or an error.
     pub async fn get_build_list(
         &self,
-        request: GetBuildListRequest,
+        request: &GetBuildListRequest,
     ) -> Result<BuildList, BuildError> {
         let endpoint = "/api/5.0/getbuildlist.do";
 
@@ -708,28 +708,28 @@ impl BuildApi {
                                 let value = String::from_utf8_lossy(&attr.value);
 
                                 match key.as_ref() {
-                                    "build_id" => build.build_id = value.to_string(),
-                                    "app_id" => build.app_id = value.to_string(),
-                                    "version" => build.version = Some(value.to_string()),
-                                    "app_name" => build.app_name = Some(value.to_string()),
-                                    "sandbox_id" => build.sandbox_id = Some(value.to_string()),
-                                    "sandbox_name" => build.sandbox_name = Some(value.to_string()),
+                                    "build_id" => build.build_id = value.into_owned(),
+                                    "app_id" => build.app_id = value.into_owned(),
+                                    "version" => build.version = Some(value.into_owned()),
+                                    "app_name" => build.app_name = Some(value.into_owned()),
+                                    "sandbox_id" => build.sandbox_id = Some(value.into_owned()),
+                                    "sandbox_name" => build.sandbox_name = Some(value.into_owned()),
                                     "lifecycle_stage" => {
-                                        build.lifecycle_stage = Some(value.to_string())
+                                        build.lifecycle_stage = Some(value.into_owned())
                                     }
-                                    "submitter" => build.submitter = Some(value.to_string()),
-                                    "platform" => build.platform = Some(value.to_string()),
+                                    "submitter" => build.submitter = Some(value.into_owned()),
+                                    "platform" => build.platform = Some(value.into_owned()),
                                     "analysis_unit" => {
-                                        build.analysis_unit = Some(value.to_string())
+                                        build.analysis_unit = Some(value.into_owned())
                                     }
-                                    "policy_name" => build.policy_name = Some(value.to_string()),
+                                    "policy_name" => build.policy_name = Some(value.into_owned()),
                                     "policy_version" => {
-                                        build.policy_version = Some(value.to_string())
+                                        build.policy_version = Some(value.into_owned())
                                     }
                                     "policy_compliance_status" => {
-                                        build.policy_compliance_status = Some(value.to_string())
+                                        build.policy_compliance_status = Some(value.into_owned())
                                     }
-                                    "rules_status" => build.rules_status = Some(value.to_string()),
+                                    "rules_status" => build.rules_status = Some(value.into_owned()),
                                     "grace_period_expired" => {
                                         build.grace_period_expired = value.parse::<bool>().ok();
                                     }
@@ -755,7 +755,9 @@ impl BuildApi {
                                         }
                                     }
                                     _ => {
-                                        build.attributes.insert(key.to_string(), value.to_string());
+                                        build
+                                            .attributes
+                                            .insert(key.into_owned(), value.into_owned());
                                     }
                                 }
                             }
@@ -772,13 +774,13 @@ impl BuildApi {
                                         // Store the analysis_unit status as the primary status
                                         build
                                             .attributes
-                                            .insert("status".to_string(), value.to_string());
+                                            .insert("status".to_string(), value.into_owned());
                                     }
                                     _ => {
                                         // Store other analysis_unit attributes with prefix
                                         build
                                             .attributes
-                                            .insert(format!("analysis_{key}"), value.to_string());
+                                            .insert(format!("analysis_{key}"), value.into_owned());
                                     }
                                 }
                             }
@@ -797,12 +799,12 @@ impl BuildApi {
                                 "status" => {
                                     build
                                         .attributes
-                                        .insert("status".to_string(), value.to_string());
+                                        .insert("status".to_string(), value.into_owned());
                                 }
                                 _ => {
                                     build
                                         .attributes
-                                        .insert(format!("analysis_{key}"), value.to_string());
+                                        .insert(format!("analysis_{key}"), value.into_owned());
                                 }
                             }
                         }
@@ -851,9 +853,9 @@ impl BuildApi {
                             let value = String::from_utf8_lossy(&attr.value);
 
                             match key.as_ref() {
-                                "account_id" => build_list.account_id = Some(value.to_string()),
-                                "app_id" => build_list.app_id = value.to_string(),
-                                "app_name" => build_list.app_name = Some(value.to_string()),
+                                "account_id" => build_list.account_id = Some(value.into_owned()),
+                                "app_id" => build_list.app_id = value.into_owned(),
+                                "app_name" => build_list.app_name = Some(value.into_owned()),
                                 _ => {}
                             }
                         }
@@ -887,22 +889,22 @@ impl BuildApi {
                             let value = String::from_utf8_lossy(&attr.value);
 
                             match key.as_ref() {
-                                "build_id" => build.build_id = value.to_string(),
-                                "version" => build.version = Some(value.to_string()),
-                                "sandbox_id" => build.sandbox_id = Some(value.to_string()),
-                                "sandbox_name" => build.sandbox_name = Some(value.to_string()),
+                                "build_id" => build.build_id = value.into_owned(),
+                                "version" => build.version = Some(value.into_owned()),
+                                "sandbox_id" => build.sandbox_id = Some(value.into_owned()),
+                                "sandbox_name" => build.sandbox_name = Some(value.into_owned()),
                                 "lifecycle_stage" => {
-                                    build.lifecycle_stage = Some(value.to_string())
+                                    build.lifecycle_stage = Some(value.into_owned())
                                 }
-                                "submitter" => build.submitter = Some(value.to_string()),
-                                "platform" => build.platform = Some(value.to_string()),
-                                "analysis_unit" => build.analysis_unit = Some(value.to_string()),
-                                "policy_name" => build.policy_name = Some(value.to_string()),
-                                "policy_version" => build.policy_version = Some(value.to_string()),
+                                "submitter" => build.submitter = Some(value.into_owned()),
+                                "platform" => build.platform = Some(value.into_owned()),
+                                "analysis_unit" => build.analysis_unit = Some(value.into_owned()),
+                                "policy_name" => build.policy_name = Some(value.into_owned()),
+                                "policy_version" => build.policy_version = Some(value.into_owned()),
                                 "policy_compliance_status" => {
-                                    build.policy_compliance_status = Some(value.to_string())
+                                    build.policy_compliance_status = Some(value.into_owned())
                                 }
-                                "rules_status" => build.rules_status = Some(value.to_string()),
+                                "rules_status" => build.rules_status = Some(value.into_owned()),
                                 "grace_period_expired" => {
                                     build.grace_period_expired = value.parse::<bool>().ok();
                                 }
@@ -927,7 +929,9 @@ impl BuildApi {
                                     }
                                 }
                                 _ => {
-                                    build.attributes.insert(key.to_string(), value.to_string());
+                                    build
+                                        .attributes
+                                        .insert(key.into_owned(), value.into_owned());
                                 }
                             }
                         }
@@ -962,7 +966,7 @@ impl BuildApi {
                     if e.name().as_ref() == b"result" {
                         // Read the text content of the result element
                         if let Ok(Event::Text(e)) = reader.read_event_into(&mut buf) {
-                            result = String::from_utf8_lossy(&e).to_string();
+                            result = String::from_utf8_lossy(&e).into_owned();
                         }
                     }
                 }
@@ -1002,13 +1006,13 @@ impl BuildApi {
     ) -> Result<Build, BuildError> {
         let request = CreateBuildRequest {
             app_id: app_id.to_string(),
-            version: version.map(|s| s.to_string()),
+            version: version.map(str::to_string),
             lifecycle_stage: None,
             launch_date: None,
             sandbox_id: None,
         };
 
-        self.create_build(request).await
+        self.create_build(&request).await
     }
 
     /// Create a sandbox build
@@ -1030,13 +1034,13 @@ impl BuildApi {
     ) -> Result<Build, BuildError> {
         let request = CreateBuildRequest {
             app_id: app_id.to_string(),
-            version: version.map(|s| s.to_string()),
+            version: version.map(str::to_string),
             lifecycle_stage: None,
             launch_date: None,
             sandbox_id: Some(sandbox_id.to_string()),
         };
 
-        self.create_build(request).await
+        self.create_build(&request).await
     }
 
     /// Delete the most recent application build
@@ -1054,7 +1058,7 @@ impl BuildApi {
             sandbox_id: None,
         };
 
-        self.delete_build(request).await
+        self.delete_build(&request).await
     }
 
     /// Delete the most recent sandbox build
@@ -1077,7 +1081,7 @@ impl BuildApi {
             sandbox_id: Some(sandbox_id.to_string()),
         };
 
-        self.delete_build(request).await
+        self.delete_build(&request).await
     }
 
     /// Get the most recent build info for an application
@@ -1096,7 +1100,7 @@ impl BuildApi {
             sandbox_id: None,
         };
 
-        self.get_build_info(request).await
+        self.get_build_info(&request).await
     }
 
     /// Get build info for a specific sandbox
@@ -1120,7 +1124,7 @@ impl BuildApi {
             sandbox_id: Some(sandbox_id.to_string()),
         };
 
-        self.get_build_info(request).await
+        self.get_build_info(&request).await
     }
 
     /// Get list of all builds for an application
@@ -1138,7 +1142,7 @@ impl BuildApi {
             sandbox_id: None,
         };
 
-        self.get_build_list(request).await
+        self.get_build_list(&request).await
     }
 
     /// Get list of builds for a sandbox
@@ -1161,7 +1165,7 @@ impl BuildApi {
             sandbox_id: Some(sandbox_id.to_string()),
         };
 
-        self.get_build_list(request).await
+        self.get_build_list(&request).await
     }
 }
 
@@ -1245,7 +1249,7 @@ mod tests {
     #[tokio::test]
     async fn test_build_api_method_signatures() {
         async fn _test_build_methods() -> Result<(), Box<dyn std::error::Error>> {
-            let config = VeracodeConfig::new("test".to_string(), "test".to_string());
+            let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
             let api = client.build_api();
 
@@ -1260,7 +1264,7 @@ mod tests {
 
             // These calls won't actually execute due to test environment,
             // but they validate the method signatures exist
-            let _: Result<Build, _> = api.create_build(create_request).await;
+            let _: Result<Build, _> = api.create_build(&create_request).await;
             let _: Result<Build, _> = api.create_simple_build("123", None).await;
             let _: Result<Build, _> = api.create_sandbox_build("123", "456", None).await;
             let _: Result<DeleteBuildResult, _> = api.delete_app_build("123").await;

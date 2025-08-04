@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         env::var("VERACODE_API_KEY").expect("VERACODE_API_KEY environment variable is required");
 
     // Create configuration
-    let config = VeracodeConfig::new(api_id, api_key).with_region(VeracodeRegion::Commercial); // Change to European or Federal as needed
+    let config = VeracodeConfig::new(&api_id, &api_key).with_region(VeracodeRegion::Commercial); // Change to European or Federal as needed
 
     println!("🔧 Creating Veracode client...");
     let client = VeracodeClient::new(config)?;
@@ -502,7 +502,7 @@ fn usage_examples() {
 // Basic workflow usage:
 use veracode_platform::{{VeracodeConfig, VeracodeClient, WorkflowConfig, BusinessCriticality}};
 
-let config = VeracodeConfig::new(api_id, api_key);
+let config = VeracodeConfig::new(&api_id, &api_key);
 let client = VeracodeClient::new(config)?;
 let workflow = client.workflow();
 
