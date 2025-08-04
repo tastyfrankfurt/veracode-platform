@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.3.1] - 2025-08-04
+## [0.3.0] - 2025-08-04
 
 ### Added
 - **Network-Level Retry System with Exponential Backoff**: Comprehensive retry mechanism for improved API reliability
