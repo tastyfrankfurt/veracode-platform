@@ -29,8 +29,8 @@
 //! async fn main() -> Result<(), Box<dyn std::error::Error>> {
 //!     // Create configuration - automatically supports both API types
 //!     let config = VeracodeConfig::new(
-//!         "your_api_id".to_string(),
-//!         "your_api_key".to_string(),
+//!         "your_api_id",
+//!         "your_api_key",
 //!     ).with_region(VeracodeRegion::Commercial); // Optional: defaults to Commercial
 //!
 //!     let client = VeracodeClient::new(config)?;
@@ -57,13 +57,13 @@
 //! use veracode_platform::{VeracodeConfig, VeracodeRegion};
 //!
 //! // European region
-//! let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
+//! let config = VeracodeConfig::new("api_id", "api_key")
 //!     .with_region(VeracodeRegion::European);
 //! // REST APIs will use: api.veracode.eu
 //! // XML APIs will use: analysiscenter.veracode.eu
 //!
 //! // US Federal region  
-//! let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
+//! let config = VeracodeConfig::new("api_id", "api_key")
 //!     .with_region(VeracodeRegion::Federal);
 //! // REST APIs will use: api.veracode.us
 //! // XML APIs will use: analysiscenter.veracode.us
