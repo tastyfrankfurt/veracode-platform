@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.4.0] - 2025-01-XX
+## [0.4.0] - 2025-08-08
 
 ### Fixed
 - **Export API Error**: Fixed critical issue where export functionality failed with "Invalid request" error due to passing "latest" as build_id parameter to summary_report API
