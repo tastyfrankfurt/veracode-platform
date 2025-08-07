@@ -91,6 +91,7 @@
 pub mod app;
 pub mod build;
 pub mod client;
+pub mod findings;
 pub mod identity;
 pub mod pipeline;
 pub mod policy;
@@ -112,6 +113,10 @@ pub use build::{
     DeleteBuildResult, GetBuildInfoRequest, GetBuildListRequest, UpdateBuildRequest,
 };
 pub use client::VeracodeClient;
+pub use findings::{
+    CweInfo, FindingCategory, FindingDetails, FindingStatus, FindingsApi, FindingsError,
+    FindingsQuery, FindingsResponse, RestFinding,
+};
 pub use identity::{
     ApiCredential, BusinessUnit, CreateApiCredentialRequest, CreateTeamRequest, CreateUserRequest,
     IdentityApi, IdentityError, Role, Team, UpdateTeamRequest, UpdateUserRequest, User, UserQuery,
@@ -152,6 +157,8 @@ pub struct RetryConfig {
     pub rate_limit_buffer_seconds: u64,
     /// Maximum number of retry attempts specifically for rate limit errors (default: 1)
     pub rate_limit_max_attempts: u32,
+    /// Whether to enable jitter in retry delays (default: true)
+    pub jitter_enabled: bool,
 }
 
 impl Default for RetryConfig {
@@ -164,6 +171,7 @@ impl Default for RetryConfig {
             max_total_delay_ms: 300000,   // 5 minutes
             rate_limit_buffer_seconds: 5, // 5 second buffer for rate limit windows
             rate_limit_max_attempts: 1,   // Only retry once for rate limits
+            jitter_enabled: true,         // Enable jitter by default
         }
     }
 }
@@ -186,14 +194,32 @@ impl RetryConfig {
         self
     }
 
+    /// Set the initial delay between retries (alias for compatibility)
+    pub fn with_initial_delay_millis(mut self, delay_ms: u64) -> Self {
+        self.initial_delay_ms = delay_ms;
+        self
+    }
+
     /// Set the maximum delay between retries
     pub fn with_max_delay(mut self, delay_ms: u64) -> Self {
         self.max_delay_ms = delay_ms;
         self
     }
 
+    /// Set the maximum delay between retries (alias for compatibility)
+    pub fn with_max_delay_millis(mut self, delay_ms: u64) -> Self {
+        self.max_delay_ms = delay_ms;
+        self
+    }
+
     /// Set the exponential backoff multiplier
     pub fn with_backoff_multiplier(mut self, multiplier: f64) -> Self {
+        self.backoff_multiplier = multiplier;
+        self
+    }
+
+    /// Set the exponential backoff multiplier (alias for compatibility)
+    pub fn with_exponential_backoff(mut self, multiplier: f64) -> Self {
         self.backoff_multiplier = multiplier;
         self
     }
@@ -216,6 +242,16 @@ impl RetryConfig {
         self
     }
 
+    /// Disable jitter in retry delays
+    ///
+    /// Jitter adds randomness to retry delays to prevent thundering herd problems.
+    /// Disabling jitter makes retry timing more predictable but may cause synchronized
+    /// retries from multiple clients.
+    pub fn with_jitter_disabled(mut self) -> Self {
+        self.jitter_enabled = false;
+        self
+    }
+
     /// Calculate the delay for a given attempt number using exponential backoff
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         if attempt == 0 {
@@ -225,7 +261,17 @@ impl RetryConfig {
         let delay_ms = (self.initial_delay_ms as f64
             * self.backoff_multiplier.powi((attempt - 1) as i32)) as u64;
 
-        let capped_delay = delay_ms.min(self.max_delay_ms);
+        let mut capped_delay = delay_ms.min(self.max_delay_ms);
+
+        // Apply jitter if enabled (±25% randomization)
+        if self.jitter_enabled {
+            use rand::Rng;
+            let jitter_range = (capped_delay as f64 * 0.25) as u64;
+            let min_delay = capped_delay.saturating_sub(jitter_range);
+            let max_delay = capped_delay + jitter_range;
+            capped_delay = rand::rng().random_range(min_delay..=max_delay);
+        }
+
         Duration::from_millis(capped_delay)
     }
 
@@ -373,6 +419,18 @@ impl VeracodeClient {
     /// Uses REST API (api.veracode.*).
     pub fn policy_api(&self) -> PolicyApi {
         PolicyApi::new(self)
+    }
+
+    /// Get a findings API instance.
+    /// Uses REST API (api.veracode.*).
+    pub fn findings_api(&self) -> FindingsApi {
+        FindingsApi::new(self.clone())
+    }
+
+    /// Get a findings API instance with debug enabled.
+    /// Uses REST API (api.veracode.*).
+    pub fn findings_api_with_debug(&self, debug: bool) -> FindingsApi {
+        FindingsApi::new_with_debug(self.clone(), debug)
     }
 
     /// Get a scan API instance.
@@ -854,6 +912,7 @@ mod tests {
         assert_eq!(config.max_delay_ms, 30000);
         assert_eq!(config.backoff_multiplier, 2.0);
         assert_eq!(config.max_total_delay_ms, 300000);
+        assert!(config.jitter_enabled); // Jitter should be enabled by default
     }
 
     #[test]
@@ -877,7 +936,8 @@ mod tests {
         let config = RetryConfig::new()
             .with_initial_delay(1000)
             .with_backoff_multiplier(2.0)
-            .with_max_delay(10000);
+            .with_max_delay(10000)
+            .with_jitter_disabled(); // Disable jitter for predictable testing
 
         // Test exponential backoff calculation
         assert_eq!(config.calculate_delay(0).as_millis(), 0); // No delay for attempt 0
@@ -1057,5 +1117,33 @@ mod tests {
         // The delay should include our custom 15s buffer
         assert!(delay.as_secs() >= 15);
         assert!(delay.as_secs() <= 75); // 60 + 15
+    }
+
+    #[test]
+    fn test_jitter_disabled() {
+        let config = RetryConfig::new().with_jitter_disabled();
+        assert!(!config.jitter_enabled);
+
+        // With jitter disabled, delays should be consistent
+        let delay1 = config.calculate_delay(2);
+        let delay2 = config.calculate_delay(2);
+        assert_eq!(delay1, delay2);
+    }
+
+    #[test]
+    fn test_jitter_enabled() {
+        let config = RetryConfig::new(); // Jitter enabled by default
+        assert!(config.jitter_enabled);
+
+        // With jitter enabled, delays may vary (though they might occasionally be the same)
+        let base_delay = config.initial_delay_ms;
+        let delay = config.calculate_delay(1);
+
+        // The delay should be within the expected range (±25% jitter)
+        let min_expected = (base_delay as f64 * 0.75) as u64;
+        let max_expected = (base_delay as f64 * 1.25) as u64;
+
+        assert!(delay.as_millis() >= min_expected as u128);
+        assert!(delay.as_millis() <= max_expected as u128);
     }
 }

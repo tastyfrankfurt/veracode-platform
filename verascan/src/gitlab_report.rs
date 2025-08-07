@@ -4,6 +4,7 @@
 //! in GitLab SAST report format, compatible with GitLab security dashboards.
 
 use crate::findings::AggregatedFindings;
+use crate::gitlab_common::resolve_file_path;
 use crate::path_resolver::{PathResolver, PathResolverConfig};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
@@ -342,19 +343,9 @@ impl GitLabExporter {
         Ok(report)
     }
 
-    /// Resolve file path using the configured path resolver
+    /// Resolve file path using shared utility
     fn resolve_file_path(&self, file_path: &str) -> String {
-        match &self.config.path_resolver {
-            Some(resolver) => resolver.resolve_file_path(file_path).into_owned(),
-            None => {
-                if self.debug {
-                    println!(
-                        "   No path resolver configured, returning original path: '{file_path}'"
-                    );
-                }
-                file_path.to_string()
-            }
-        }
+        resolve_file_path(file_path, self.config.path_resolver.as_ref(), self.debug).into_owned()
     }
 
     /// Convert a Veracode finding to GitLab vulnerability format

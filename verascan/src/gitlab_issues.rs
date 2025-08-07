@@ -4,108 +4,21 @@
 //! using GitLab CI environment variables and API tokens.
 
 use crate::findings::AggregatedFindings;
+use crate::gitlab_common::{
+    GitLabIssuePayload, GitLabIssueResponse, SecureToken, create_file_link, get_project_web_url,
+    get_severity_name, resolve_file_path, strip_html_tags,
+};
+use crate::gitlab_utils::{GitLabUrlConfig, create_pipeline_url};
+use crate::http_client::{HttpTimeouts, RetryConfig};
 use crate::path_resolver::{PathResolver, PathResolverConfig};
 use reqwest::{
     Client,
     header::{HeaderMap, HeaderValue},
 };
-use serde::{Deserialize, Serialize};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 use tokio::time::sleep;
-
-/// Secure token wrapper that prevents accidental exposure in logs
-#[derive(Clone)]
-pub struct SecureToken(String);
-
-impl SecureToken {
-    pub fn new(token: String) -> Self {
-        SecureToken(token)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-impl std::fmt::Debug for SecureToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("[REDACTED]")
-    }
-}
-
-impl std::fmt::Display for SecureToken {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("[REDACTED]")
-    }
-}
-
-/// GitLab issue creation payload
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitLabIssuePayload {
-    pub title: String,
-    pub description: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub labels: Option<String>, // GitLab expects comma-separated string, not array
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub assignee_ids: Option<Vec<u64>>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub confidential: Option<bool>,
-}
-
-/// GitLab issue response
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct GitLabIssueResponse {
-    pub id: u64,
-    pub iid: u64,
-    pub title: String,
-    pub description: String,
-    pub state: String,
-    pub web_url: String,
-    pub created_at: String,
-    pub updated_at: String,
-}
-
-/// HTTP timeout configuration
-#[derive(Clone, Debug)]
-pub struct HttpTimeouts {
-    pub connect_timeout: std::time::Duration,
-    pub request_timeout: std::time::Duration,
-    pub validation_timeout: std::time::Duration,
-}
-
-impl Default for HttpTimeouts {
-    fn default() -> Self {
-        Self {
-            connect_timeout: std::time::Duration::from_secs(10),
-            request_timeout: std::time::Duration::from_secs(30),
-            validation_timeout: std::time::Duration::from_secs(10),
-        }
-    }
-}
-
-/// Retry configuration for network requests
-#[derive(Clone, Debug)]
-pub struct RetryConfig {
-    pub max_retries: u32,
-    pub initial_delay: std::time::Duration,
-    pub max_delay: std::time::Duration,
-    pub backoff_multiplier: f64,
-    pub jitter: bool,
-}
-
-impl Default for RetryConfig {
-    fn default() -> Self {
-        Self {
-            max_retries: 3,
-            initial_delay: std::time::Duration::from_millis(500),
-            max_delay: std::time::Duration::from_secs(10),
-            backoff_multiplier: 2.0,
-            jitter: true,
-        }
-    }
-}
 
 /// GitLab environment configuration
 #[derive(Clone)]
@@ -690,7 +603,7 @@ impl GitLabIssuesClient {
             println!(
                 "   Severity: {} ({})",
                 finding.severity,
-                self.get_severity_name(finding.severity)
+                get_severity_name(finding.severity)
             );
             if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
                 println!("   CWE ID: '{}'", finding.cwe_id);
@@ -723,7 +636,7 @@ impl GitLabIssuesClient {
         }
 
         // Create concise title with CWE, function (or issue type), filename, line number and path hash
-        let severity_name = self.get_severity_name(finding.severity);
+        let severity_name = get_severity_name(finding.severity);
 
         // Extract just the filename from the resolved path
         let filename = std::path::Path::new(&resolved_file_path)
@@ -906,20 +819,9 @@ impl GitLabIssuesClient {
         self
     }
 
-    /// Resolve file path relative to project directory
+    /// Resolve file path relative to project directory using shared utility
     fn resolve_file_path(&self, file_path: &str) -> String {
-        // If no path resolver is available, return the original path
-        match &self.config.path_resolver {
-            Some(resolver) => resolver.resolve_file_path(file_path).into_owned(),
-            None => {
-                if self.debug {
-                    println!(
-                        "   No path resolver configured, returning original path: '{file_path}'"
-                    );
-                }
-                file_path.to_string()
-            }
-        }
+        resolve_file_path(file_path, self.config.path_resolver.as_ref(), self.debug).into_owned()
     }
 
     /// Create detailed issue description with pre-resolved file path
@@ -937,7 +839,7 @@ impl GitLabIssuesClient {
         description.push_str(&format!("## Security Vulnerability: {}\n\n", finding.title));
 
         // Severity badge
-        let severity_name = self.get_severity_name(finding.severity);
+        let severity_name = get_severity_name(finding.severity);
         let badge_color = match finding.severity {
             5 => "critical",
             4 => "important",
@@ -1008,7 +910,11 @@ impl GitLabIssuesClient {
         description.push('\n');
 
         // Enhanced source code section with direct link
-        if let Some(project_web_url) = self.get_project_web_url() {
+        if let Some(project_web_url) = get_project_web_url(
+            self.config.project_web_url.as_deref(),
+            self.config.project_path_with_namespace.as_deref(),
+            &self.config.gitlab_url,
+        ) {
             let branch_or_commit = self.config.commit_sha.as_deref().unwrap_or("main");
             let file_url = format!(
                 "{}/-/blob/{}/{}#L{}",
@@ -1030,12 +936,7 @@ impl GitLabIssuesClient {
 
         // Pipeline link
         if let Some(ref pipeline_id) = self.config.pipeline_id {
-            let pipeline_url = format!(
-                "{}{}/pipelines/{}",
-                self.config.gitlab_url.replace("/api/v4/projects/", "/-/"),
-                self.config.project_id,
-                pipeline_id
-            );
+            let pipeline_url = self.create_pipeline_url(pipeline_id);
             links_section.push_str(&format!("- [Pipeline Run]({pipeline_url})\n"));
             has_links = true;
         }
@@ -1070,7 +971,7 @@ impl GitLabIssuesClient {
         if !finding.display_text.is_empty() {
             description.push_str("### 📄 Vulnerability Description\n\n");
             // Strip HTML tags from display_text for cleaner markdown
-            let clean_text = self.strip_html_tags(&finding.display_text);
+            let clean_text = strip_html_tags(&finding.display_text);
             description.push_str(&clean_text);
             description.push_str("\n\n");
         }
@@ -1108,43 +1009,30 @@ impl GitLabIssuesClient {
         Ok(description)
     }
 
-    /// Create a hyperlink to the source file with line number
+    /// Create a hyperlink to the source file with line number using shared utility
     fn create_file_link(&self, file_path: &str, line_number: u32) -> String {
-        // Try to construct project web URL from available information
-        let project_web_url = self.get_project_web_url();
-
-        if let Some(base_url) = project_web_url {
-            // Get commit SHA or use 'main' as default branch
-            let branch_or_commit = self.config.commit_sha.as_deref().unwrap_or("main");
-
-            // Create permalink format: /project/-/blob/branch/file#Lnumber
-            let file_url =
-                format!("{base_url}/-/blob/{branch_or_commit}/{file_path}#L{line_number}");
-
-            // Return as markdown link with both filename and line number
-            format!("[`{file_path}`]({file_url})")
-        } else {
-            // Fallback to just the filename in code format if no URL available
-            format!("`{file_path}`")
-        }
+        let project_web_url = get_project_web_url(
+            self.config.project_web_url.as_deref(),
+            self.config.project_path_with_namespace.as_deref(),
+            &self.config.gitlab_url,
+        );
+        create_file_link(
+            file_path,
+            line_number,
+            project_web_url.as_deref(),
+            self.config.commit_sha.as_deref(),
+        )
     }
 
-    /// Get project web URL from available configuration
-    fn get_project_web_url(&self) -> Option<String> {
-        // First try CI_PROJECT_URL if available (most reliable)
-        if let Some(ref project_url) = self.config.project_web_url {
-            return Some(project_url.clone());
-        }
-
-        // If we have project path with namespace, construct URL
-        if let Some(ref project_path) = self.config.project_path_with_namespace {
-            if self.config.gitlab_url.contains("/api/v4/projects/") {
-                let web_base = self.config.gitlab_url.replace("/api/v4/projects/", "/");
-                return Some(format!("{web_base}{project_path}"));
-            }
-        }
-
-        None
+    /// Create pipeline URL using the shared GitLab utilities
+    fn create_pipeline_url(&self, pipeline_id: &str) -> String {
+        let url_config = GitLabUrlConfig::new(
+            self.config.gitlab_url.clone(),
+            self.config.project_id.clone(),
+            self.config.project_web_url.clone(),
+            self.config.project_path_with_namespace.clone(),
+        );
+        create_pipeline_url(&url_config, pipeline_id)
     }
 
     /// Fetch and cache project information for URL construction
@@ -1171,46 +1059,6 @@ impl GitLabIssuesClient {
         }
 
         Ok(())
-    }
-
-    /// Convert Veracode severity to human-readable name
-    fn get_severity_name(&self, severity: u32) -> &'static str {
-        match severity {
-            5 => "Very High",
-            4 => "High",
-            3 => "Medium",
-            2 => "Low",
-            1 => "Very Low",
-            0 => "Info",
-            _ => "Unknown",
-        }
-    }
-
-    /// Strip HTML tags from display text to get plain text message
-    fn strip_html_tags(&self, html: &str) -> String {
-        // Simple HTML tag removal
-        let mut result = String::new();
-        let mut in_tag = false;
-
-        for ch in html.chars() {
-            match ch {
-                '<' => in_tag = true,
-                '>' => in_tag = false,
-                _ if !in_tag => result.push(ch),
-                _ => {}
-            }
-        }
-
-        // Clean up extra whitespace and decode common HTML entities
-        result
-            .split_whitespace()
-            .collect::<Vec<&str>>()
-            .join(" ")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&amp;", "&")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
     }
 }
 
@@ -1372,7 +1220,7 @@ mod tests {
 
     #[test]
     fn test_severity_name_conversion() {
-        let client = GitLabIssuesClient {
+        let _client = GitLabIssuesClient {
             client: Client::new(),
             config: GitLabConfig {
                 api_token: SecureToken::new("test".to_string()),
@@ -1392,12 +1240,12 @@ mod tests {
             retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
         };
 
-        assert_eq!(client.get_severity_name(5), "Very High");
-        assert_eq!(client.get_severity_name(4), "High");
-        assert_eq!(client.get_severity_name(3), "Medium");
-        assert_eq!(client.get_severity_name(2), "Low");
-        assert_eq!(client.get_severity_name(1), "Very Low");
-        assert_eq!(client.get_severity_name(0), "Info");
+        assert_eq!(get_severity_name(5), "Very High");
+        assert_eq!(get_severity_name(4), "High");
+        assert_eq!(get_severity_name(3), "Medium");
+        assert_eq!(get_severity_name(2), "Low");
+        assert_eq!(get_severity_name(1), "Very Low");
+        assert_eq!(get_severity_name(0), "Info");
     }
 
     #[test]
@@ -1750,5 +1598,35 @@ mod tests {
             env::remove_var("VERASCAN_INITIAL_RETRY_DELAY_MS");
             env::remove_var("VERASCAN_BACKOFF_MULTIPLIER");
         }
+    }
+
+    #[test]
+    fn test_pipeline_url_generation_integration() {
+        // Test that the client properly uses the shared utility for pipeline URL generation
+        let client = GitLabIssuesClient {
+            client: Client::new(),
+            config: GitLabConfig {
+                api_token: SecureToken::new("test".to_string()),
+                project_id: "123".to_string(),
+                pipeline_id: Some("456".to_string()),
+                gitlab_url: "https://gitlab.example.com/api/v4/projects/".to_string(),
+                project_web_url: Some("https://gitlab.example.com/group/project".to_string()),
+                commit_sha: None,
+                project_path_with_namespace: None,
+                project_name: None,
+                project_dir: None,
+                path_resolver: None,
+                http_timeouts: HttpTimeouts::default(),
+                retry_config: RetryConfig::default(),
+            },
+            debug: false,
+            retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
+        };
+
+        let pipeline_url = client.create_pipeline_url("456");
+        assert_eq!(
+            pipeline_url,
+            "https://gitlab.example.com/group/project/-/pipelines/456"
+        );
     }
 }

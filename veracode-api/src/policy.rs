@@ -63,20 +63,21 @@ pub struct SecurityPolicy {
     pub links: Option<serde_json::Value>,
 }
 
-/// Policy compliance status
+/// Policy compliance status (XML API values from getbuildinfo.do)
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "UPPERCASE")]
+#[serde(rename_all = "PascalCase")]
 pub enum PolicyComplianceStatus {
     /// Application passes all policy requirements
-    Pass,
-    /// Application fails policy requirements
-    Fail,
-    /// Policy compliance check is pending
-    Pending,
-    /// Policy compliance status is not determined
-    NotDetermined,
-    /// Policy compliance check resulted in error
-    Error,
+    Passed,
+    /// Application passes with conditional requirements  
+    #[serde(rename = "Conditional Pass")]
+    ConditionalPass,
+    /// Application fails policy requirements (triggers build break)
+    #[serde(rename = "Did Not Pass")]
+    DidNotPass,
+    /// Policy compliance status has not been assessed
+    #[serde(rename = "Not Assessed")]
+    NotAssessed,
 }
 
 /// Individual policy rule
@@ -264,6 +265,118 @@ pub struct FindingsSummary {
     pub by_severity: HashMap<String, u32>,
     /// Number of findings by category
     pub by_category: Option<HashMap<String, u32>>,
+}
+
+/// Summary report data structure matching Veracode summary_report API response
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryReport {
+    /// Application ID
+    pub app_id: u64,
+    /// Application name
+    pub app_name: String,
+    /// Build ID
+    pub build_id: u64,
+    /// Policy compliance status (e.g., "Did Not Pass", "Passed", "Conditional Pass")
+    pub policy_compliance_status: String,
+    /// Policy name
+    pub policy_name: String,
+    /// Policy version
+    pub policy_version: u32,
+    /// Whether the policy rules status passed
+    pub policy_rules_status: String,
+    /// Whether grace period expired
+    pub grace_period_expired: bool,
+    /// Whether scan is overdue
+    pub scan_overdue: String,
+    /// Whether this is the latest build
+    pub is_latest_build: bool,
+    /// Sandbox name (optional)
+    pub sandbox_name: Option<String>,
+    /// Sandbox ID (optional)
+    pub sandbox_id: Option<u64>,
+    /// Generation date
+    pub generation_date: String,
+    /// Last update time
+    pub last_update_time: String,
+    /// Static analysis summary
+    #[serde(rename = "static-analysis")]
+    pub static_analysis: Option<StaticAnalysisSummary>,
+    /// Flaw status summary
+    #[serde(rename = "flaw-status")]
+    pub flaw_status: Option<FlawStatusSummary>,
+    /// Software composition analysis summary
+    pub software_composition_analysis: Option<ScaSummary>,
+    /// Severity breakdown
+    pub severity: Option<Vec<SeverityLevel>>,
+}
+
+/// Static analysis summary from summary report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticAnalysisSummary {
+    /// Rating (e.g., "A", "B", "C")
+    pub rating: Option<String>,
+    /// Score (0-100)
+    pub score: Option<u32>,
+    /// Mitigated rating
+    pub mitigated_rating: Option<String>,
+    /// Mitigated score
+    pub mitigated_score: Option<u32>,
+    /// Analysis size in bytes
+    pub analysis_size_bytes: Option<u64>,
+    /// Engine version
+    pub engine_version: Option<String>,
+    /// Published date
+    pub published_date: Option<String>,
+    /// Version/build identifier
+    pub version: Option<String>,
+}
+
+/// Flaw status summary from summary report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FlawStatusSummary {
+    /// New flaws
+    pub new: u32,
+    /// Reopened flaws
+    pub reopen: u32,
+    /// Open flaws
+    pub open: u32,
+    /// Fixed flaws
+    pub fixed: u32,
+    /// Total flaws
+    pub total: u32,
+    /// Not mitigated flaws
+    pub not_mitigated: u32,
+}
+
+/// Software Composition Analysis summary
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScaSummary {
+    /// Third party components count
+    pub third_party_components: u32,
+    /// Whether violates policy
+    pub violate_policy: bool,
+    /// Components that violated policy
+    pub components_violated_policy: u32,
+}
+
+/// Severity level breakdown from summary report
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SeverityLevel {
+    /// Severity level (0-5)
+    pub level: u32,
+    /// Categories for this severity level
+    pub category: Vec<CategorySummary>,
+}
+
+/// Category summary within severity level
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategorySummary {
+    /// Category name
+    pub categoryname: String,
+    /// Severity name
+    pub severity: String,
+    /// Count of flaws in this category
+    pub count: u32,
 }
 
 /// Scan frequency rule for policies
@@ -597,40 +710,199 @@ impl<'a> PolicyApi<'a> {
             .ok_or(PolicyError::NotFound)
     }
 
-    /// Evaluate policy compliance for an application
+    /// Evaluates policy compliance for an application or sandbox using XML API
+    ///
+    /// This uses the /api/5.0/getbuildinfo.do endpoint which is the only working
+    /// policy compliance endpoint as the REST API compliance endpoints return 404.
     ///
     /// # Arguments
     ///
-    /// * `application_guid` - The GUID of the application
-    /// * `policy_guid` - The GUID of the policy to evaluate against
-    /// * `sandbox_guid` - Optional sandbox GUID for sandbox evaluation
+    /// * `app_id` - The numeric ID of the application
+    /// * `sandbox_id` - Optional numeric ID of the sandbox to evaluate
     ///
     /// # Returns
     ///
-    /// A `Result` containing the compliance result or an error.
-    pub async fn evaluate_policy_compliance(
+    /// A `Result` containing the policy compliance status string or an error.
+    pub async fn evaluate_policy_compliance_via_buildinfo(
         &self,
-        application_guid: &str,
-        policy_guid: &str,
-        sandbox_guid: Option<&str>,
-    ) -> Result<PolicyComplianceResult, PolicyError> {
-        let endpoint = if let Some(sandbox) = sandbox_guid {
-            format!(
-                "/appsec/v1/applications/{application_guid}/sandboxes/{sandbox}/policy/{policy_guid}/compliance"
-            )
-        } else {
-            format!("/appsec/v1/applications/{application_guid}/policy/{policy_guid}/compliance")
+        app_id: &str,
+        sandbox_id: Option<&str>,
+    ) -> Result<std::borrow::Cow<'static, str>, PolicyError> {
+        self.evaluate_policy_compliance_via_buildinfo_with_retry(app_id, sandbox_id, 30, 10)
+            .await
+    }
+
+    /// Evaluates policy compliance with retry logic for when assessment is not yet complete
+    ///
+    /// This function will retry the policy evaluation check when the status is "Not Assessed"
+    /// until either the assessment completes or the maximum retry attempts are reached.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_id` - The numeric ID of the application
+    /// * `sandbox_id` - Optional numeric ID of the sandbox to evaluate
+    /// * `max_retries` - Maximum number of retry attempts (default: 30)
+    /// * `retry_delay_seconds` - Delay between retries in seconds (default: 10)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the policy compliance status string or an error.
+    pub async fn evaluate_policy_compliance_via_buildinfo_with_retry(
+        &self,
+        app_id: &str,
+        sandbox_id: Option<&str>,
+        max_retries: u32,
+        retry_delay_seconds: u64,
+    ) -> Result<std::borrow::Cow<'static, str>, PolicyError> {
+        use crate::build::{BuildError, GetBuildInfoRequest};
+        use std::borrow::Cow;
+        use tokio::time::{Duration, sleep};
+
+        let build_request = GetBuildInfoRequest {
+            app_id: app_id.to_string(),
+            build_id: None, // Get latest build
+            sandbox_id: sandbox_id.map(str::to_string),
         };
 
-        let response = self.client.get(&endpoint, None).await?;
+        let mut attempts = 0;
+        loop {
+            let build_info = self
+                .client
+                .build_api()
+                .get_build_info(&build_request)
+                .await
+                .map_err(|e| match e {
+                    BuildError::BuildNotFound
+                    | BuildError::ApplicationNotFound
+                    | BuildError::SandboxNotFound => PolicyError::NotFound,
+                    BuildError::Api(api_err) => PolicyError::Api(api_err),
+                    BuildError::InvalidParameter(msg)
+                    | BuildError::CreationFailed(msg)
+                    | BuildError::UpdateFailed(msg)
+                    | BuildError::DeletionFailed(msg)
+                    | BuildError::XmlParsingError(msg) => {
+                        PolicyError::Api(crate::VeracodeError::InvalidResponse(msg))
+                    }
+                    BuildError::Unauthorized | BuildError::PermissionDenied => PolicyError::Api(
+                        crate::VeracodeError::Authentication("Build API access denied".to_string()),
+                    ),
+                    BuildError::BuildInProgress => {
+                        PolicyError::Api(crate::VeracodeError::InvalidResponse(
+                            "Build is currently in progress".to_string(),
+                        ))
+                    }
+                })?;
+
+            // Get the policy compliance status
+            let status = build_info
+                .policy_compliance_status
+                .as_deref()
+                .unwrap_or("Not Assessed");
+
+            // If status is not "Not Assessed", return the result
+            if status != "Not Assessed" {
+                return Ok(Cow::Owned(status.to_string()));
+            }
+
+            // If we've reached max retries, return "Not Assessed"
+            attempts += 1;
+            if attempts >= max_retries {
+                println!(
+                    "⚠️  Policy evaluation still not assessed after {max_retries} attempts. This may indicate:"
+                );
+                println!("   - Scan is still in progress");
+                println!("   - Policy evaluation is taking longer than expected");
+                println!("   - Application may not have a policy assigned");
+                return Ok(Cow::Borrowed("Not Assessed"));
+            }
+
+            // Log retry attempt
+            println!(
+                "🔄 Policy evaluation not yet assessed, retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
+            );
+
+            // Wait before retrying
+            sleep(Duration::from_secs(retry_delay_seconds)).await;
+        }
+    }
+
+    /// Determines if build should break based on policy compliance status
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The policy compliance status string from XML API
+    ///
+    /// # Returns
+    ///
+    /// `true` if build should break, `false` otherwise
+    pub fn should_break_build(status: &str) -> bool {
+        status == "Did Not Pass"
+    }
+
+    /// Gets the appropriate exit code for CI/CD systems based on policy compliance
+    ///
+    /// # Arguments
+    ///
+    /// * `status` - The policy compliance status string from XML API
+    ///
+    /// # Returns
+    ///
+    /// Exit code: 0 for success, 4 for policy failure (build break)
+    pub fn get_exit_code_for_status(status: &str) -> i32 {
+        if Self::should_break_build(status) {
+            4 // DID_NOT_PASSED_POLICY - matches Java wrapper
+        } else {
+            0 // SUCCESS
+        }
+    }
+
+    /// Get summary report for an application build using the REST API
+    ///
+    /// This uses the /appsec/v2/applications/{app_guid}/summary_report endpoint
+    /// to get policy compliance status and scan results.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - The GUID of the application
+    /// * `build_id` - The build ID (GUID) to get summary for
+    /// * `sandbox_guid` - Optional sandbox GUID for sandbox scans
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the summary report or an error.
+    pub async fn get_summary_report(
+        &self,
+        app_guid: &str,
+        build_id: Option<&str>,
+        sandbox_guid: Option<&str>,
+    ) -> Result<SummaryReport, PolicyError> {
+        let endpoint = format!("/appsec/v2/applications/{app_guid}/summary_report");
+
+        // Build query parameters
+        let mut query_params = Vec::new();
+        if let Some(build_id) = build_id {
+            query_params.push(("build_id".to_string(), build_id.to_string()));
+        }
+        if let Some(sandbox_guid) = sandbox_guid {
+            query_params.push(("context".to_string(), sandbox_guid.to_string()));
+        }
+
+        let response = self.client.get(&endpoint, Some(&query_params)).await?;
 
         let status = response.status().as_u16();
         match status {
             200 => {
-                let compliance: PolicyComplianceResult = response.json().await?;
-                Ok(compliance)
+                let summary_report: SummaryReport = response.json().await?;
+                Ok(summary_report)
             }
+            400 => {
+                let error_text = response.text().await.unwrap_or_default();
+                Err(PolicyError::InvalidConfig(error_text))
+            }
+            401 => Err(PolicyError::Unauthorized),
+            403 => Err(PolicyError::PermissionDenied),
             404 => Err(PolicyError::NotFound),
+            500 => Err(PolicyError::InternalServerError),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
                 Err(PolicyError::Api(VeracodeError::InvalidResponse(format!(
@@ -638,6 +910,100 @@ impl<'a> PolicyApi<'a> {
                 ))))
             }
         }
+    }
+
+    /// Evaluates policy compliance using the summary report API with retry logic
+    ///
+    /// This function uses the summary_report endpoint instead of the buildinfo XML API
+    /// and will retry when results are not ready yet.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - The GUID of the application  
+    /// * `build_id` - The build ID (GUID) to check compliance for
+    /// * `sandbox_guid` - Optional sandbox GUID for sandbox scans
+    /// * `max_retries` - Maximum number of retry attempts (default: 30)
+    /// * `retry_delay_seconds` - Delay between retries in seconds (default: 10)
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the policy compliance status string or an error.
+    pub async fn evaluate_policy_compliance_via_summary_report_with_retry(
+        &self,
+        app_guid: &str,
+        build_id: &str,
+        sandbox_guid: Option<&str>,
+        max_retries: u32,
+        retry_delay_seconds: u64,
+    ) -> Result<std::borrow::Cow<'static, str>, PolicyError> {
+        use std::borrow::Cow;
+        use tokio::time::{Duration, sleep};
+
+        let mut attempts = 0;
+        loop {
+            let summary_report = self
+                .get_summary_report(app_guid, Some(build_id), sandbox_guid)
+                .await?;
+
+            // Check if results are ready - look for "Results Ready" or completed status
+            // The summary report should have policy_compliance_status populated when ready
+            let status = &summary_report.policy_compliance_status;
+
+            // If status is not empty and not "Not Assessed", return the result
+            if !status.is_empty() && status != "Not Assessed" {
+                return Ok(Cow::Owned(status.clone()));
+            }
+
+            // If we've reached max retries, return current status
+            attempts += 1;
+            if attempts >= max_retries {
+                println!(
+                    "⚠️  Policy evaluation still not ready after {max_retries} attempts. Status: {status}"
+                );
+                println!("   This may indicate:");
+                println!("   - Scan is still in progress");
+                println!("   - Policy evaluation is taking longer than expected");
+                println!("   - Build results are not yet available");
+                return Ok(Cow::Owned(status.clone()));
+            }
+
+            // Log retry attempt
+            println!(
+                "🔄 Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
+            );
+
+            // Wait before retrying
+            sleep(Duration::from_secs(retry_delay_seconds)).await;
+        }
+    }
+
+    /// Evaluates policy compliance using the summary report API (single attempt)
+    ///
+    /// This is a convenience method that calls the retry version with default parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - The GUID of the application  
+    /// * `build_id` - The build ID (GUID) to check compliance for
+    /// * `sandbox_guid` - Optional sandbox GUID for sandbox scans
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the policy compliance status string or an error.
+    pub async fn evaluate_policy_compliance_via_summary_report(
+        &self,
+        app_guid: &str,
+        build_id: &str,
+        sandbox_guid: Option<&str>,
+    ) -> Result<std::borrow::Cow<'static, str>, PolicyError> {
+        self.evaluate_policy_compliance_via_summary_report_with_retry(
+            app_guid,
+            build_id,
+            sandbox_guid,
+            30,
+            10,
+        )
+        .await
     }
 
     /// Initiate a policy scan for an application
@@ -727,74 +1093,6 @@ impl<'a> PolicyApi<'a> {
         ))
     }
 
-    /// Get policy violations for an application
-    ///
-    /// # Arguments
-    ///
-    /// * `application_guid` - The GUID of the application
-    /// * `policy_guid` - The GUID of the policy
-    /// * `sandbox_guid` - Optional sandbox GUID
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing policy violations or an error.
-    pub async fn get_policy_violations(
-        &self,
-        application_guid: &str,
-        policy_guid: &str,
-        sandbox_guid: Option<&str>,
-    ) -> Result<Vec<PolicyViolation>, PolicyError> {
-        let compliance = self
-            .evaluate_policy_compliance(application_guid, policy_guid, sandbox_guid)
-            .await?;
-        Ok(compliance.violations.unwrap_or_default())
-    }
-}
-
-/// Convenience methods for common policy operations
-impl<'a> PolicyApi<'a> {
-    /// Check if an application passes policy compliance
-    ///
-    /// # Arguments
-    ///
-    /// * `application_guid` - The GUID of the application
-    /// * `policy_guid` - The GUID of the policy
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a boolean indicating compliance status.
-    pub async fn is_application_compliant(
-        &self,
-        application_guid: &str,
-        policy_guid: &str,
-    ) -> Result<bool, PolicyError> {
-        let compliance = self
-            .evaluate_policy_compliance(application_guid, policy_guid, None)
-            .await?;
-        Ok(compliance.passed)
-    }
-
-    /// Get compliance score for an application
-    ///
-    /// # Arguments
-    ///
-    /// * `application_guid` - The GUID of the application
-    /// * `policy_guid` - The GUID of the policy
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing the compliance score or an error.
-    pub async fn get_compliance_score(
-        &self,
-        application_guid: &str,
-        policy_guid: &str,
-    ) -> Result<Option<f64>, PolicyError> {
-        let compliance = self
-            .evaluate_policy_compliance(application_guid, policy_guid, None)
-            .await?;
-        Ok(compliance.score)
-    }
-
     /// Get active policies for the organization
     ///
     /// # Returns
@@ -854,11 +1152,119 @@ mod tests {
 
     #[test]
     fn test_policy_compliance_status_serialization() {
-        let status = PolicyComplianceStatus::Pass;
+        let status = PolicyComplianceStatus::Passed;
         let json = serde_json::to_string(&status).unwrap();
-        assert_eq!(json, "\"PASS\"");
+        assert_eq!(json, "\"Passed\"");
 
         let deserialized: PolicyComplianceStatus = serde_json::from_str(&json).unwrap();
-        assert!(matches!(deserialized, PolicyComplianceStatus::Pass));
+        assert!(matches!(deserialized, PolicyComplianceStatus::Passed));
+
+        // Test the special case statuses with spaces
+        let conditional_pass = PolicyComplianceStatus::ConditionalPass;
+        let json = serde_json::to_string(&conditional_pass).unwrap();
+        assert_eq!(json, "\"Conditional Pass\"");
+
+        let did_not_pass = PolicyComplianceStatus::DidNotPass;
+        let json = serde_json::to_string(&did_not_pass).unwrap();
+        assert_eq!(json, "\"Did Not Pass\"");
+    }
+
+    #[test]
+    fn test_break_build_logic() {
+        assert!(PolicyApi::should_break_build("Did Not Pass"));
+        assert!(!PolicyApi::should_break_build("Passed"));
+        assert!(!PolicyApi::should_break_build("Conditional Pass"));
+        // "Not Assessed" should not break build as the retry logic should handle waiting
+        // for policy evaluation to complete before reaching this point
+        assert!(!PolicyApi::should_break_build("Not Assessed"));
+
+        assert_eq!(PolicyApi::get_exit_code_for_status("Did Not Pass"), 4);
+        assert_eq!(PolicyApi::get_exit_code_for_status("Passed"), 0);
+        assert_eq!(PolicyApi::get_exit_code_for_status("Conditional Pass"), 0);
+        // "Not Assessed" returns 0 because it should only reach here after retry logic
+        // has exhausted attempts, indicating a configuration or timing issue rather than policy failure
+        assert_eq!(PolicyApi::get_exit_code_for_status("Not Assessed"), 0);
+    }
+
+    #[test]
+    fn test_summary_report_serialization() {
+        let summary_json = r#"{
+            "app_id": 2676517,
+            "app_name": "Verascan Java Test",
+            "build_id": 54209787,
+            "policy_compliance_status": "Did Not Pass",
+            "policy_name": "SecureCode Policy",
+            "policy_version": 1,
+            "policy_rules_status": "Did Not Pass",
+            "grace_period_expired": false,
+            "scan_overdue": "false",
+            "is_latest_build": false,
+            "generation_date": "2025-08-05 10:14:45 UTC",
+            "last_update_time": "2025-08-05 10:00:51 UTC"
+        }"#;
+
+        let summary: Result<SummaryReport, _> = serde_json::from_str(summary_json);
+        assert!(summary.is_ok());
+
+        let summary = summary.unwrap();
+        assert_eq!(summary.policy_compliance_status, "Did Not Pass");
+        assert_eq!(summary.app_name, "Verascan Java Test");
+        assert_eq!(summary.build_id, 54209787);
+        assert!(PolicyApi::should_break_build(
+            &summary.policy_compliance_status
+        ));
+    }
+
+    #[test]
+    fn test_export_json_structure() {
+        // Test the JSON structure that would be exported
+        let summary_report = SummaryReport {
+            app_id: 2676517,
+            app_name: "Test App".to_string(),
+            build_id: 54209787,
+            policy_compliance_status: "Passed".to_string(),
+            policy_name: "Test Policy".to_string(),
+            policy_version: 1,
+            policy_rules_status: "Passed".to_string(),
+            grace_period_expired: false,
+            scan_overdue: "false".to_string(),
+            is_latest_build: true,
+            sandbox_name: Some("test-sandbox".to_string()),
+            sandbox_id: Some(123456),
+            generation_date: "2025-08-05 10:14:45 UTC".to_string(),
+            last_update_time: "2025-08-05 10:00:51 UTC".to_string(),
+            static_analysis: None,
+            flaw_status: None,
+            software_composition_analysis: None,
+            severity: None,
+        };
+
+        let export_json = serde_json::json!({
+            "summary_report": summary_report,
+            "export_metadata": {
+                "exported_at": "2025-08-05T10:14:45Z",
+                "tool": "verascan",
+                "export_type": "summary_report",
+                "scan_configuration": {
+                    "autoscan": true,
+                    "scan_all_nonfatal_top_level_modules": true,
+                    "include_new_modules": true
+                }
+            }
+        });
+
+        // Verify JSON structure
+        assert!(export_json["summary_report"]["app_name"].is_string());
+        assert!(export_json["summary_report"]["policy_compliance_status"].is_string());
+        assert!(export_json["export_metadata"]["export_type"].is_string());
+        assert_eq!(
+            export_json["export_metadata"]["export_type"],
+            "summary_report"
+        );
+
+        // Verify the summary report can be serialized and deserialized
+        let json_string = serde_json::to_string_pretty(&export_json).unwrap();
+        assert!(json_string.contains("summary_report"));
+        assert!(json_string.contains("export_metadata"));
     }
 }

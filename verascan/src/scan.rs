@@ -12,7 +12,116 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use veracode_platform::identity::IdentityApi;
-use veracode_platform::{VeracodeConfig, VeracodeRegion};
+use veracode_platform::{RetryConfig, VeracodeConfig, VeracodeRegion};
+
+/// Configure VeracodeConfig with VERASCAN environment variables
+///
+/// This function applies the same environment variables used by GitLab HTTP client
+/// to the VeracodeConfig for consistent configuration across the application.
+pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool) -> VeracodeConfig {
+    use std::env;
+
+    // Certificate validation
+    if env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
+        config = config.with_certificate_validation_disabled();
+        if debug {
+            println!(
+                "⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION"
+            );
+            println!("   This should only be used in development environments!");
+        }
+    }
+
+    // Connection timeout
+    if let Ok(timeout_str) = env::var("VERASCAN_CONNECT_TIMEOUT") {
+        if let Ok(timeout) = timeout_str.parse::<u64>() {
+            config = config.with_connect_timeout(timeout);
+            if debug {
+                println!("🔧 Using VERASCAN_CONNECT_TIMEOUT: {timeout} seconds");
+            }
+        } else if debug {
+            println!("⚠️  Invalid VERASCAN_CONNECT_TIMEOUT value: {timeout_str}");
+        }
+    }
+
+    // Request timeout
+    if let Ok(timeout_str) = env::var("VERASCAN_REQUEST_TIMEOUT") {
+        if let Ok(timeout) = timeout_str.parse::<u64>() {
+            config = config.with_request_timeout(timeout);
+            if debug {
+                println!("🔧 Using VERASCAN_REQUEST_TIMEOUT: {timeout} seconds");
+            }
+        } else if debug {
+            println!("⚠️  Invalid VERASCAN_REQUEST_TIMEOUT value: {timeout_str}");
+        }
+    }
+
+    // Retry configuration
+    let mut retry_config = RetryConfig::default();
+    let mut retry_modified = false;
+
+    if let Ok(retries_str) = env::var("VERASCAN_MAX_RETRIES") {
+        if let Ok(retries) = retries_str.parse::<u32>() {
+            retry_config = retry_config.with_max_attempts(retries);
+            retry_modified = true;
+            if debug {
+                println!("🔧 Using VERASCAN_MAX_RETRIES: {retries}");
+            }
+        } else if debug {
+            println!("⚠️  Invalid VERASCAN_MAX_RETRIES value: {retries_str}");
+        }
+    }
+
+    if let Ok(delay_str) = env::var("VERASCAN_INITIAL_RETRY_DELAY_MS") {
+        if let Ok(delay) = delay_str.parse::<u64>() {
+            retry_config = retry_config.with_initial_delay_millis(delay);
+            retry_modified = true;
+            if debug {
+                println!("🔧 Using VERASCAN_INITIAL_RETRY_DELAY_MS: {delay}ms");
+            }
+        } else if debug {
+            println!("⚠️  Invalid VERASCAN_INITIAL_RETRY_DELAY_MS value: {delay_str}");
+        }
+    }
+
+    if let Ok(delay_str) = env::var("VERASCAN_MAX_RETRY_DELAY_MS") {
+        if let Ok(delay) = delay_str.parse::<u64>() {
+            retry_config = retry_config.with_max_delay_millis(delay);
+            retry_modified = true;
+            if debug {
+                println!("🔧 Using VERASCAN_MAX_RETRY_DELAY_MS: {delay}ms");
+            }
+        } else if debug {
+            println!("⚠️  Invalid VERASCAN_MAX_RETRY_DELAY_MS value: {delay_str}");
+        }
+    }
+
+    if let Ok(multiplier_str) = env::var("VERASCAN_BACKOFF_MULTIPLIER") {
+        if let Ok(multiplier) = multiplier_str.parse::<f64>() {
+            retry_config = retry_config.with_exponential_backoff(multiplier);
+            retry_modified = true;
+            if debug {
+                println!("🔧 Using VERASCAN_BACKOFF_MULTIPLIER: {multiplier}");
+            }
+        } else if debug {
+            println!("⚠️  Invalid VERASCAN_BACKOFF_MULTIPLIER value: {multiplier_str}");
+        }
+    }
+
+    if env::var("VERASCAN_DISABLE_JITTER").is_ok() {
+        retry_config = retry_config.with_jitter_disabled();
+        retry_modified = true;
+        if debug {
+            println!("🔧 Jitter disabled via VERASCAN_DISABLE_JITTER");
+        }
+    }
+
+    if retry_modified {
+        config = config.with_retry_config(retry_config);
+    }
+
+    config
+}
 
 /// Validate baseline file early before starting the scan
 pub fn validate_baseline_file_early(baseline_path: &str, args: &Args) -> Result<(), i32> {
@@ -145,16 +254,8 @@ pub fn execute_pipeline_scan(matched_files: &[PathBuf], args: &Args) -> Result<(
         let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
 
         let region = parse_region(&args.region)?;
-        let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
-
-        // Check environment variable for certificate validation
-        if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
-            veracode_config = veracode_config.with_certificate_validation_disabled();
-            println!(
-                "⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION"
-            );
-            println!("   This should only be used in development environments!");
-        }
+        let base_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
+        let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
         let pipeline_config = create_pipeline_config(args, region);
 
         let submitter = PipelineSubmitter::new(veracode_config, pipeline_config).map_err(|e| {
@@ -683,12 +784,15 @@ async fn handle_findings_export(
                 },
                 "gitlab" => match ensure_extension(export_path, "json") {
                     Ok(gitlab_path) => {
-                        let gitlab_config = GitLabExportConfig::default();
-                        let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug);
-                        if let Err(e) =
-                            gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_path)
-                        {
-                            eprintln!("❌ Failed to export GitLab SAST report: {e}");
+                        if let Commands::Pipeline { project_dir, .. } = &args.command {
+                            let gitlab_config = GitLabExportConfig::default();
+                            let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug)
+                                .with_project_dir(project_dir);
+                            if let Err(e) =
+                                gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_path)
+                            {
+                                eprintln!("❌ Failed to export GitLab SAST report: {e}");
+                            }
                         }
                     }
                     Err(e) => {
@@ -724,12 +828,16 @@ async fn handle_findings_export(
                                 }
                                 path
                             };
-                            let gitlab_config = GitLabExportConfig::default();
-                            let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug);
-                            if let Err(e) = gitlab_exporter
-                                .export_to_gitlab_sast(&final_filtered, &gitlab_sast_path)
-                            {
-                                eprintln!("❌ Failed to export GitLab SAST report: {e}");
+                            if let Commands::Pipeline { project_dir, .. } = &args.command {
+                                let gitlab_config = GitLabExportConfig::default();
+                                let gitlab_exporter =
+                                    GitLabExporter::new(gitlab_config, args.debug)
+                                        .with_project_dir(project_dir);
+                                if let Err(e) = gitlab_exporter
+                                    .export_to_gitlab_sast(&final_filtered, &gitlab_sast_path)
+                                {
+                                    eprintln!("❌ Failed to export GitLab SAST report: {e}");
+                                }
                             }
                         }
                         (Err(e), _, _) | (_, Err(e), _) | (_, _, Err(e)) => {
@@ -1546,6 +1654,7 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         export_results,
         deleteincompletescan,
         no_wait,
+        break_build,
         ..
     } = &args.command
     {
@@ -1573,16 +1682,8 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         };
 
         let region = parse_region(&args.region)?;
-        let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
-
-        // Check environment variable for certificate validation
-        if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
-            veracode_config = veracode_config.with_certificate_validation_disabled();
-            println!(
-                "⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION"
-            );
-            println!("   This should only be used in development environments!");
-        }
+        let base_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
+        let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
 
         // Parse modules if provided
         let selected_modules = modules.as_ref().map(|modules_str| {
@@ -1606,6 +1707,9 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
             monitor_completion: !no_wait, // Inverse of no_wait
             export_results_path: export_results.clone(),
             deleteincompletescan: *deleteincompletescan,
+            break_build: *break_build,
+            policy_wait_max_retries: 30, // Default: 30 retries (5 minutes)
+            policy_wait_retry_delay_seconds: 10, // Default: 10 seconds between retries
         };
 
         let submitter =

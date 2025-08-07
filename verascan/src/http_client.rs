@@ -1,12 +1,59 @@
 //! Centralized HTTP client with robust networking capabilities
 //!
 //! This module provides a centralized HTTP client with built-in retry logic,
-//! configurable timeouts, and exponential backoff for reliable API integrations.
+//! configurable timeouts, exponential backoff, and authentication strategies
+//! for reliable API integrations across GraphQL, REST, and other protocols.
 
-use reqwest::{Client, header::HeaderMap};
+use reqwest::{
+    Client,
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
+
+/// Authentication strategy for API clients
+#[derive(Debug, Clone)]
+pub enum AuthStrategy {
+    /// Bearer token in Authorization header
+    Bearer(String),
+    /// Custom header with token
+    CustomHeader { name: String, value: String },
+    /// No authentication
+    None,
+}
+
+impl AuthStrategy {
+    /// Apply authentication to headers
+    pub fn apply_to_headers(&self, headers: &mut HeaderMap) -> Result<(), HttpClientError> {
+        match self {
+            AuthStrategy::Bearer(token) => {
+                let auth_value =
+                    HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| {
+                        HttpClientError::AuthenticationError(format!("Invalid bearer token: {e}"))
+                    })?;
+                headers.insert(AUTHORIZATION, auth_value);
+            }
+            AuthStrategy::CustomHeader { name, value } => {
+                let header_name: HeaderName = name.parse().map_err(|e| {
+                    HttpClientError::ConfigurationError(format!(
+                        "Invalid header name '{name}': {e}"
+                    ))
+                })?;
+                let header_value = HeaderValue::from_str(value).map_err(|e| {
+                    HttpClientError::ConfigurationError(format!(
+                        "Invalid header value for '{name}': {e}"
+                    ))
+                })?;
+                headers.insert(header_name, header_value);
+            }
+            AuthStrategy::None => {
+                // No authentication to apply
+            }
+        }
+        Ok(())
+    }
+}
 
 /// HTTP timeout configuration
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -111,7 +158,62 @@ pub enum HttpClientError {
     #[error("Request timeout after {duration:?}")]
     Timeout { duration: Duration },
     #[error("Client configuration error: {0}")]
-    ConfigError(String),
+    ConfigurationError(String),
+    #[error("Missing required environment variable: {0}")]
+    MissingEnvVar(String),
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+    #[error("GraphQL error: {0}")]
+    GraphQLError(String),
+    #[error("GitLab specific error: {0}")]
+    GitLabError(String),
+}
+
+// Type aliases for backward compatibility and clarity
+pub type ApiClientError = HttpClientError;
+pub type GraphQLClientError = HttpClientError;
+pub type GitLabClientError = HttpClientError;
+
+/// Debug output utilities for API clients
+impl HttpClientError {
+    /// Print connectivity test message
+    pub fn print_connectivity_test(api_name: &str) {
+        println!("🔍 Testing {api_name} connectivity...");
+    }
+
+    /// Print successful connectivity message
+    pub fn print_connectivity_success(api_name: &str) {
+        println!("✅ {api_name} connectivity test successful");
+    }
+
+    /// Print validation message
+    pub fn print_validation(api_name: &str) {
+        println!("🔍 Validating {api_name} integration requirements...");
+    }
+
+    /// Print validation success
+    pub fn print_validation_success(api_name: &str) {
+        println!("✅ {api_name} connectivity validated successfully!");
+    }
+
+    /// Print API access confirmation
+    pub fn print_api_access() {
+        println!("   API access: ✅ Authenticated");
+    }
+
+    /// Print permission check result
+    pub fn print_permission_result(operation: &str, allowed: bool) {
+        if allowed {
+            println!("   {operation}: ✅ Permitted");
+        } else {
+            println!("   {operation}: ⚠️  May be restricted");
+        }
+    }
+
+    /// Print permission error
+    pub fn print_permission_error(operation: &str, error: &str) {
+        println!("   {operation}: ⚠️  Error checking permissions: {error}");
+    }
 }
 
 /// Centralized HTTP client with robust networking
@@ -569,6 +671,33 @@ impl HttpClientConfigBuilder {
 
     pub fn with_debug(mut self, debug: bool) -> Self {
         self.config.debug = debug;
+        self
+    }
+
+    /// Apply authentication strategy to the configuration
+    pub fn with_auth_strategy(mut self, auth: AuthStrategy) -> Result<Self, HttpClientError> {
+        auth.apply_to_headers(&mut self.config.default_headers)?;
+        Ok(self)
+    }
+
+    /// Convenience method for API clients with common patterns
+    pub fn for_api_client(base_url: String, env_prefix: &str) -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        Self::new(base_url)
+            .with_headers(headers)
+            .with_env_timeouts(env_prefix)
+            .with_env_retry_config(env_prefix)
+            .with_env_cert_validation(env_prefix)
+    }
+
+    /// Enable debug mode for API clients
+    pub fn with_api_debug_mode(mut self, api_name: &str, debug: bool) -> Self {
+        self.config.debug = debug;
+        if debug {
+            println!("🔍 Initializing {api_name} client with debug mode enabled");
+        }
         self
     }
 
