@@ -40,8 +40,15 @@ Verascan is a comprehensive command-line interface for the Veracode security pla
 ### Export Formats
 - **JSON**: Veracode baseline format for future comparisons
 - **CSV**: Spreadsheet-compatible findings export
-- **GitLab SAST**: Security Dashboard integration
+- **GitLab SAST**: Security Dashboard integration  
 - **Filtered JSON**: Policy violation reports
+
+### Export from Completed Scans
+- **Findings Retrieval**: Export security findings from completed Veracode assessment scans
+- **Policy & Sandbox Support**: Export from both policy scans and sandbox scans
+- **Server-Side Filtering**: API-level severity filtering to reduce network traffic
+- **Automatic Pagination**: Handles large result sets with intelligent pagination
+- **Performance Optimized**: Uses FindingsQuery builder pattern for efficient data retrieval
 
 ## Installation
 
@@ -191,6 +198,7 @@ verascan [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS]
 ### Available Commands
 - `pipeline`: Submit files for Veracode pipeline scan
 - `assessment`: Submit files for Veracode assessment scan (sandbox or policy)
+- `export`: Export findings from completed Veracode assessment scans
 - `policy <NAME>`: Download Veracode security policy by name
 
 ### Global Options
@@ -223,6 +231,7 @@ verascan [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS]
 --app-profile-name <NAME>          # Veracode application profile (required)
 --sandbox-name <NAME>              # Sandbox name for sandbox scans
 --no-wait                          # Submit scan and exit without waiting
+--break                            # Break build on platform policy compliance failure (conflicts with --no-wait)
 --modules <LIST>                   # Specific modules to scan (comma-separated)
 --teamname <NAME>                  # Team name for application creation
 --bus-cri <LEVEL>                  # Business criticality level
@@ -464,7 +473,48 @@ verascan pipeline --filepath ./artifacts \
   --findings-limit 50
 ```
 
-#### 8. Baseline Comparison with Policy
+#### 8. Export from Completed Scans
+```bash
+# Export findings from completed policy scan
+verascan export --app-profile-name "MyApplication" \
+  --export-findings policy-findings.json \
+  --export-format json \
+  --show-findings \
+  --debug
+
+# Export findings from completed sandbox scan  
+verascan export --app-profile-name "MyApplication" \
+  --sandbox-name "development-sandbox" \
+  --export-findings sandbox-findings.json \
+  --export-format json
+
+# Export with severity filtering (High and Very High only)
+verascan export --app-profile-name "MyApplication" \
+  --min-severity "High" \
+  --export-findings critical-findings.json \
+  --export-format json \
+  --show-findings
+
+# Export to GitLab SAST format for Security Dashboard
+verascan export --app-profile-name "MyApplication" \
+  --export-findings gitlab-sast-report.json \
+  --export-format gitlab
+
+# Export to multiple formats (JSON, CSV, GitLab SAST)
+verascan export --app-profile-name "MyApplication" \
+  --export-findings comprehensive-report \
+  --export-format all \
+  --min-severity "Medium"
+
+# Export with display in terminal (limited to 10 findings)
+verascan export --app-profile-name "MyApplication" \
+  --export-findings findings.json \
+  --show-findings \
+  --findings-limit 10 \
+  --debug
+```
+
+#### 9. Baseline Comparison with Policy
 ```bash
 # Baseline + policy enforcement
 verascan pipeline --filepath . \
@@ -495,6 +545,12 @@ verascan assessment --filepath ./artifacts \
   --app-profile-name "MyApp-Testing" \
   --sandbox-name "quick-test" \
   --no-wait
+
+# Assessment scan with break build on policy failure
+verascan assessment --filepath ./release \
+  --app-profile-name "MyApp-Production" \
+  --break \
+  --export-results production-assessment.json
 ```
 
 ## CI/CD Integration
@@ -734,6 +790,53 @@ When only pass/fail criteria are specified:
 - Violations found → exit 1 (failure)
 - No violations → exit 0 (success)
 
+### Break Build Functionality
+
+The `--break` flag enables CI/CD integration with Veracode platform policy compliance checking.
+
+#### How It Works
+- Uses Veracode's XML API (`/api/5.0/getbuildinfo.do`) to check policy compliance status
+- Only available for assessment scans (not pipeline scans)
+- Checks policy compliance after scan completion and results export
+- Uses Veracode standard exit codes that match the Java wrapper
+- **Cannot be used with `--no-wait`** (requires monitoring scan completion)
+
+#### Usage
+```bash
+# Assessment scan with break build
+verascan assessment --filepath ./release \
+  --app-profile-name "MyApp-Production" \
+  --break \
+  --export-results results.json
+
+# Sandbox assessment with break build
+verascan assessment --filepath ./dev-build \
+  --app-profile-name "MyApp-Development" \
+  --sandbox-name "feature-branch" \
+  --break \
+  --export-results results.json
+```
+
+#### Exit Codes
+| Code | Policy Status | Meaning |
+|------|---------------|---------|
+| `0` | `Passed`, `Conditional Pass`, `Not Assessed` | Build continues |
+| `4` | `Did Not Pass` | Build breaks (policy failure) |
+
+#### Error Handling
+- API failures don't break builds (graceful degradation)
+- Warning messages displayed for connection issues
+- Only actual policy failures trigger build breaks
+
+#### CI/CD Integration Example
+```yaml
+# GitLab CI example
+security_assessment:
+  script:
+    - verascan assessment --app-profile-name "$APP_NAME" --filepath . --break
+  # Exit code 4 will fail the pipeline if policy doesn't pass
+```
+
 ## Baseline Comparison
 
 ### Creating Baselines
@@ -800,8 +903,9 @@ Baseline files contain:
 ### Exit Codes
 
 - **0**: Success (no policy violations)
-- **1**: Policy violations found or scan errors
+- **1**: Policy violations found or scan errors  
 - **2**: Configuration or authentication errors
+- **4**: Veracode platform policy failure (when using `--break` flag)
 
 ### Severity Levels
 

@@ -1,3 +1,4 @@
+use crate::gitlab_common::strip_html_tags;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -632,7 +633,7 @@ impl FindingsAggregator {
             );
             println!(
                 "   └─ Description: {}",
-                self.strip_html_tags(&finding.display_text)
+                strip_html_tags(&finding.display_text)
             );
         }
 
@@ -703,25 +704,6 @@ impl FindingsAggregator {
             5 => "Very High",
             _ => "Unknown",
         }
-    }
-
-    /// Strip HTML tags from text for better CLI display
-    fn strip_html_tags(&self, html: &str) -> String {
-        // Simple HTML tag removal - in production you might want a proper HTML parser
-        let tag_regex =
-            regex::Regex::new(r"<[^>]*>").unwrap_or_else(|_| regex::Regex::new(r"").unwrap());
-        let without_tags = tag_regex.replace_all(html, "");
-
-        // Clean up extra whitespace and decode common HTML entities
-        without_tags
-            .replace("&amp;", "&")
-            .replace("&lt;", "<")
-            .replace("&gt;", ">")
-            .replace("&quot;", "\"")
-            .replace("&#39;", "'")
-            .split_whitespace()
-            .collect::<Vec<&str>>()
-            .join(" ")
     }
 
     /// Parse severity string to numeric value
@@ -860,14 +842,14 @@ mod tests {
 
     #[test]
     fn test_strip_html_tags() {
-        let aggregator = FindingsAggregator::new(false);
+        let _aggregator = FindingsAggregator::new(false);
 
         let html = "<p>This is a <strong>test</strong> with &amp; entities</p>";
         let expected = "This is a test with & entities";
-        assert_eq!(aggregator.strip_html_tags(html), expected);
+        assert_eq!(strip_html_tags(html), expected);
 
         let simple = "No HTML here";
-        assert_eq!(aggregator.strip_html_tags(simple), simple);
+        assert_eq!(strip_html_tags(simple), simple);
     }
 
     #[test]

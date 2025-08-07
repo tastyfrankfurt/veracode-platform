@@ -5,6 +5,157 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [0.4.0] - 2025-01-XX
+
+### Fixed
+- **Export API Error**: Fixed critical issue where export functionality failed with "Invalid request" error due to passing "latest" as build_id parameter to summary_report API
+- **Duplicate Messages**: Removed duplicate success messages in GitLab SAST export output
+
+### Improved
+- **Export Performance**: Replaced convenience methods with flexible FindingsQuery approach for more efficient data retrieval
+- **Server-Side Filtering**: Added API-level severity filtering to reduce network traffic and improve performance
+- **Code Efficiency**: Removed redundant client-side filtering logic since filtering now happens at the API level
+
+### Changed
+- Export workflow now uses `get_summary_report()` without build_id parameter to automatically get latest build
+- Findings retrieval now uses `FindingsQuery::new()` and `FindingsQuery::for_sandbox()` with `get_all_findings()`
+- Severity filtering moved from client-side to API-level using `with_severity()` method
+
+### Technical Details
+- Fixed `export.rs` line 284: Changed from `get_summary_report(app_guid, "latest", sandbox_guid)` to `get_summary_report(app_guid, None, sandbox_guid)`
+- Updated findings retrieval to use proper query builder pattern with optional severity filtering
+- Removed redundant filtering loop that was processing findings after API retrieval
+
+### Added
+- **Shared API Client Infrastructure**: Comprehensive consolidation of API client patterns to eliminate code duplication
+  - **Common API Utilities**: New `api_common.rs` module with shared types and utilities for all API integrations (GraphQL, GitLab, future clients)
+  - **Unified Error Handling**: Centralized `ApiClientError` enum with consistent error patterns across all API clients
+  - **Flexible Authentication**: `AuthStrategy` enum supporting Bearer tokens, custom headers, and extensible auth methods
+  - **Shared Configuration**: `ApiClientConfig` builder pattern with environment-based timeouts, retry config, and certificate validation
+  - **Consistent Debug Output**: `ApiDebugUtils` providing standardized debug messages with emojis and formatting
+  - **Common Pagination**: Generic `PaginationParams` struct supporting both page-based and limit/offset pagination patterns
+
+### Changed
+- **GraphQL Client Architecture**: Refactored to use shared API infrastructure while maintaining full functionality
+  - **Eliminated Duplication**: Removed ~80 lines of duplicate HTTP client setup, error handling, and authentication code
+  - **Shared Configuration**: Now uses `ApiClientConfig` with `AuthStrategy::Bearer` for consistent auth patterns
+  - **Common Error Types**: Migrated to unified `ApiClientError` with proper error conversion chains
+  - **Maintained Compatibility**: All existing GraphQL functionality preserved with cleaner, more maintainable code
+
+- **GitLab Client Integration**: Updated to leverage shared API utilities for consistency
+  - **Unified Debug Output**: Now uses `ApiDebugUtils` for consistent validation and connectivity messages
+  - **Shared Error Handling**: Integrated with common `ApiClientError` while maintaining GitLab-specific functionality
+  - **Authentication Strategy**: Uses `AuthStrategy::CustomHeader` for GitLab's PRIVATE-TOKEN authentication
+
+### Fixed
+- **GitLab SAST Report Path Resolution**: Fixed file path resolution in GitLab SAST report export
+  - **Issue**: GitLab SAST report export (`--export-format gitlab`) was not resolving file paths correctly, while GitLab issue generation worked properly
+  - **Root Cause**: `GitLabExporter` was not configured with project directory for path resolution unlike `GitLabIssuesClient`
+  - **Solution**: Added `with_project_dir(project_dir)` call to `GitLabExporter` initialization in both single "gitlab" and "all" export format cases
+  - **Impact**: GitLab SAST reports now show correct relative file paths instead of raw Veracode paths, improving integration with GitLab Security Dashboard
+
+### Benefits
+- **Code Deduplication**: Eliminated 80+ lines of duplicate code from GraphQL client and established patterns for future API integrations
+- **Consistent Architecture**: All API clients now follow the same configuration, authentication, and error handling patterns
+- **Maintainability**: Centralized API utilities make it easier to add new API integrations and maintain existing ones
+- **Testing**: All 187 tests passing with zero clippy warnings, ensuring quality and reliability
+
+## [0.3.3] - 2025-08-05
+
+### Added
+- **Summary Report API Integration**: Complete implementation of summary report-based break build functionality
+  - **Summary Report Data Structures**: Added comprehensive data models for `/appsec/v2/applications/{app_guid}/summary_report` API response
+  - **Enhanced Export Format**: Updated export results to use rich summary report JSON format instead of basic build info
+  - **Policy Compliance with Retry**: Implemented `evaluate_policy_compliance_via_summary_report_with_retry()` with configurable retry logic
+  - **REST API Migration**: Migrated break build logic from XML `getbuildinfo.do` to modern REST `summary_report` endpoint
+
+- **Optimized API Call Workflow**: Eliminated unnecessary API calls by using existing data
+  - **Direct GUID Usage**: Removed redundant `get_app_id_from_guid()`, `get_build_list()`, and `list_sandboxes()` calls
+  - **Performance Improvement**: Reduced API calls from 4 down to 1 for break build functionality (~75% reduction)
+  - **Enhanced Reliability**: Uses data structures that already contain required GUIDs from earlier workflow steps
+
+- **Improved Export and Break Build Flow**: Restructured workflow for better reliability and data consistency
+  - **Compliance-First Approach**: Wait for policy compliance status to be confirmed before export
+  - **Export with Confirmed Status**: Summary report export now includes confirmed compliance status and break build decision
+  - **Post-Export Break**: Build breaks only after successful export completion, ensuring results are always saved
+
+### Changed
+- **Export Format**: Updated exported results from build info to comprehensive summary report format
+  - **Rich Policy Data**: Includes detailed policy compliance data, policy name, version, and rules status
+  - **Security Analysis**: Added static analysis scores, ratings, and flaw breakdowns by severity
+  - **Comprehensive Metadata**: Enhanced export metadata with break build decisions and compliance confirmation status
+  - **SCA Information**: Includes software composition analysis data when available
+
+- **Break Build Implementation**: Moved from XML API to REST API with retry logic
+  - **Modern API Usage**: Uses `/appsec/v2/applications/{app_guid}/summary_report?build_id={build_guid}&context={sandbox_guid}` endpoint
+  - **Retry Logic Integration**: Waits for "Results Ready" status before making break build decisions
+  - **Consistent Data Source**: Both export and break build now use same summary report API for consistency
+
+### Fixed
+- **Format String Warnings**: Fixed clippy warnings about uninlined format arguments
+- **Code Quality**: All clippy warnings resolved with `cargo clippy --all-targets --all-features -- -D warnings` passing clean
+
+## [0.3.2] - 2025-08-05
+
+### Added
+- **VERASCAN_ Environment Variables**: Comprehensive HTTP client configuration support
+  - **Network Configuration**: Added support for `VERASCAN_CONNECT_TIMEOUT` and `VERASCAN_REQUEST_TIMEOUT` to control HTTP timeouts
+  - **Retry Configuration**: Added `VERASCAN_MAX_RETRIES`, `VERASCAN_INITIAL_RETRY_DELAY_MS`, `VERASCAN_MAX_RETRY_DELAY_MS`, and `VERASCAN_BACKOFF_MULTIPLIER` for retry behavior
+  - **Jitter Control**: Added `VERASCAN_DISABLE_JITTER` to disable retry timing randomization
+  - **Certificate Validation**: Added `VERASCAN_DISABLE_CERT_VALIDATION` for development environments
+  - **Unified Configuration**: All VERASCAN_ variables work consistently across GitLab integration and Veracode API calls
+
+- **Break Build Functionality**: Comprehensive break build implementation for Veracode platform policy compliance
+  - **CLI Integration**: Added `--break` flag for assessment scans to enable platform policy compliance checking
+  - **XML API Policy Compliance**: Implemented `evaluate_policy_compliance_via_buildinfo()` using working `/api/5.0/getbuildinfo.do` endpoint
+  - **Veracode Standard Exit Codes**: Proper exit code handling matching Java wrapper standards (0 for pass, 4 for policy failure)
+  - **Unified API Support**: Works for both regular application scans and sandbox scans
+
+- **Enhanced Retry System**: Improved HTTP client resilience with jitter support
+  - **Jitter Implementation**: Added ±25% randomization to retry delays to prevent thundering herd problems
+  - **Configurable Jitter**: Can be disabled via `VERASCAN_DISABLE_JITTER` environment variable
+  - **Compatibility Methods**: Added method aliases for seamless integration with existing code
+
+### Fixed  
+- **Dead REST API Endpoints**: Removed non-functional policy compliance REST API endpoints that return 404
+  - Removed `/appsec/v1/applications/{app}/policy/{policy}/compliance` endpoint usage
+  - Removed `/appsec/v1/applications/{app}/sandboxes/{sandbox}/policy/{policy}/compliance` endpoint usage
+  - Fixed `PolicyComplianceStatus` enum to match actual XML API values: `Passed`, `ConditionalPass`, `DidNotPass`, `NotAssessed`
+  - Removed deprecated methods: `evaluate_policy_compliance()`, `get_policy_violations()`, `is_application_compliant()`, `get_compliance_score()`
+
+- **Code Quality**: Fixed all clippy warnings and improved formatting
+  - Updated format strings to use inline arguments (Rust 2021 edition compliance)
+  - Enhanced code consistency across the codebase
+
+### Changed
+- **Enhanced Policy API**: Updated policy compliance architecture to use only working endpoints
+  - `PolicyApi::should_break_build(status)` determines if build should break based on policy status  
+  - `PolicyApi::get_exit_code_for_status(status)` returns appropriate exit codes (0 or 4)
+  - Updated `PolicyComplianceStatus` enum with correct serde attributes for XML API compatibility
+  - All policy compliance now routed through reliable XML API instead of broken REST endpoints
+
+- **HTTP Client Configuration**: Made environment variable configuration function public
+  - `configure_veracode_with_env_vars()` is now accessible across modules for consistent configuration
+  - Improved separation of concerns while maintaining unified behavior
+
+### Usage
+```bash
+# Regular assessment scan (no break build)
+verascan assessment --app-profile-name "MyApp" --filepath .
+
+# Assessment scan with break build (exits with code 4 if policy fails)  
+verascan assessment --app-profile-name "MyApp" --filepath . --break
+```
+
+### Benefits
+- **Reliable Policy Compliance**: Uses only proven, working Veracode API endpoints
+- **Industry Standard Exit Codes**: Matches Veracode Java wrapper behavior for CI/CD integration
+- **Comprehensive Coverage**: Supports all scan types (policy and sandbox) with unified break build logic
+- **Memory Efficient**: Optimized string handling reduces allocation overhead
+- **Backward Compatible**: Existing functionality unchanged; break build is opt-in via CLI flag
+
 ## [0.3.1] - 2025-08-04
 
 ### Changed

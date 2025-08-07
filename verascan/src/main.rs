@@ -1,7 +1,7 @@
 use clap::Parser;
 use verascan::{
-    Args, Commands, execute_assessment_scan, execute_file_search, execute_pipeline_scan,
-    execute_policy_download, load_api_credentials,
+    Args, Commands, execute_assessment_scan, execute_file_search, execute_findings_export,
+    execute_pipeline_scan, execute_policy_download, load_api_credentials,
 };
 
 fn main() {
@@ -35,6 +35,15 @@ fn main() {
                 execute_file_search(&args).unwrap_or_else(|code| std::process::exit(code));
             execute_assessment_scan(&matched_files, &args)
                 .unwrap_or_else(|code| std::process::exit(code));
+        }
+        Commands::Export { .. } => {
+            // Set up runtime for async execution
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            runtime.block_on(async {
+                execute_findings_export(&args)
+                    .await
+                    .unwrap_or_else(|code| std::process::exit(code));
+            });
         }
     }
 }

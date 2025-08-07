@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -192,6 +193,11 @@ pub struct AssessmentScanConfig {
     pub monitor_completion: bool,
     pub export_results_path: String,
     pub deleteincompletescan: u8,
+    pub break_build: bool,
+    /// Maximum retry attempts for policy evaluation (default: 30)
+    pub policy_wait_max_retries: u32,
+    /// Delay between policy evaluation retries in seconds (default: 10)
+    pub policy_wait_retry_delay_seconds: u64,
 }
 
 impl Default for AssessmentScanConfig {
@@ -209,6 +215,9 @@ impl Default for AssessmentScanConfig {
             monitor_completion: true, // Default to monitoring completion
             export_results_path: DEFAULT_EXPORT_RESULTS_PATH.into(),
             deleteincompletescan: 1, // Default to policy 1 (delete safe builds only)
+            break_build: false,      // Default to not breaking build
+            policy_wait_max_retries: 30, // 30 retries (5 minutes at 10s intervals)
+            policy_wait_retry_delay_seconds: 10, // 10 seconds between retries
         }
     }
 }
@@ -993,7 +1002,7 @@ impl AssessmentSubmitter {
         }
 
         // Export results to file
-        self.export_scan_results(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
+        self.export_scan_results(&app_id.guid, &build_id, sandbox_id.as_ref())
             .await?;
 
         Ok(build_id)
@@ -1057,6 +1066,7 @@ impl AssessmentSubmitter {
                             );
                         } else {
                             print!(".");
+                            std::io::stdout().flush().unwrap();
                         }
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                             .await;
@@ -1133,6 +1143,7 @@ impl AssessmentSubmitter {
                                 );
                             } else {
                                 print!(".");
+                                std::io::stdout().flush().unwrap();
                             }
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
@@ -1155,6 +1166,7 @@ impl AssessmentSubmitter {
                                 );
                             } else {
                                 print!(".");
+                                std::io::stdout().flush().unwrap();
                             }
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
@@ -1274,6 +1286,7 @@ impl AssessmentSubmitter {
                                 );
                             } else {
                                 print!(".");
+                                std::io::stdout().flush().unwrap();
                             }
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
@@ -1349,6 +1362,7 @@ impl AssessmentSubmitter {
                                 println!("⏳ Scan in progress, waiting {poll_interval} seconds...");
                             } else {
                                 print!(".");
+                                std::io::stdout().flush().unwrap();
                             }
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
@@ -1373,6 +1387,7 @@ impl AssessmentSubmitter {
                                 );
                             } else {
                                 print!(".");
+                                std::io::stdout().flush().unwrap();
                             }
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
@@ -1396,101 +1411,135 @@ impl AssessmentSubmitter {
         )))
     }
 
-    /// Retrieve and export scan results
+    /// Retrieve and export scan results with policy compliance check
     pub async fn export_scan_results(
         &self,
-        app_id: &str,
+        app_guid: &str,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
-            println!("📋 Retrieving scan results...");
-        }
+        let policy_api = self.client.policy_api();
+        let sandbox_guid = sandbox_id.map(|s| s.guid.as_ref());
 
-        let scan_api = self.client.scan_api();
-        let sandbox_legacy_id_str = match self.config.scan_type {
-            ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
-            ScanType::Policy => None,
+        // Step 1: Wait for policy compliance status to be ready (with retry logic)
+        let compliance_status = if self.config.break_build {
+            if self.config.debug {
+                println!("🔍 Checking policy compliance status with retry logic...");
+            }
+
+            match policy_api
+                .evaluate_policy_compliance_via_summary_report_with_retry(
+                    app_guid,
+                    build_id.id(),
+                    sandbox_guid,
+                    self.config.policy_wait_max_retries,
+                    self.config.policy_wait_retry_delay_seconds,
+                )
+                .await
+            {
+                Ok(status) => Some(status.into_owned()),
+                Err(e) => {
+                    eprintln!("⚠️  Failed to check platform policy compliance: {e}");
+                    eprintln!("   Continuing with export, but break build will be skipped...");
+                    None
+                }
+            }
+        } else {
+            None
         };
 
-        // Get build info as scan results (detailed report API not yet implemented)
-        match scan_api
-            .get_build_info(app_id, Some(build_id.id()), sandbox_legacy_id_str)
+        // Step 2: Get the final summary report (compliance status should now be ready)
+        if self.config.debug {
+            println!(
+                "📝 Exporting summary report to: {}",
+                self.config.export_results_path
+            );
+        }
+
+        let summary_report = match policy_api
+            .get_summary_report(app_guid, Some(build_id.id()), sandbox_guid)
             .await
         {
-            Ok(build_info) => {
-                if self.config.debug {
-                    println!(
-                        "📝 Exporting results to: {}",
-                        self.config.export_results_path
-                    );
+            Ok(report) => report,
+            Err(e) => {
+                eprintln!("❌ Failed to get summary report: {e}");
+                return Err(AssessmentError::ScanError(format!(
+                    "Failed to retrieve summary report: {e}"
+                )));
+            }
+        };
+
+        // Step 3: Determine if build should break based on confirmed compliance status
+        let should_break_build = if let Some(ref status) = compliance_status {
+            use veracode_platform::policy::PolicyApi;
+            PolicyApi::should_break_build(status)
+        } else {
+            false
+        };
+
+        // Step 4: Export summary report with confirmed compliance status
+        let results = serde_json::json!({
+            "summary_report": summary_report,
+            "export_metadata": {
+                "exported_at": chrono::Utc::now().to_rfc3339(),
+                "tool": TOOL_NAME,
+                "export_type": "summary_report",
+                "break_build_enabled": self.config.break_build,
+                "will_break_build": should_break_build,
+                "compliance_status_confirmed": compliance_status.is_some(),
+                "scan_configuration": {
+                    "autoscan": self.config.autoscan,
+                    "scan_all_nonfatal_top_level_modules": true,
+                    "include_new_modules": true
                 }
+            }
+        });
 
-                // Create results JSON with scan information
-                let results = serde_json::json!({
-                    "scan_info": {
-                        "build_id": build_info.build_id,
-                        "app_id": build_info.app_id,
-                        "sandbox_id": build_info.sandbox_id,
-                        "status": build_info.status,
-                        "scan_type": build_info.scan_type,
-                        "analysis_unit_id": build_info.analysis_unit_id,
-                        "scan_progress_percentage": build_info.scan_progress_percentage,
-                        "scan_start": build_info.scan_start,
-                        "scan_complete": build_info.scan_complete,
-                        "total_lines_of_code": build_info.total_lines_of_code,
-                    },
-                    "export_metadata": {
-                        "exported_at": chrono::Utc::now().to_rfc3339(),
-                        "tool": TOOL_NAME,
-                        "scan_configuration": {
-                            "autoscan": self.config.autoscan,
-                            "scan_all_nonfatal_top_level_modules": true,
-                            "include_new_modules": true
+        // Write results to file
+        match serde_json::to_string_pretty(&results) {
+            Ok(json_string) => {
+                match std::fs::write(&self.config.export_results_path, json_string) {
+                    Ok(_) => {
+                        println!(
+                            "✅ Summary report exported to: {}",
+                            self.config.export_results_path
+                        );
+                        if self.config.debug {
+                            println!(
+                                "📊 Policy compliance status: {}",
+                                summary_report.policy_compliance_status
+                            );
                         }
-                    }
-                });
 
-                // Write results to file
-                match serde_json::to_string_pretty(&results) {
-                    Ok(json_string) => {
-                        match std::fs::write(&self.config.export_results_path, json_string) {
-                            Ok(_) => {
-                                println!(
-                                    "✅ Results exported to: {}",
-                                    self.config.export_results_path
-                                );
-                                if self.config.debug {
-                                    println!(
-                                        "📊 Scan completed with status: {}",
-                                        build_info.status
-                                    );
-                                }
-                                Ok(())
-                            }
-                            Err(e) => {
-                                eprintln!(
-                                    "❌ Failed to write results to {}: {}",
-                                    self.config.export_results_path, e
-                                );
-                                Err(AssessmentError::UploadError(format!(
-                                    "Failed to write results: {e}"
-                                )))
+                        // Step 5: Break build if needed (after successful export)
+                        if should_break_build {
+                            use veracode_platform::policy::PolicyApi;
+                            if let Some(status) = compliance_status {
+                                let exit_code = PolicyApi::get_exit_code_for_status(&status);
+                                println!("\n❌ Platform policy compliance FAILED - breaking build");
+                                println!("   Status: {status}");
+                                println!("   Exit code: {exit_code}");
+                                std::process::exit(exit_code);
                             }
                         }
+
+                        Ok(())
                     }
                     Err(e) => {
-                        eprintln!("❌ Failed to serialize results: {e}");
+                        eprintln!(
+                            "❌ Failed to write results to {}: {}",
+                            self.config.export_results_path, e
+                        );
                         Err(AssessmentError::UploadError(format!(
-                            "Failed to serialize results: {e}"
+                            "Failed to write results: {e}"
                         )))
                     }
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to retrieve results: {e}");
-                Err(AssessmentError::ScanError(format!(
-                    "Failed to retrieve results: {e}"
+                eprintln!("❌ Failed to serialize results: {e}");
+                Err(AssessmentError::UploadError(format!(
+                    "Failed to serialize results: {e}"
                 )))
             }
         }
@@ -1534,6 +1583,16 @@ impl AssessmentSubmitter {
             }
         );
         println!("   Export Results: {}", self.config.export_results_path);
+        if self.config.break_build {
+            println!(
+                "   Policy Wait: {} retries, {} seconds interval (max {} minutes)",
+                self.config.policy_wait_max_retries,
+                self.config.policy_wait_retry_delay_seconds,
+                (self.config.policy_wait_max_retries as u64
+                    * self.config.policy_wait_retry_delay_seconds)
+                    / 60
+            );
+        }
     }
 }
 
@@ -1554,6 +1613,9 @@ mod tests {
         assert!(config.monitor_completion);
         assert_eq!(config.export_results_path, "assessment-results.json");
         assert_eq!(config.deleteincompletescan, 1);
+        assert!(!config.break_build);
+        assert_eq!(config.policy_wait_max_retries, 30);
+        assert_eq!(config.policy_wait_retry_delay_seconds, 10);
     }
 
     #[test]
@@ -1580,6 +1642,9 @@ mod tests {
             monitor_completion: false,
             export_results_path: "custom-results.json".to_string(),
             deleteincompletescan: 2,
+            break_build: true,
+            policy_wait_max_retries: 60,        // Custom: 60 retries
+            policy_wait_retry_delay_seconds: 5, // Custom: 5 seconds between retries
         };
 
         assert_eq!(config.threads, 8);

@@ -21,6 +21,9 @@ pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
         Commands::Policy { .. } => {
             return Err(1); // Policy command doesn't need file search
         }
+        Commands::Export { .. } => {
+            return Err(1); // Export command doesn't need file search
+        }
     };
 
     let finder = FileFinder::new();
@@ -70,6 +73,10 @@ fn display_search_results(
             }
             Commands::Policy { .. } => {
                 println!("No files found {search_type} matching the patterns: {filefilter}");
+                return Ok(());
+            }
+            Commands::Export { .. } => {
+                // Export command doesn't use file search, this shouldn't be reached
                 return Ok(());
             }
         }

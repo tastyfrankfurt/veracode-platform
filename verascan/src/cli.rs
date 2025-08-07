@@ -249,13 +249,22 @@ pub enum Commands {
         #[arg(
             long = "no-wait",
             help = "Submit scan and exit without waiting for completion",
-            default_value = "false"
+            default_value = "false",
+            conflicts_with = "break_build"
         )]
         no_wait: bool,
 
         /// Delete incomplete scan policy for assessment scans
         #[arg(long = "deleteincompletescan", help = "Build deletion policy for assessment scans: 0=Never delete, 1=Delete safe builds only (default), 2=Delete any build except Results Ready", default_value = "1", value_parser = validate_delete_incomplete_scan)]
         deleteincompletescan: u8,
+
+        /// Break build on Veracode platform policy compliance
+        #[arg(
+            long = "break",
+            help = "Break build based on Veracode platform policy compliance",
+            conflicts_with = "no_wait"
+        )]
+        break_build: bool,
     },
 
     /// Download Veracode security policy by name
@@ -263,6 +272,42 @@ pub enum Commands {
         /// Policy name to download
         #[arg(help = "Name of the Veracode security policy to download", value_parser = validate_policy_name)]
         policy_name: String,
+    },
+
+    /// Export findings from completed policy or sandbox scans
+    Export {
+        /// Veracode application profile name to export findings from
+        #[arg(long = "app-profile-name", short = 'n', help = "Veracode application profile name for automatic app lookup (required)", value_parser = validate_name_field, required = true)]
+        app_profile_name: String,
+
+        /// Sandbox name for sandbox scan findings (optional, if not specified exports policy scan findings)
+        #[arg(long = "sandbox-name", help = "Sandbox name to retrieve findings from (optional, for sandbox scans)", value_parser = validate_sandbox_name)]
+        sandbox_name: Option<String>,
+
+        /// Export format
+        #[arg(long = "format", help = "Export format (gitlab, json, csv, all)", default_value = "gitlab", value_parser = validate_export_format)]
+        export_format: String,
+
+        /// Output file path
+        #[arg(
+            long = "output",
+            short = 'o',
+            help = "Output file path for exported findings",
+            default_value = "findings_export.json"
+        )]
+        output_path: String,
+
+        /// Project directory for GitLab file path resolution
+        #[arg(
+            long = "project-dir",
+            help = "Project directory for file path resolution in GitLab reports",
+            default_value = "."
+        )]
+        project_dir: String,
+
+        /// Minimum severity filter
+        #[arg(long = "min-severity", help = "Minimum severity to include (informational, very-low, low, medium, high, very-high)", value_parser = validate_severity_filter)]
+        min_severity: Option<String>,
     },
 }
 
@@ -294,6 +339,9 @@ impl Args {
             }
             Commands::Policy { .. } => {
                 // Policy validation happens at the field level
+            }
+            Commands::Export { .. } => {
+                // Export validation happens at the field level with required fields
             }
         }
 
@@ -707,6 +755,34 @@ fn validate_delete_incomplete_scan(s: &str) -> Result<u8, String> {
     }
 }
 
+/// Validate severity filter for export command
+fn validate_severity_filter(s: &str) -> Result<String, String> {
+    const VALID_SEVERITIES: &[&str] = &[
+        "informational",
+        "info",
+        "very-low",
+        "verylow",
+        "very_low",
+        "low",
+        "medium",
+        "med",
+        "high",
+        "very-high",
+        "veryhigh",
+        "very_high",
+        "critical",
+    ];
+
+    let lower_input = s.to_lowercase();
+    if VALID_SEVERITIES.contains(&lower_input.as_str()) {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "Invalid severity filter '{s}'. Valid options are: informational, very-low, low, medium, high, very-high"
+        ))
+    }
+}
+
 /// Parse business criticality string to BusinessCriticality enum
 pub fn parse_business_criticality(
     criticality_str: &str,
@@ -835,6 +911,7 @@ mod tests {
                 teamname: None,
                 bus_cri: "very-high".to_string(),
                 deleteincompletescan: 1,
+                break_build: false,
             },
             debug: false,
             region: "commercial".to_string(),

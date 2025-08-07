@@ -57,7 +57,7 @@ impl PathResolver {
     /// This function takes a file path from scan results (e.g., "com/example/vulnerable/VulnerableApp.java")
     /// and tries to resolve it to the actual project path (e.g., "src/main/java/com/example/vulnerable/VulnerableApp.java")
     ///
-    /// Returns Cow<str> to avoid unnecessary allocations when the path doesn't need to be modified.
+    /// Returns `Cow<str>` to avoid unnecessary allocations when the path doesn't need to be modified.
     pub fn resolve_file_path<'a>(&self, file_path: &'a str) -> Cow<'a, str> {
         if self.config.debug {
             println!("🔍 DEBUG: Resolving file path: '{file_path}'");

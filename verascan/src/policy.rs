@@ -1,4 +1,5 @@
 use crate::cli::Args;
+use crate::scan::configure_veracode_with_env_vars;
 use crate::{check_secure_pipeline_credentials, load_secure_api_credentials};
 use std::fs;
 use std::path::PathBuf;
@@ -22,16 +23,8 @@ pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32
     let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
 
     let region = parse_region(&args.region)?;
-    let mut veracode_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
-
-    // Check environment variable for certificate validation
-    if std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
-        veracode_config = veracode_config.with_certificate_validation_disabled();
-        println!(
-            "⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION"
-        );
-        println!("   This should only be used in development environments!");
-    }
+    let base_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
+    let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
 
     execute_policy_download_with_runtime(veracode_config, policy_name, args)
 }
