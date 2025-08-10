@@ -1421,34 +1421,7 @@ impl AssessmentSubmitter {
         let policy_api = self.client.policy_api();
         let sandbox_guid = sandbox_id.map(|s| s.guid.as_ref());
 
-        // Step 1: Wait for policy compliance status to be ready (with retry logic)
-        let compliance_status = if self.config.break_build {
-            if self.config.debug {
-                println!("🔍 Checking policy compliance status with retry logic...");
-            }
-
-            match policy_api
-                .evaluate_policy_compliance_via_summary_report_with_retry(
-                    app_guid,
-                    build_id.id(),
-                    sandbox_guid,
-                    self.config.policy_wait_max_retries,
-                    self.config.policy_wait_retry_delay_seconds,
-                )
-                .await
-            {
-                Ok(status) => Some(status.into_owned()),
-                Err(e) => {
-                    eprintln!("⚠️  Failed to check platform policy compliance: {e}");
-                    eprintln!("   Continuing with export, but break build will be skipped...");
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        // Step 2: Get the final summary report (compliance status should now be ready)
+        // Get summary report with policy compliance check (combined single API call)
         if self.config.debug {
             println!(
                 "📝 Exporting summary report to: {}",
@@ -1456,20 +1429,31 @@ impl AssessmentSubmitter {
             );
         }
 
-        let summary_report = match policy_api
-            .get_summary_report(app_guid, Some(build_id.id()), sandbox_guid)
+        let (summary_report, compliance_status) = match policy_api
+            .get_summary_report_with_policy_retry(
+                app_guid,
+                Some(build_id.id()),
+                sandbox_guid,
+                self.config.policy_wait_max_retries,
+                self.config.policy_wait_retry_delay_seconds,
+                self.config.debug,
+                self.config.break_build,
+            )
             .await
         {
-            Ok(report) => report,
+            Ok((report, status)) => (report, status.map(|s| s.into_owned())),
             Err(e) => {
                 eprintln!("❌ Failed to get summary report: {e}");
+                if self.config.break_build {
+                    eprintln!("   Break build evaluation will be skipped due to error");
+                }
                 return Err(AssessmentError::ScanError(format!(
                     "Failed to retrieve summary report: {e}"
                 )));
             }
         };
 
-        // Step 3: Determine if build should break based on confirmed compliance status
+        // Determine if build should break based on compliance status (if break_build enabled)
         let should_break_build = if let Some(ref status) = compliance_status {
             use veracode_platform::policy::PolicyApi;
             PolicyApi::should_break_build(status)
@@ -1477,7 +1461,7 @@ impl AssessmentSubmitter {
             false
         };
 
-        // Step 4: Export summary report with confirmed compliance status
+        // Export summary report with compliance status metadata
         let results = serde_json::json!({
             "summary_report": summary_report,
             "export_metadata": {
@@ -1511,7 +1495,7 @@ impl AssessmentSubmitter {
                             );
                         }
 
-                        // Step 5: Break build if needed (after successful export)
+                        // Break build if policy compliance failed (after successful export)
                         if should_break_build {
                             use veracode_platform::policy::PolicyApi;
                             if let Some(status) = compliance_status {

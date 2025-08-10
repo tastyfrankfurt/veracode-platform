@@ -506,6 +506,7 @@ impl ExportWorkflow {
             findings: converted_findings,
             summary,
             stats,
+            original_rest_findings: Some(rest_findings.to_vec()),
         })
     }
 

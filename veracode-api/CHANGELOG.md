@@ -5,6 +5,24 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] - 2025-08-10
+
+### Added
+- **Combined Policy API Method**: New `get_summary_report_with_policy_retry()` method that combines summary report retrieval with policy compliance checking
+  - **Single API Call**: Reduces API calls by combining summary report retrieval and policy compliance evaluation
+  - **Configurable Retry Logic**: Same retry parameters as existing policy compliance methods
+  - **Dual Return Values**: Returns both the summary report and optional compliance status for break build evaluation
+  - **Conditional Policy Evaluation**: Only evaluates policy compliance when `enable_break_build` is true
+
+### Fixed
+- **API Call Optimization**: Eliminated redundant API calls in break build workflow by using combined method approach
+- **Memory Efficiency**: Improved data flow by avoiding duplicate API responses for same build information
+
+### Technical Details
+- **New Method Signature**: `get_summary_report_with_policy_retry(app_guid, build_id, sandbox_guid, max_retries, retry_delay_seconds, debug, enable_break_build)`
+- **Return Type**: `Result<(SummaryReport, Option<Cow<'static, str>>), PolicyError>`
+- **Usage Pattern**: When `enable_break_build=false`, returns `(summary_report, None)`. When `enable_break_build=true`, returns `(summary_report, Some(compliance_status))`
+
 ## [0.4.0] - 2025-08-08
 
 ### Breaking Changes

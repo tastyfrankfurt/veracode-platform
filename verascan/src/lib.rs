@@ -9,6 +9,7 @@ pub mod findings;
 pub mod gitlab_client;
 pub mod gitlab_common;
 pub mod gitlab_issues;
+pub mod gitlab_mapping;
 pub mod gitlab_report;
 pub mod gitlab_utils;
 pub mod graphql_client;
@@ -40,6 +41,10 @@ pub use gitlab_common::{
     get_severity_name, resolve_file_path, strip_html_tags,
 };
 pub use gitlab_issues::{GitLabConfig, GitLabError, GitLabIssuesClient};
+pub use gitlab_mapping::{
+    GitLabMapperFactory, MappingConfig, ScanType as GitLabScanType, ScanTypeDetector,
+    UnifiedGitLabMapper, UrlFilter,
+};
 pub use gitlab_report::{GitLabExportConfig, GitLabExporter};
 pub use gitlab_utils::{GitLabUrlConfig, create_pipeline_url, extract_gitlab_host};
 pub use graphql_client::{

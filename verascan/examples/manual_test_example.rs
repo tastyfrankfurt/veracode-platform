@@ -184,6 +184,7 @@ fn create_mock_aggregated_findings(finding_with_source: FindingWithSource) -> Ag
         findings: vec![finding_with_source],
         summary,
         stats,
+        original_rest_findings: None, // Example uses pipeline findings
     }
 }
 

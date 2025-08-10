@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-08-10
+
+### Added
+- **Unified GitLab Mapping System**: New centralized mapping system for consistent GitLab vulnerability conversion
+  - **UnifiedGitLabMapper**: New mapper that provides consistent vulnerability conversion across pipeline and REST findings
+  - **Exploitability Data Preservation**: Better handling of exploitability information from policy/sandbox scans
+  - **Consistent Identifier Structure**: Unified approach to CWE, CVE, and Veracode-specific identifiers
+
+- **REST Findings Integration**: Enhanced support for policy and sandbox scan findings with rich metadata
+  - **Original REST Findings Preservation**: New `original_rest_findings` field in `AggregatedFindings` to preserve exploitability data
+  - **Conditional Processing**: Smart selection between pipeline findings and REST findings based on scan type
+  - **Enhanced GitLab Reports**: GitLab SAST reports now include richer exploitability information when available
+
+### Changed
+- **Export Command Interface**: Modernized CLI with more intuitive parameter names and better defaults
+  - **Parameter Renaming**: `--export-findings` → `--output`, `--export-format` → `--format`
+  - **Default Format Change**: Export now defaults to `gitlab` format instead of `json` for better CI/CD workflows
+  - **Severity Parameter Update**: Severity values now use lowercase (`high`, `medium`) instead of mixed case
+  - **Documentation Updates**: Updated all documentation and examples to reflect new parameter names
+
+- **GitLab Integration Enhancement**: Improved GitLab report generation with better data handling
+  - **Dual Processing Mode**: GitLab reports intelligently choose between pipeline findings and Policy/Sandbox findings
+  - **Enhanced Debugging**: Better debug output showing which data source is being used for report generation
+  - **File Path Resolution**: Improved file path resolution with project directory context
+
+- **API Optimization**: Performance improvements in assessment workflow
+  - **Combined Policy API**: New `get_summary_report_with_policy_retry()` method reduces API calls by combining summary report retrieval with policy compliance checking
+  - **Single API Call Workflow**: Eliminated redundant API calls in break build evaluation process
+
+### Fixed
+- **Export Parameter Validation**: Fixed parameter handling in export command for better error messages
+- **GitLab Report Generation**: Fixed issues with exploitability data handling in GitLab SAST reports
+- **CLI Documentation**: Updated all CLI help text and documentation to reflect new parameter names
+- **API Call Efficiency**: Reduced redundant API calls in assessment workflow through combined method approach
+
+### Technical Details
+- **Breaking CLI Changes**: While the underlying functionality remains the same, CLI parameter names have changed
+- **Backward Compatibility**: Old parameter names are no longer supported; users must update to new syntax
+- **Data Structure Enhancement**: `AggregatedFindings` now includes optional `original_rest_findings` field
+- **Unified Mapping**: All GitLab vulnerability conversion now uses consistent `UnifiedGitLabMapper` approach
+
 ## [0.4.0] - 2025-08-08
 
 ### Fixed

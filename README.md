@@ -213,38 +213,45 @@ verascan assessment --filepath ./target \
 ### Export from Completed Scans
 
 ```bash
-# Export findings from completed policy scan
+# Export findings from completed policy scan (default: GitLab SAST format)
 verascan export --app-profile-name "MyApplication" \
-  --export-findings policy-findings.json \
-  --export-format json
+  --output policy-findings.json
 
 # Export findings from completed sandbox scan
 verascan export --app-profile-name "MyApplication" \
   --sandbox-name "development-sandbox" \
-  --export-findings sandbox-findings.json \
-  --export-format json
+  --output sandbox-findings.json
 
 # Export with severity filtering (High and Very High only)
 verascan export --app-profile-name "MyApplication" \
-  --min-severity "High" \
-  --export-findings critical-findings.json \
-  --export-format json
+  --min-severity "high" \
+  --output critical-findings.json
 
-# Export to GitLab SAST format for Security Dashboard
+# Export to JSON format
 verascan export --app-profile-name "MyApplication" \
-  --export-findings gitlab-sast-report.json \
-  --export-format gitlab
+  --format json \
+  --output findings.json
+
+# Export to CSV format
+verascan export --app-profile-name "MyApplication" \
+  --format csv \
+  --output findings.csv
 
 # Export to multiple formats
 verascan export --app-profile-name "MyApplication" \
-  --export-findings comprehensive-report \
-  --export-format all
+  --format all \
+  --output comprehensive-report
 
-# Export with display in terminal
+# Export with custom project directory for GitLab file path resolution
 verascan export --app-profile-name "MyApplication" \
-  --export-findings findings.json \
-  --show-findings \
-  --findings-limit 10
+  --format gitlab \
+  --output gitlab-sast-report.json \
+  --project-dir /path/to/project
+
+# Export with debug output
+verascan export --app-profile-name "MyApplication" \
+  --output findings.json \
+  --debug
 ```
 
 ### Baseline Security Management
@@ -452,12 +459,11 @@ export VERASCAN_DISABLE_JITTER="true"
 |--------|---------|-------------|
 | `--app-profile-name <NAME>` | - | Veracode application profile name (required) |
 | `--sandbox-name <NAME>` | - | Sandbox name for sandbox scan export (optional) |
-| `--export-findings <FILE>` | - | Export findings to file (required) |
-| `--export-format <FORMAT>` | `json` | json/csv/gitlab/all |
-| `--min-severity <LEVEL>` | - | Filter by minimum severity (Informational/Very Low/Low/Medium/High/Very High) |
-| `--show-findings` | `false` | Display findings in CLI |
-| `--findings-limit <NUM>` | `20` | Limit displayed findings (0=all) |
-| `--debug` | `false` | Enable detailed diagnostic output |
+| `--output <FILE>` | `findings_export.json` | Output file path for exported findings |
+| `--format <FORMAT>` | `gitlab` | Export format (gitlab/json/csv/all) |
+| `--min-severity <LEVEL>` | - | Filter by minimum severity (informational/very-low/low/medium/high/very-high) |
+| `--project-dir <DIR>` | `.` | Project directory for file path resolution in GitLab reports |
+| `--debug` | `false` | Enable detailed diagnostic output (global option) |
 
 ### Export & Display Options
 
