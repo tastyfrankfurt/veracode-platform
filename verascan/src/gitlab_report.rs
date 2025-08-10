@@ -5,11 +5,11 @@
 
 use crate::findings::AggregatedFindings;
 use crate::gitlab_common::resolve_file_path;
+use crate::gitlab_mapping::UnifiedGitLabMapper;
 use crate::path_resolver::{PathResolver, PathResolverConfig};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use uuid::Uuid;
 
 /// GitLab SAST report structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,11 +303,38 @@ impl GitLabExporter {
         let start_time = now.format("%Y-%m-%dT%H:%M:%S").to_string();
         let end_time = now.format("%Y-%m-%dT%H:%M:%S").to_string();
 
-        let vulnerabilities = aggregated
-            .findings
-            .iter()
-            .map(|finding_with_source| self.convert_finding_to_vulnerability(finding_with_source))
-            .collect::<Result<Vec<_>, _>>()?;
+        let vulnerabilities = if let Some(ref rest_findings) = aggregated.original_rest_findings {
+            // Use original REST findings to preserve exploitability data
+            if self.debug {
+                println!("🔄 Using original REST findings to preserve exploitability data");
+            }
+            let scan_id = aggregated
+                .scan_metadata
+                .first()
+                .map(|m| m.scan_id.as_str())
+                .unwrap_or("unknown");
+            let project_name = aggregated
+                .scan_metadata
+                .first()
+                .map(|m| m.project_name.as_str())
+                .unwrap_or("Unknown Project");
+
+            rest_findings
+                .iter()
+                .map(|rest_finding| {
+                    self.convert_rest_finding_to_vulnerability(rest_finding, scan_id, project_name)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        } else {
+            // Use converted pipeline findings
+            aggregated
+                .findings
+                .iter()
+                .map(|finding_with_source| {
+                    self.convert_finding_to_vulnerability(finding_with_source)
+                })
+                .collect::<Result<Vec<_>, _>>()?
+        };
 
         let report = GitLabSASTReport {
             version: "15.2.2".to_string(),
@@ -348,202 +375,129 @@ impl GitLabExporter {
         resolve_file_path(file_path, self.config.path_resolver.as_ref(), self.debug).into_owned()
     }
 
-    /// Convert a Veracode finding to GitLab vulnerability format
+    /// Convert a Veracode finding to GitLab vulnerability format using the unified mapper
     fn convert_finding_to_vulnerability(
         &self,
         finding_with_source: &crate::findings::FindingWithSource,
     ) -> Result<GitLabVulnerability, Box<dyn std::error::Error>> {
-        let finding = &finding_with_source.finding;
-        let source = &finding_with_source.source_scan;
+        // Create a mapping configuration that matches the GitLabExportConfig
+        let mapping_config = crate::gitlab_mapping::MappingConfig {
+            url_replacements: std::collections::HashMap::new(),
+            blocked_url_patterns: vec![
+                "api.veracode.com".to_string(),
+                "analysiscenter.veracode.com".to_string(),
+            ],
+            identifier_types: vec!["cwe".to_string(), "veracode".to_string()],
+            include_tracking: self.config.include_tracking,
+            include_solutions: self.config.include_solutions,
+            include_links: self.config.include_links,
+        };
 
-        // Generate a unique ID for this vulnerability
-        let vulnerability_id = Uuid::new_v4().to_string();
+        // Use the unified mapper for consistency
+        let unified_mapper = UnifiedGitLabMapper::new(mapping_config);
+        let findings_vec = vec![finding_with_source.clone()];
+        let vulnerabilities = unified_mapper.map_pipeline_findings(&findings_vec)?;
 
-        // Convert severity
-        let severity = self.convert_severity(finding.severity);
-
-        // Create identifiers
-        let mut identifiers = Vec::new();
-
-        // Add CVE identifier (moved from standalone field to identifiers array)
-        let cve_value = format!(
-            "veracode:{}:{}:{}",
-            finding.title, finding.files.source_file.line, finding.files.source_file.line
-        );
-        identifiers.push(GitLabIdentifier {
-            identifier_type: "cve".to_string(),
-            name: format!("Veracode CVE Reference {}", finding.title),
-            value: cve_value,
-            url: None,
-        });
-
-        // Add CWE identifier
-        if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
-            identifiers.push(GitLabIdentifier {
-                identifier_type: "cwe".to_string(),
-                name: format!("CWE-{}", finding.cwe_id),
-                value: finding.cwe_id.clone(),
-                url: Some(format!(
-                    "https://cwe.mitre.org/data/definitions/{}.html",
-                    finding.cwe_id
-                )),
-            });
+        if vulnerabilities.is_empty() {
+            return Err("Failed to map finding to GitLab vulnerability".into());
         }
 
-        // Add Veracode-specific identifier
-        identifiers.push(GitLabIdentifier {
-            identifier_type: "veracode_issue_id".to_string(),
-            name: format!("Veracode Issue ID {}", finding.issue_id),
-            value: finding.issue_id.to_string(),
-            url: None,
-        });
+        // Apply file path resolution to the mapped vulnerability
+        let mut vulnerability = vulnerabilities.into_iter().next().unwrap();
+        if let Some(ref file) = vulnerability.location.file {
+            let resolved_file_path = self.resolve_file_path(file);
+            vulnerability.location.file = Some(resolved_file_path.clone());
 
-        // Add issue type identifier
-        identifiers.push(GitLabIdentifier {
-            identifier_type: "veracode_issue_type".to_string(),
-            name: format!("Veracode Issue Type {}", finding.issue_type),
-            value: finding.issue_type_id.clone(),
-            url: None,
-        });
-
-        // Create location with resolved file path
-        let resolved_file_path = self.resolve_file_path(&finding.files.source_file.file);
-        let location = GitLabLocation {
-            file: Some(resolved_file_path.clone()),
-            start_line: Some(finding.files.source_file.line),
-            end_line: Some(finding.files.source_file.line),
-            class: None,
-            method: finding.files.source_file.function_name.clone(),
-        };
-
-        // Create tracking information if enabled
-        let tracking = if self.config.include_tracking {
-            Some(GitLabTracking {
-                tracking_type: "source".to_string(),
-                items: vec![GitLabTrackingItem {
-                    file: resolved_file_path.clone(),
-                    line_start: finding.files.source_file.line,
-                    line_end: finding.files.source_file.line,
-                    signatures: vec![GitLabSignature {
-                        algorithm: "scope_offset".to_string(),
-                        value: format!(
-                            "{}|{}[0]:1",
-                            resolved_file_path,
-                            finding
-                                .files
-                                .source_file
-                                .function_name
-                                .as_deref()
-                                .unwrap_or("unknown")
-                        ),
-                    }],
-                }],
-            })
-        } else {
-            None
-        };
-
-        // Create links if enabled
-        let links = if self.config.include_links {
-            let mut link_vec = Vec::new();
-
-            // Add CWE link if available
-            if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
-                link_vec.push(GitLabLink {
-                    name: format!("CWE-{} Details", finding.cwe_id),
-                    url: format!(
-                        "https://cwe.mitre.org/data/definitions/{}.html",
-                        finding.cwe_id
-                    ),
-                });
+            // Update tracking file path if present
+            if let Some(ref mut tracking) = vulnerability.tracking {
+                for item in &mut tracking.items {
+                    item.file = resolved_file_path.clone();
+                }
             }
 
-            if !link_vec.is_empty() {
-                Some(link_vec)
-            } else {
-                None
+            // Update Veracode identifier to use resolved file path
+            for identifier in &mut vulnerability.identifiers {
+                if identifier.identifier_type == "veracode" {
+                    // Extract the original components from the value
+                    let parts: Vec<&str> = identifier.value.split(':').collect();
+                    if parts.len() == 3 {
+                        let category_id = parts[0];
+                        let line_number = parts[2];
+                        // Reconstruct with resolved file path
+                        identifier.value =
+                            format!("{category_id}:{resolved_file_path}:{line_number}");
+                    }
+                }
             }
-        } else {
-            None
+        }
+
+        Ok(vulnerability)
+    }
+
+    /// Convert REST API finding (policy/sandbox scan) to GitLab vulnerability format
+    pub fn convert_rest_finding_to_vulnerability(
+        &self,
+        rest_finding: &veracode_platform::findings::RestFinding,
+        scan_id: &str,
+        project_name: &str,
+    ) -> Result<GitLabVulnerability, Box<dyn std::error::Error>> {
+        // Create a mapping configuration that matches the GitLabExportConfig
+        let mapping_config = crate::gitlab_mapping::MappingConfig {
+            url_replacements: std::collections::HashMap::new(),
+            blocked_url_patterns: vec![
+                "api.veracode.com".to_string(),
+                "analysiscenter.veracode.com".to_string(),
+            ],
+            identifier_types: vec!["cwe".to_string(), "veracode".to_string()],
+            include_tracking: self.config.include_tracking,
+            include_solutions: self.config.include_solutions,
+            include_links: self.config.include_links,
         };
 
-        // Create solution text if enabled
-        let solution = if self.config.include_solutions {
-            Some(format!(
-                "Review and remediate this {} vulnerability found in {}. \
-                Consider consulting Veracode documentation for specific remediation guidance for this issue type.",
-                finding.issue_type, resolved_file_path
-            ))
-        } else {
-            None
-        };
+        // Use the unified mapper for policy scans (preserves exploitability data)
+        let unified_mapper = UnifiedGitLabMapper::new(mapping_config);
+        let rest_findings_vec = vec![rest_finding.clone()];
+        let vulnerabilities =
+            unified_mapper.map_policy_findings(&rest_findings_vec, scan_id, project_name)?;
 
-        Ok(GitLabVulnerability {
-            id: vulnerability_id,
-            identifiers,
-            location,
-            name: Some(finding.issue_type.clone()),
-            description: Some(format!(
-                "Veracode Pipeline Scan identified a {} vulnerability in {}.\n\n\
-                Issue Type: {}\n\
-                Severity: {} ({})\n\
-                File: {}\n\
-                Line: {}\n\
-                Function: {}\n\
-                Scan ID: {}\n\
-                Project: {}",
-                finding.issue_type,
-                resolved_file_path,
-                finding.issue_type,
-                self.severity_to_string(finding.severity),
-                finding.severity,
-                resolved_file_path,
-                finding.files.source_file.line,
-                finding
-                    .files
-                    .source_file
-                    .function_name
-                    .as_deref()
-                    .unwrap_or("N/A"),
-                source.scan_id,
-                source.project_name
-            )),
-            severity: Some(severity),
-            solution,
-            cvss_vectors: None,
-            links,
-            details: None,
-            tracking,
-            flags: None,
-            raw_source_code_extract: None,
-        })
-    }
-
-    /// Convert Veracode severity to GitLab severity
-    fn convert_severity(&self, veracode_severity: u32) -> GitLabSeverity {
-        match veracode_severity {
-            5 => GitLabSeverity::Critical,
-            4 => GitLabSeverity::High,
-            3 => GitLabSeverity::Medium,
-            2 => GitLabSeverity::Low,
-            1 => GitLabSeverity::Low,
-            0 => GitLabSeverity::Info,
-            _ => GitLabSeverity::Unknown,
+        if vulnerabilities.is_empty() {
+            return Err("Failed to map REST finding to GitLab vulnerability".into());
         }
+
+        // Apply file path resolution to the mapped vulnerability
+        let mut vulnerability = vulnerabilities.into_iter().next().unwrap();
+        if let Some(ref file) = vulnerability.location.file {
+            let resolved_file_path = self.resolve_file_path(file);
+            vulnerability.location.file = Some(resolved_file_path.clone());
+
+            // Update tracking file path if present
+            if let Some(ref mut tracking) = vulnerability.tracking {
+                for item in &mut tracking.items {
+                    item.file = resolved_file_path.clone();
+                }
+            }
+
+            // Update Veracode identifier to use resolved file path
+            for identifier in &mut vulnerability.identifiers {
+                if identifier.identifier_type == "veracode" {
+                    // Extract the original components from the value
+                    let parts: Vec<&str> = identifier.value.split(':').collect();
+                    if parts.len() == 3 {
+                        let category_id = parts[0];
+                        let line_number = parts[2];
+                        // Reconstruct with resolved file path
+                        identifier.value =
+                            format!("{category_id}:{resolved_file_path}:{line_number}");
+                    }
+                }
+            }
+        }
+
+        Ok(vulnerability)
     }
 
-    /// Convert severity number to string
-    fn severity_to_string(&self, severity: u32) -> &'static str {
-        match severity {
-            5 => "Very High",
-            4 => "High",
-            3 => "Medium",
-            2 => "Low",
-            1 => "Very Low",
-            0 => "Informational",
-            _ => "Unknown",
-        }
-    }
+    // Note: convert_severity and severity_to_string methods removed as they are now
+    // handled by the unified GitLab mapper system for consistency
 }
 
 #[cfg(test)]
@@ -552,23 +506,8 @@ mod tests {
     use crate::findings::{FindingWithSource, ScanSource};
     use veracode_platform::pipeline::{Finding, FindingFiles, SourceFile};
 
-    #[test]
-    fn test_severity_conversion() {
-        let exporter = GitLabExporter::new(GitLabExportConfig::default(), false);
-
-        assert!(matches!(
-            exporter.convert_severity(5),
-            GitLabSeverity::Critical
-        ));
-        assert!(matches!(exporter.convert_severity(4), GitLabSeverity::High));
-        assert!(matches!(
-            exporter.convert_severity(3),
-            GitLabSeverity::Medium
-        ));
-        assert!(matches!(exporter.convert_severity(2), GitLabSeverity::Low));
-        assert!(matches!(exporter.convert_severity(1), GitLabSeverity::Low));
-        assert!(matches!(exporter.convert_severity(0), GitLabSeverity::Info));
-    }
+    // Note: Severity conversion test removed as severity mapping is now
+    // handled by the UnifiedGitLabMapper for consistency across scan types
 
     #[test]
     fn test_gitlab_export_config_default() {
@@ -627,14 +566,82 @@ mod tests {
         assert!(matches!(vulnerability.severity, Some(GitLabSeverity::High)));
         assert_eq!(vulnerability.location.file, Some("src/main.js".to_string()));
         assert_eq!(vulnerability.location.start_line, Some(42));
-        assert!(vulnerability.identifiers.len() >= 3); // Should have CVE, CWE and Veracode identifiers
+        assert!(vulnerability.identifiers.len() >= 2); // Should have CVE and CWE identifiers
         assert!(vulnerability.tracking.is_some());
-        // Check for CVE identifier
+        // Check for CWE and Veracode identifiers
         assert!(
             vulnerability
                 .identifiers
                 .iter()
-                .any(|id| id.identifier_type == "cve")
+                .any(|id| id.identifier_type == "cwe")
         );
+        assert!(
+            vulnerability
+                .identifiers
+                .iter()
+                .any(|id| id.identifier_type == "veracode")
+        );
+
+        // Check that details are included
+        assert!(
+            vulnerability.details.is_some(),
+            "Details should be included in GitLab vulnerability"
+        );
+        let details = vulnerability.details.unwrap();
+        assert!(details.items.contains_key("veracode_issue_id"));
+        assert!(details.items.contains_key("scan_id"));
+    }
+
+    #[test]
+    fn test_full_gitlab_report_serialization() {
+        let exporter = GitLabExporter::new(GitLabExportConfig::default(), false);
+
+        let finding = Finding {
+            issue_id: 123,
+            cwe_id: "79".to_string(),
+            issue_type: "Cross-Site Scripting".to_string(),
+            issue_type_id: "XSS".to_string(),
+            severity: 4,
+            title: "Cross-Site Scripting vulnerability".to_string(),
+            gob: "B".to_string(),
+            display_text: "XSS vulnerability detected".to_string(),
+            flaw_details_link: Some("https://analysiscenter.veracode.com/auth/index.jsp#ViewReportsResultDetail:123:79:XSS".to_string()),
+            stack_dumps: None,
+            files: FindingFiles {
+                source_file: SourceFile {
+                    file: "src/main.js".to_string(),
+                    line: 42,
+                    function_name: Some("processInput".to_string()),
+                    qualified_function_name: "processInput".to_string(),
+                    function_prototype: "function processInput(input)".to_string(),
+                    scope: "global".to_string(),
+                },
+            },
+        };
+
+        let source = ScanSource {
+            scan_id: "test-scan-123".to_string(),
+            project_name: "Test Project".to_string(),
+            source_file: "test.jar".to_string(),
+        };
+
+        let finding_with_source = FindingWithSource {
+            finding_id: "test:test.jar:123:abcd1234".to_string(),
+            finding,
+            source_scan: source,
+        };
+
+        let vulnerability = exporter
+            .convert_finding_to_vulnerability(&finding_with_source)
+            .unwrap();
+
+        // Serialize to JSON to verify the details are included
+        let json = serde_json::to_string_pretty(&vulnerability).unwrap();
+        println!("GitLab Vulnerability JSON:\n{json}");
+
+        // Check that details are in the JSON
+        assert!(json.contains("\"details\""));
+        assert!(json.contains("\"veracode_issue_id\""));
+        assert!(json.contains("\"scan_id\""));
     }
 }

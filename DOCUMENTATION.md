@@ -475,42 +475,46 @@ verascan pipeline --filepath ./artifacts \
 
 #### 8. Export from Completed Scans
 ```bash
-# Export findings from completed policy scan
+# Export findings from completed policy scan (default: GitLab SAST format)
 verascan export --app-profile-name "MyApplication" \
-  --export-findings policy-findings.json \
-  --export-format json \
-  --show-findings \
+  --output policy-findings.json \
   --debug
 
 # Export findings from completed sandbox scan  
 verascan export --app-profile-name "MyApplication" \
   --sandbox-name "development-sandbox" \
-  --export-findings sandbox-findings.json \
-  --export-format json
+  --output sandbox-findings.json
 
 # Export with severity filtering (High and Very High only)
 verascan export --app-profile-name "MyApplication" \
-  --min-severity "High" \
-  --export-findings critical-findings.json \
-  --export-format json \
-  --show-findings
+  --min-severity "high" \
+  --output critical-findings.json \
+  --format json
 
-# Export to GitLab SAST format for Security Dashboard
+# Export to GitLab SAST format for Security Dashboard (default format)
 verascan export --app-profile-name "MyApplication" \
-  --export-findings gitlab-sast-report.json \
-  --export-format gitlab
+  --output gitlab-sast-report.json
+
+# Export to JSON format
+verascan export --app-profile-name "MyApplication" \
+  --format json \
+  --output findings.json
+
+# Export to CSV format
+verascan export --app-profile-name "MyApplication" \
+  --format csv \
+  --output findings.csv
 
 # Export to multiple formats (JSON, CSV, GitLab SAST)
 verascan export --app-profile-name "MyApplication" \
-  --export-findings comprehensive-report \
-  --export-format all \
-  --min-severity "Medium"
+  --format all \
+  --output comprehensive-report \
+  --min-severity "medium"
 
-# Export with display in terminal (limited to 10 findings)
+# Export with custom project directory for file path resolution
 verascan export --app-profile-name "MyApplication" \
-  --export-findings findings.json \
-  --show-findings \
-  --findings-limit 10 \
+  --output gitlab-report.json \
+  --project-dir /path/to/source/root \
   --debug
 ```
 

@@ -52,6 +52,9 @@ pub struct AggregatedFindings {
     pub summary: FindingsSummary,
     /// Statistics about the aggregation
     pub stats: AggregationStats,
+    /// Original REST findings (policy/sandbox scans only, preserves exploitability data)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub original_rest_findings: Option<Vec<veracode_platform::findings::RestFinding>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -277,6 +280,7 @@ impl FindingsAggregator {
             findings: all_findings,
             summary: total_summary,
             stats,
+            original_rest_findings: None, // Pipeline scans don't have REST findings
         }
     }
 

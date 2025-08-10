@@ -368,16 +368,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 let body = response.text().await?;
                                 println!("\n📄 Legacy Raw JSON Response (truncated):");
                                 // Truncate output for readability in comparison
-                                let truncated = if body.len() > 1000 {
-                                    format!(
-                                        "{}...\n[Response truncated - {} total characters]",
-                                        &body[..1000],
-                                        body.len()
-                                    )
-                                } else {
-                                    body
-                                };
-                                println!("{truncated}");
+                                //let truncated = if body.len() > 1000 {
+                                //    format!(
+                                //        "{}...\n[Response truncated - {} total characters]",
+                                //        &body[..1000],
+                                //        body.len()
+                                //    )
+                                //} else {
+                                //    body
+                                //};
+                                println!("{body}");
                             }
                             Err(e) => {
                                 eprintln!("❌ Legacy Findings API call failed: {e}");
