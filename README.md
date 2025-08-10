@@ -611,7 +611,7 @@ pipeline {
 [dependencies]
 veracode-platform = { path = "veracode-api" }
 # Or if published to crates.io:
-# veracode-platform = "0.1.0"
+# veracode-platform = "0.4.1"
 ```
 
 ### Basic API Usage
