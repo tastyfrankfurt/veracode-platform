@@ -1,14 +1,47 @@
 use clap::Parser;
+use log::{debug, info, warn};
 use verascan::{
     Args, Commands, execute_assessment_scan, execute_file_search, execute_findings_export,
     execute_pipeline_scan, execute_policy_download, load_api_credentials,
+    load_secure_api_credentials_with_vault,
 };
 
 fn main() {
+    env_logger::init();
+
     let mut args = Args::parse();
 
-    if load_api_credentials(&mut args).is_err() {
-        std::process::exit(1);
+    // Try enhanced credential loading with vault support first
+    match std::env::var("VAULT_CLI_ADDR") {
+        Ok(_) => {
+            debug!("Vault configuration detected, attempting enhanced credential loading");
+            // Create runtime only for vault credential loading
+            let runtime = tokio::runtime::Runtime::new().unwrap();
+            match runtime.block_on(load_secure_api_credentials_with_vault()) {
+                Ok(secure_creds) => {
+                    info!("Successfully loaded credentials via enhanced method");
+                    // Convert secure credentials back to args format for compatibility
+                    if let Ok((api_id, api_key)) = secure_creds.extract_credentials() {
+                        args.api_id = Some(api_id);
+                        args.api_key = Some(api_key);
+                    } else {
+                        eprintln!("❌ Failed to extract credentials from secure wrapper");
+                        std::process::exit(1);
+                    }
+                }
+                Err(e) => {
+                    warn!("Enhanced credential loading failed: {e}");
+                    eprintln!("❌ Failed to load credentials: {e}");
+                    std::process::exit(1);
+                }
+            }
+        }
+        Err(_) => {
+            debug!("No vault configuration found, using legacy credential loading");
+            if load_api_credentials(&mut args).is_err() {
+                std::process::exit(1);
+            }
+        }
     }
 
     // Validate conditional requirements

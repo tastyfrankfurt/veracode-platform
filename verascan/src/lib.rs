@@ -19,6 +19,7 @@ pub mod pipeline;
 pub mod policy;
 pub mod scan;
 pub mod search;
+pub mod vault_client;
 
 pub use assessment::{AssessmentError, AssessmentScanConfig, AssessmentSubmitter, ScanType};
 pub use baseline::{
@@ -27,9 +28,9 @@ pub use baseline::{
 };
 pub use cli::{Args, Commands};
 pub use credentials::{
-    SecureApiCredentials, SecureApiId, SecureApiKey, check_pipeline_credentials,
-    check_secure_pipeline_credentials, load_api_credentials, load_secure_api_credentials,
-    validate_api_credential,
+    CredentialError, CredentialSource, SecureApiCredentials, SecureApiId, SecureApiKey,
+    VaultConfig, check_pipeline_credentials, check_secure_pipeline_credentials,
+    load_api_credentials, load_secure_api_credentials, validate_api_credential,
 };
 pub use export::{ExportConfig, ExportError, ExportWorkflow};
 pub use filefinder::FileFinder;
@@ -58,6 +59,9 @@ pub use path_resolver::{PathResolver, PathResolverConfig};
 pub use pipeline::{PipelineError, PipelineScanConfig, PipelineSubmitter};
 pub use policy::execute_policy_download;
 pub use scan::{execute_assessment_scan, execute_pipeline_scan};
+pub use vault_client::{
+    VaultCredentialClient, load_secure_api_credentials_with_vault, load_vault_config_from_env,
+};
 
 /// Execute findings export workflow from completed scans using existing credentials
 pub async fn execute_findings_export(args: &Args) -> Result<(), i32> {
