@@ -175,7 +175,10 @@ impl PipelineSubmitter {
             println!("   Project Name: {}", scan_request.project_name);
             println!("   Project URI: {:?}", scan_request.project_uri);
             println!("   Dev Stage: {:?}", scan_request.dev_stage);
-            println!("   Timeout: {:?} minutes", scan_request.scan_timeout);
+            match scan_request.scan_timeout {
+                Some(timeout) => println!("   Timeout: {timeout} minutes"),
+                None => println!("   Timeout: Default"),
+            }
             if let Some(ref modules) = scan_request.include_modules {
                 println!("   Selected Modules: {modules}");
             } else {

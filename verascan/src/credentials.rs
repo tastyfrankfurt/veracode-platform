@@ -1,10 +1,48 @@
 use crate::cli::Args;
+use log::{debug, info};
+
+/// Source of credentials for debugging and logging purposes
+#[derive(Debug, Clone)]
+pub enum CredentialSource {
+    Environment,
+    Vault { addr: String, secret_path: String },
+}
+
+/// Vault configuration for credential retrieval
+#[derive(Debug, Clone)]
+pub struct VaultConfig {
+    pub addr: String,
+    pub jwt: String,
+    pub role: String,
+    pub secret_path: String,
+    pub namespace: Option<String>,
+}
+
+/// Custom error types for credential operations
+#[derive(thiserror::Error, Debug)]
+pub enum CredentialError {
+    #[error("Environment variable validation failed: {field}: {message}")]
+    ValidationError { field: String, message: String },
+
+    #[error("Vault authentication failed: {context}")]
+    VaultAuthError { context: String },
+
+    #[error("Vault secret retrieval failed: {path}: {context}")]
+    VaultSecretError { path: String, context: String },
+
+    #[error("Missing required credentials: {missing}")]
+    MissingCredentials { missing: String },
+
+    #[error("Vault configuration error: {message}")]
+    VaultConfigError { message: String },
+}
 
 /// Secure wrapper for API credentials that prevents exposure in debug output
 #[derive(Clone)]
 pub struct SecureApiCredentials {
     pub api_id: Option<SecureApiId>,
     pub api_key: Option<SecureApiKey>,
+    pub source: CredentialSource,
 }
 
 /// Secure wrapper for API ID that redacts the value in debug output
@@ -94,6 +132,7 @@ impl std::fmt::Debug for SecureApiCredentials {
         f.debug_struct("SecureApiCredentials")
             .field("api_id", &self.api_id)
             .field("api_key", &self.api_key)
+            .field("source", &self.source)
             .finish()
     }
 }
@@ -103,6 +142,19 @@ impl SecureApiCredentials {
         Self {
             api_id: api_id.map(SecureApiId::new),
             api_key: api_key.map(SecureApiKey::new),
+            source: CredentialSource::Environment,
+        }
+    }
+
+    pub fn new_with_source(
+        api_id: Option<String>,
+        api_key: Option<String>,
+        source: CredentialSource,
+    ) -> Self {
+        Self {
+            api_id: api_id.map(SecureApiId::new),
+            api_key: api_key.map(SecureApiKey::new),
+            source,
         }
     }
 
@@ -194,31 +246,15 @@ pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     Ok(())
 }
 
-/// Load API credentials into a secure wrapper
+/// Load API credentials into a secure wrapper (legacy sync version)
 pub fn load_secure_api_credentials() -> Result<SecureApiCredentials, i32> {
-    let api_id = match std::env::var("VERACODE_API_ID") {
-        Ok(id) => {
-            if let Err(e) = validate_api_credential(&id, "VERACODE_API_ID") {
-                eprintln!("❌ Invalid VERACODE_API_ID: {e}");
-                return Err(1);
-            }
-            Some(id)
+    match load_secure_api_credentials_from_env() {
+        Ok(credentials) => Ok(credentials),
+        Err(e) => {
+            eprintln!("❌ Failed to load credentials: {e}");
+            Err(1)
         }
-        Err(_) => None,
-    };
-
-    let api_key = match std::env::var("VERACODE_API_KEY") {
-        Ok(key) => {
-            if let Err(e) = validate_api_credential(&key, "VERACODE_API_KEY") {
-                eprintln!("❌ Invalid VERACODE_API_KEY: {e}");
-                return Err(1);
-            }
-            Some(key)
-        }
-        Err(_) => None,
-    };
-
-    Ok(SecureApiCredentials::new(api_id, api_key))
+    }
 }
 
 /// Extract credentials from Args (for owned strings - API client construction)
@@ -258,6 +294,44 @@ pub fn check_secure_pipeline_credentials(
     secure_creds.extract_credentials()
 }
 
+/// Load credentials from environment variables (existing logic refactored)
+pub fn load_secure_api_credentials_from_env() -> Result<SecureApiCredentials, CredentialError> {
+    debug!("Loading credentials from environment variables");
+
+    let api_id = match std::env::var("VERACODE_API_ID") {
+        Ok(id) => {
+            validate_api_credential(&id, "VERACODE_API_ID").map_err(|msg| {
+                CredentialError::ValidationError {
+                    field: "VERACODE_API_ID".to_string(),
+                    message: msg,
+                }
+            })?;
+            Some(id)
+        }
+        Err(_) => None,
+    };
+
+    let api_key = match std::env::var("VERACODE_API_KEY") {
+        Ok(key) => {
+            validate_api_credential(&key, "VERACODE_API_KEY").map_err(|msg| {
+                CredentialError::ValidationError {
+                    field: "VERACODE_API_KEY".to_string(),
+                    message: msg,
+                }
+            })?;
+            Some(key)
+        }
+        Err(_) => None,
+    };
+
+    info!("Successfully loaded credentials from environment variables");
+    Ok(SecureApiCredentials::new_with_source(
+        api_id,
+        api_key,
+        CredentialSource::Environment,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -290,7 +364,9 @@ mod tests {
         assert!(debug_output.contains("SecureApiCredentials"));
         assert!(debug_output.contains("api_id"));
         assert!(debug_output.contains("api_key"));
+        assert!(debug_output.contains("source"));
         assert!(debug_output.contains("[REDACTED]"));
+        assert!(debug_output.contains("Environment"));
 
         // Should not contain actual credential values
         assert!(!debug_output.contains("test_api_id_123"));

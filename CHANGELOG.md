@@ -5,7 +5,77 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.2] - 2025-08-15
+
+### Added
+- **HashiCorp Vault Integration**: Comprehensive vault support for secure credential management
+  - **Priority-based Credential Loading**: Vault credentials checked first, falls back to environment variables for seamless migration
+  - **OIDC/JWT Authentication**: Secure authentication with HashiCorp Vault using OIDC tokens and role-based access
+  - **Exponential Backoff Retry Logic**: Robust error handling with configurable retry policies (60s auth, 45s secrets)
+  - **Input Validation**: Comprehensive validation of all vault configuration parameters with security-focused constraints
+  - **Debug Logging**: Detailed logging support with credential redaction for secure troubleshooting
+  - **Async Integration**: Full async/await support with `#[tokio::main]` for non-blocking vault operations
+
+- **Enhanced Credential Security**: Extended secure credential management system
+  - **Source Tracking**: `CredentialSource` enum tracks whether credentials came from Vault or environment variables
+  - **Vault Configuration**: New `VaultConfig` struct with comprehensive validation and namespace support
+  - **Custom Error Types**: `CredentialError` enum with contextual error messages for vault operations
+  - **Secure Debug Output**: All vault credentials automatically redacted in debug output
+
+### Changed
+- **Main Application Architecture**: Updated to async main function for vault credential loading
+  - **Async Main**: Changed from `fn main()` to `#[tokio::main] async fn main()` for vault support
+  - **Enhanced Credential Loading**: `load_secure_api_credentials_enhanced()` with vault-first, environment-fallback logic
+  - **Backward Compatibility**: Existing environment variable workflows continue unchanged
+  - **Logging Integration**: Added `env_logger` initialization for vault operation visibility
+
+- **Dependencies**: Added vault-specific dependencies for secure credential management
+  - **Vault Client**: `vaultrs = "0.7"` for HashiCorp Vault API integration
+  - **Retry Logic**: `backoff = "0.4"` for exponential backoff retry patterns
+  - **Logging Support**: `env_logger = "0.11"` for runtime logging configuration
+
+### Environment Variables
+```bash
+# Vault Configuration (Priority 1)
+VAULT_CLI_ADDR=https://vault.example.com        # Vault server URL (HTTPS only)
+VAULT_CLI_JWT=your-jwt-token                    # JWT token for OIDC auth
+VAULT_CLI_ROLE=veracode-role                    # Vault role name
+VAULT_CLI_SECRET_PATH=secret/veracode/api       # Path to secret containing credentials
+VAULT_CLI_NAMESPACE=optional-namespace          # Vault namespace (optional)
+
+# Fallback Configuration (Priority 2)
+VERACODE_API_ID=your-api-id                     # Direct API ID (legacy)
+VERACODE_API_KEY=your-api-key                   # Direct API key (legacy)
+
+# Network Configuration (applies to vault)
+VERASCAN_DISABLE_CERT_VALIDATION=true          # Disable TLS verification (dev only)
+```
+
+### Validation Rules
+- **Vault Address**: Must use HTTPS protocol, maximum 150 characters
+- **JWT Token**: Maximum 50 characters, alphanumeric with hyphens, underscores, periods only
+- **Role Name**: 1-50 characters, cannot be empty
+- **Secret Path**: 1-200 characters, cannot be empty
+
+### Vault Secret Structure
+```json
+{
+  "VERACODE_API_ID": "your-veracode-api-id",
+  "VERACODE_API_KEY": "your-veracode-api-key"
+}
+```
+
+### Benefits
+- **Enhanced Security**: Centralized credential management with vault's security features
+- **Zero Downtime Migration**: Gradual rollout support with automatic fallback to environment variables
+- **Production Ready**: Comprehensive error handling, retry logic, and input validation
+- **Developer Friendly**: Detailed logging and clear error messages for troubleshooting
+- **CI/CD Integration**: Works seamlessly with existing pipeline workflows
+
+### Documentation
+- **Comprehensive Guide**: `VAULT_INTEGRATION.md` with setup instructions, examples, and troubleshooting
+- **Migration Path**: Step-by-step guide for migrating from environment variables to vault
+- **Security Considerations**: Best practices for vault configuration and credential management
 
 ## [0.4.1] - 2025-08-10
 
