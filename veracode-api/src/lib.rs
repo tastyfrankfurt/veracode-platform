@@ -411,8 +411,8 @@ impl VeracodeClient {
 
     /// Get a pipeline scan API instance with debug enabled.
     /// Uses REST API (api.veracode.*).
-    pub fn pipeline_api_with_debug(&self, debug: bool) -> PipelineApi {
-        PipelineApi::new_with_debug(self.clone(), debug)
+    pub fn pipeline_api_with_debug(&self, _debug: bool) -> PipelineApi {
+        PipelineApi::new(self.clone())
     }
 
     /// Get a policy API instance.
@@ -429,8 +429,8 @@ impl VeracodeClient {
 
     /// Get a findings API instance with debug enabled.
     /// Uses REST API (api.veracode.*).
-    pub fn findings_api_with_debug(&self, debug: bool) -> FindingsApi {
-        FindingsApi::new_with_debug(self.clone(), debug)
+    pub fn findings_api_with_debug(&self, _debug: bool) -> FindingsApi {
+        FindingsApi::new(self.clone())
     }
 
     /// Get a scan API instance.

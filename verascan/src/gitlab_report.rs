@@ -11,6 +11,8 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+use log::info;
+
 /// GitLab SAST report structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GitLabSASTReport {
@@ -277,7 +279,7 @@ impl GitLabExporter {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "💾 Exporting aggregated findings to GitLab SAST format: {}",
                 output_path.display()
             );
@@ -287,7 +289,7 @@ impl GitLabExporter {
         let json_string = serde_json::to_string_pretty(&gitlab_report)?;
         std::fs::write(output_path, json_string)?;
 
-        println!(
+        info!(
             "✅ GitLab SAST report exported to: {}",
             output_path.display()
         );
@@ -306,7 +308,7 @@ impl GitLabExporter {
         let vulnerabilities = if let Some(ref rest_findings) = aggregated.original_rest_findings {
             // Use original REST findings to preserve exploitability data
             if self.debug {
-                println!("🔄 Using original REST findings to preserve exploitability data");
+                info!("🔄 Using original REST findings to preserve exploitability data");
             }
             let scan_id = aggregated
                 .scan_metadata
@@ -637,7 +639,7 @@ mod tests {
 
         // Serialize to JSON to verify the details are included
         let json = serde_json::to_string_pretty(&vulnerability).unwrap();
-        println!("GitLab Vulnerability JSON:\n{json}");
+        info!("GitLab Vulnerability JSON:\n{json}");
 
         // Check that details are in the JSON
         assert!(json.contains("\"details\""));

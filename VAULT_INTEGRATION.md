@@ -85,6 +85,18 @@ export VAULT_CLI_NAMESPACE="security-team"
 verascan pipeline --app-name MyApp --scan-name test-scan
 ```
 
+### With Custom Secret Engine
+
+```bash
+export VAULT_CLI_ADDR="https://vault.company.com"
+export VAULT_CLI_JWT="eyJhbGciOiJSUzI1NiIs..."
+export VAULT_CLI_ROLE="veracode-scanner"
+# Use custom secret engine named 'secrets'
+export VAULT_CLI_SECRET_PATH="veracode/api/credentials@secrets"
+
+verascan pipeline --app-name MyApp --scan-name test-scan
+```
+
 ### Fallback to Environment Variables
 
 ```bash
@@ -102,25 +114,35 @@ verascan pipeline --app-name MyApp --scan-name test-scan
 - Maximum length: 150 characters
 
 ### JWT Token  
-- Maximum length: 50 characters
+- Maximum length: 20,000 characters
 - Allowed characters: alphanumeric, hyphens, underscores, periods
 
 ### Role Name
-- Length: 1-50 characters
+- Length: 1-100 characters
 - Cannot be empty
 
 ### Secret Path
 - Length: 1-200 characters  
 - Cannot be empty
+- Supports custom secret engines using format: `path@engine` (e.g., `secret/data/app@kvv2`)
+- Defaults to `kvv2` engine if no engine specified
 
 ## Error Handling
 
 ### Retry Logic
 - **Authentication**: Up to 60 seconds with exponential backoff
 - **Secret Retrieval**: Up to 45 seconds with exponential backoff
-- **Initial Delay**: 500ms
-- **Max Delay**: 8-10 seconds
+- **Token Revocation**: Up to 30 seconds with exponential backoff
+- **Initial Delay**: 250-500ms depending on operation
+- **Max Delay**: 5-10 seconds depending on operation
 - **Multiplier**: 2.0
+
+### Enhanced Error Detection
+- **TLS/Certificate Errors**: Automatically detected and not retried
+- **Authentication Errors**: HTTP 401/403 errors are not retried
+- **Network Errors**: Connection, timeout, and rate limit errors are retried
+- **Client Errors**: HTTP 4xx errors (except auth) are not retried
+- **Server Errors**: HTTP 5xx errors are retried with backoff
 
 ### Error Types
 - `VaultConfigError`: Missing or invalid configuration
@@ -145,11 +167,14 @@ Log levels:
 
 ## Security Considerations
 
-- Vault credentials are never logged or printed
-- JWT tokens are validated for format and length
-- All secrets use secure debug redaction
-- TLS verification is enforced by default
-- Input validation prevents injection attacks
+- **Automatic Token Revocation**: Vault tokens are automatically revoked after successful credential retrieval
+- **Memory-only Credentials**: Credentials remain in memory only, never written to disk
+- **Secure Logging**: Vault credentials are never logged or printed
+- **JWT Token Validation**: JWT tokens are validated for format and length
+- **Debug Redaction**: All secrets use secure debug redaction
+- **TLS Enforcement**: TLS verification is enforced by default
+- **Input Validation**: Comprehensive input validation prevents injection attacks
+- **Certificate Error Detection**: Enhanced TLS/certificate error detection and handling
 
 ## Migration Guide
 

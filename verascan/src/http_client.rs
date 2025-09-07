@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
 
+use log::info;
+
 /// Authentication strategy for API clients
 #[derive(Debug, Clone)]
 pub enum AuthStrategy {
@@ -178,41 +180,41 @@ pub type GitLabClientError = HttpClientError;
 impl HttpClientError {
     /// Print connectivity test message
     pub fn print_connectivity_test(api_name: &str) {
-        println!("🔍 Testing {api_name} connectivity...");
+        info!("🔍 Testing {api_name} connectivity...");
     }
 
     /// Print successful connectivity message
     pub fn print_connectivity_success(api_name: &str) {
-        println!("✅ {api_name} connectivity test successful");
+        info!("✅ {api_name} connectivity test successful");
     }
 
     /// Print validation message
     pub fn print_validation(api_name: &str) {
-        println!("🔍 Validating {api_name} integration requirements...");
+        info!("🔍 Validating {api_name} integration requirements...");
     }
 
     /// Print validation success
     pub fn print_validation_success(api_name: &str) {
-        println!("✅ {api_name} connectivity validated successfully!");
+        info!("✅ {api_name} connectivity validated successfully!");
     }
 
     /// Print API access confirmation
     pub fn print_api_access() {
-        println!("   API access: ✅ Authenticated");
+        info!("   API access: ✅ Authenticated");
     }
 
     /// Print permission check result
     pub fn print_permission_result(operation: &str, allowed: bool) {
         if allowed {
-            println!("   {operation}: ✅ Permitted");
+            info!("   {operation}: ✅ Permitted");
         } else {
-            println!("   {operation}: ⚠️  May be restricted");
+            info!("   {operation}: ⚠️  May be restricted");
         }
     }
 
     /// Print permission error
     pub fn print_permission_error(operation: &str, error: &str) {
-        println!("   {operation}: ⚠️  Error checking permissions: {error}");
+        info!("   {operation}: ⚠️  Error checking permissions: {error}");
     }
 }
 
@@ -232,8 +234,8 @@ impl RobustHttpClient {
 
         if config.disable_cert_validation {
             if config.debug {
-                println!("⚠️  WARNING: Certificate validation disabled");
-                println!("   This should only be used in development environments!");
+                info!("⚠️  WARNING: Certificate validation disabled");
+                info!("   This should only be used in development environments!");
             }
             client_builder = client_builder
                 .danger_accept_invalid_certs(true)
@@ -245,12 +247,12 @@ impl RobustHttpClient {
             .map_err(HttpClientError::RequestError)?;
 
         if config.debug {
-            println!("🔧 Robust HTTP Client initialized");
-            println!("   Base URL: {}", config.base_url);
-            println!("   Connect timeout: {:?}", config.timeouts.connect_timeout);
-            println!("   Request timeout: {:?}", config.timeouts.request_timeout);
-            println!("   Max retries: {}", config.retry_config.max_retries);
-            println!(
+            info!("🔧 Robust HTTP Client initialized");
+            info!("   Base URL: {}", config.base_url);
+            info!("   Connect timeout: {:?}", config.timeouts.connect_timeout);
+            info!("   Request timeout: {:?}", config.timeouts.request_timeout);
+            info!("   Max retries: {}", config.retry_config.max_retries);
+            info!(
                 "   Initial retry delay: {:?}",
                 config.retry_config.initial_delay
             );
@@ -267,7 +269,7 @@ impl RobustHttpClient {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
         if self.config.debug {
-            println!("🌐 GET {url} (with retry logic)");
+            info!("🌐 GET {url} (with retry logic)");
         }
 
         let response = self
@@ -287,9 +289,9 @@ impl RobustHttpClient {
         let payload_json = serde_json::to_value(payload)?;
 
         if self.config.debug {
-            println!("🌐 POST {url} (with retry logic)");
+            info!("🌐 POST {url} (with retry logic)");
             if let Ok(json) = serde_json::to_string_pretty(&payload_json) {
-                println!("📤 Request payload:\n{json}");
+                info!("📤 Request payload:\n{json}");
             }
         }
 
@@ -310,7 +312,7 @@ impl RobustHttpClient {
         let payload_json = serde_json::to_value(payload)?;
 
         if self.config.debug {
-            println!("🌐 PUT {url} (with retry logic)");
+            info!("🌐 PUT {url} (with retry logic)");
         }
 
         let response = self
@@ -328,7 +330,7 @@ impl RobustHttpClient {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
         if self.config.debug {
-            println!("🌐 DELETE {url} (with retry logic)");
+            info!("🌐 DELETE {url} (with retry logic)");
         }
 
         let response = self
@@ -352,8 +354,8 @@ impl RobustHttpClient {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
         if self.config.debug {
-            println!("🌐 UPLOAD {url} (with retry logic)");
-            println!("📤 File: {file_name} ({} bytes)", file_data.len());
+            info!("🌐 UPLOAD {url} (with retry logic)");
+            info!("📤 File: {file_name} ({} bytes)", file_data.len());
         }
 
         // Serialize additional fields once
@@ -403,7 +405,7 @@ impl RobustHttpClient {
 
         for attempt in 0..=self.config.retry_config.max_retries {
             if self.config.debug && attempt > 0 {
-                println!(
+                info!(
                     "🔄 Retry attempt {}/{} after {}ms delay",
                     attempt,
                     self.config.retry_config.max_retries,
@@ -419,7 +421,7 @@ impl RobustHttpClient {
                     // Check if error is retryable
                     if !self.is_retryable_error(&error) {
                         if self.config.debug {
-                            println!("❌ Non-retryable error encountered: {error}");
+                            info!("❌ Non-retryable error encountered: {error}");
                         }
                         return Err(HttpClientError::RequestError(error));
                     }
@@ -434,7 +436,7 @@ impl RobustHttpClient {
                         };
 
                         if self.config.debug {
-                            println!("⏳ Waiting {}ms before retry...", delay.as_millis());
+                            info!("⏳ Waiting {}ms before retry...", delay.as_millis());
                         }
 
                         sleep(delay).await;
@@ -513,7 +515,7 @@ impl RobustHttpClient {
             let result: T = response.json().await?;
 
             if self.config.debug {
-                println!("📥 API Response: {status}");
+                info!("📥 API Response: {status}");
             }
 
             Ok(result)
@@ -522,7 +524,7 @@ impl RobustHttpClient {
             let error_text = response.text().await.unwrap_or("Unknown error".to_string());
 
             if self.config.debug {
-                println!("❌ API Error: {status_code} - {error_text}");
+                info!("❌ API Error: {status_code} - {error_text}");
             }
 
             Err(HttpClientError::ApiError {
@@ -537,7 +539,7 @@ impl RobustHttpClient {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
         if self.config.debug {
-            println!("🔍 Testing connectivity to {url}");
+            info!("🔍 Testing connectivity to {url}");
         }
 
         let response = self
@@ -547,7 +549,7 @@ impl RobustHttpClient {
         let status = response.status();
         if status.is_success() {
             if self.config.debug {
-                println!("✅ Connectivity test successful");
+                info!("✅ Connectivity test successful");
             }
             Ok(())
         } else {
@@ -696,7 +698,7 @@ impl HttpClientConfigBuilder {
     pub fn with_api_debug_mode(mut self, api_name: &str, debug: bool) -> Self {
         self.config.debug = debug;
         if debug {
-            println!("🔍 Initializing {api_name} client with debug mode enabled");
+            info!("🔍 Initializing {api_name} client with debug mode enabled");
         }
         self
     }

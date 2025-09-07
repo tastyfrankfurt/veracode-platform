@@ -5,6 +5,7 @@
 
 use hex;
 use hmac::{Hmac, Mac};
+use log::{info, warn};
 use reqwest::{Client, multipart};
 use serde::Serialize;
 use sha2::Sha256;
@@ -193,7 +194,7 @@ impl VeracodeClient {
                             Some(seconds) => format!("{seconds}s (from Retry-After header)"),
                             None => format!("{}s (until next minute window)", delay.as_secs()),
                         };
-                        eprintln!(
+                        warn!(
                             "🚦 {operation_name} rate limited on attempt {attempt}, waiting {wait_time}"
                         );
 
@@ -205,7 +206,7 @@ impl VeracodeClient {
 
                     if attempt > 1 {
                         // Log successful retry for debugging
-                        eprintln!("✅ {operation_name} succeeded on attempt {attempt}");
+                        info!("✅ {operation_name} succeeded on attempt {attempt}");
                     }
                     return Ok(response);
                 }
@@ -237,7 +238,7 @@ impl VeracodeClient {
                     }
 
                     // Log retry attempt for debugging
-                    eprintln!(
+                    warn!(
                         "⚠️  {operation_name} failed on attempt {attempt}, retrying in {}ms: {veracode_error}",
                         delay.as_millis()
                     );

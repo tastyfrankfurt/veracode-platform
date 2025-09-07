@@ -5,6 +5,8 @@
 //! application-level and sandbox scans. This implementation mirrors the Java API wrapper functionality.
 
 use chrono::{DateTime, Utc};
+#[allow(unused_imports)] // debug is used in tests
+use log::{debug, error, info};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
@@ -993,7 +995,7 @@ impl ScanApi {
         let build_info = self.get_build_info(app_id, None, sandbox_id).await?;
 
         if !build_info.build_id.is_empty() && build_info.build_id != "unknown" {
-            println!("   🗑️  Deleting build: {}", build_info.build_id);
+            info!("Deleting build: {}", build_info.build_id);
             self.delete_build(app_id, &build_info.build_id, sandbox_id)
                 .await?;
         }
@@ -1085,7 +1087,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1134,7 +1136,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1281,7 +1283,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1355,7 +1357,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1473,7 +1475,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1701,20 +1703,20 @@ impl ScanApi {
         file_path: &str,
     ) -> Result<String, ScanError> {
         // Step 1: Upload file
-        println!("📤 Uploading file to sandbox...");
+        info!("Uploading file to sandbox...");
         let _uploaded_file = self
             .upload_file_to_sandbox(app_id, file_path, sandbox_id)
             .await?;
 
         // Step 2: Begin pre-scan
-        println!("🔍 Beginning pre-scan...");
+        info!("Beginning pre-scan...");
         self.begin_sandbox_prescan(app_id, sandbox_id).await?;
 
         // Step 3: Wait a moment for pre-scan to complete (in production, poll for status)
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
         // Step 4: Begin scan
-        println!("🚀 Beginning scan...");
+        info!("Beginning scan...");
         self.begin_sandbox_scan_all_modules(app_id, sandbox_id)
             .await?;
 
@@ -1936,7 +1938,7 @@ mod tests {
 
             // Test progress callback signature
             let progress_callback = |bytes_uploaded: u64, total_bytes: u64, percentage: f64| {
-                println!("Progress: {bytes_uploaded}/{total_bytes} ({percentage:.1}%)");
+                debug!("Upload progress: {bytes_uploaded}/{total_bytes} ({percentage:.1}%)");
             };
             let _: Result<UploadedFile, _> = api
                 .upload_large_file_with_progress(request, progress_callback)

@@ -4,6 +4,7 @@
 //! and policy scan operations within the Veracode platform.
 
 use chrono::{DateTime, Utc};
+use log::{debug, info, warn};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -807,18 +808,15 @@ impl<'a> PolicyApi<'a> {
             // If we've reached max retries, return "Not Assessed"
             attempts += 1;
             if attempts >= max_retries {
-                println!(
-                    "⚠️  Policy evaluation still not assessed after {max_retries} attempts. This may indicate:"
+                warn!(
+                    "Policy evaluation still not assessed after {max_retries} attempts. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or application may not have a policy assigned"
                 );
-                println!("   - Scan is still in progress");
-                println!("   - Policy evaluation is taking longer than expected");
-                println!("   - Application may not have a policy assigned");
                 return Ok(Cow::Borrowed("Not Assessed"));
             }
 
             // Log retry attempt
-            println!(
-                "🔄 Policy evaluation not yet assessed, retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
+            info!(
+                "Policy evaluation not yet assessed, retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
             );
 
             // Wait before retrying
@@ -955,9 +953,9 @@ impl<'a> PolicyApi<'a> {
         loop {
             if debug {
                 if attempts == 0 && enable_break_build {
-                    println!("🔍 Checking policy compliance status with retry logic...");
+                    debug!("Checking policy compliance status with retry logic...");
                 } else if attempts == 0 {
-                    println!("📝 Getting summary report...");
+                    debug!("Getting summary report...");
                 }
             }
 
@@ -976,7 +974,7 @@ impl<'a> PolicyApi<'a> {
             // If status is ready (not empty and not "Not Assessed"), return both report and status
             if !status.is_empty() && status != "Not Assessed" {
                 if debug {
-                    println!("✅ Policy compliance status ready: {status}");
+                    debug!("Policy compliance status ready: {status}");
                 }
                 return Ok((summary_report, Some(Cow::Owned(status))));
             }
@@ -985,21 +983,17 @@ impl<'a> PolicyApi<'a> {
             attempts += 1;
             if attempts >= max_retries {
                 if debug {
-                    println!(
-                        "⚠️  Policy evaluation still not ready after {max_retries} attempts. Status: {status}"
+                    warn!(
+                        "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
                     );
-                    println!("   This may indicate:");
-                    println!("   - Scan is still in progress");
-                    println!("   - Policy evaluation is taking longer than expected");
-                    println!("   - Build results are not yet available");
                 }
                 return Ok((summary_report, Some(Cow::Owned(status))));
             }
 
             // Log retry attempt
             if debug {
-                println!(
-                    "🔄 Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
+                info!(
+                    "Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
                 );
             }
 
@@ -1053,19 +1047,15 @@ impl<'a> PolicyApi<'a> {
             // If we've reached max retries, return current status
             attempts += 1;
             if attempts >= max_retries {
-                println!(
-                    "⚠️  Policy evaluation still not ready after {max_retries} attempts. Status: {status}"
+                warn!(
+                    "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
                 );
-                println!("   This may indicate:");
-                println!("   - Scan is still in progress");
-                println!("   - Policy evaluation is taking longer than expected");
-                println!("   - Build results are not yet available");
                 return Ok(Cow::Owned(status.clone()));
             }
 
             // Log retry attempt
-            println!(
-                "🔄 Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
+            info!(
+                "Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
             );
 
             // Wait before retrying

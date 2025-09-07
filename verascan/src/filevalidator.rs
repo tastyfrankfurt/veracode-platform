@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use log::info;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SupportedFileType {
     Jar,
@@ -103,8 +105,8 @@ impl FileValidator {
         })?;
 
         if debug {
-            println!("🔍 DEBUG: Reading file: {}", file_path.display());
-            println!("🔍 DEBUG: Bytes read: {bytes_read}");
+            info!("🔍 DEBUG: Reading file: {}", file_path.display());
+            info!("🔍 DEBUG: Bytes read: {bytes_read}");
         }
 
         if bytes_read == 0 {
@@ -117,7 +119,7 @@ impl FileValidator {
         buffer.truncate(bytes_read);
 
         if debug {
-            println!(
+            info!(
                 "🔍 DEBUG: First 16 bytes: {:02x?}",
                 &buffer[..std::cmp::min(16, buffer.len())]
             );
@@ -133,8 +135,8 @@ impl FileValidator {
             .map(|s| s.to_lowercase());
 
         if debug {
-            println!("🔍 DEBUG: File extension: {file_extension:?}");
-            println!(
+            info!("🔍 DEBUG: File extension: {file_extension:?}");
+            info!(
                 "🔍 DEBUG: Infer detected type: {:?}",
                 file_type.as_ref().map(|t| t.mime_type())
             );
@@ -145,51 +147,47 @@ impl FileValidator {
                 match kind.mime_type() {
                     "application/zip" => {
                         if debug {
-                            println!("🔍 DEBUG: Detected ZIP-based file");
+                            info!("🔍 DEBUG: Detected ZIP-based file");
                         }
                         // Could be ZIP, JAR, or WAR - check extension and content
                         match file_extension.as_deref() {
                             Some("jar") => {
                                 if debug {
-                                    println!("🔍 DEBUG: Extension indicates JAR file");
+                                    info!("🔍 DEBUG: Extension indicates JAR file");
                                 }
                                 // Additional validation: check for META-INF/MANIFEST.MF signature
                                 if self.is_jar_file(&buffer, debug) {
                                     if debug {
-                                        println!("🔍 DEBUG: JAR structure confirmed");
+                                        info!("🔍 DEBUG: JAR structure confirmed");
                                     }
                                     Ok(SupportedFileType::Jar)
                                 } else {
                                     if debug {
-                                        println!(
-                                            "🔍 DEBUG: JAR structure not found, treating as ZIP"
-                                        );
+                                        info!("🔍 DEBUG: JAR structure not found, treating as ZIP");
                                     }
                                     Ok(SupportedFileType::Zip) // ZIP-based but not a proper JAR
                                 }
                             }
                             Some("war") => {
                                 if debug {
-                                    println!("🔍 DEBUG: Extension indicates WAR file");
+                                    info!("🔍 DEBUG: Extension indicates WAR file");
                                 }
                                 // Additional validation: check for WEB-INF structure signature
                                 if self.is_war_file(&buffer, debug) {
                                     if debug {
-                                        println!("🔍 DEBUG: WAR structure confirmed");
+                                        info!("🔍 DEBUG: WAR structure confirmed");
                                     }
                                     Ok(SupportedFileType::War)
                                 } else {
                                     if debug {
-                                        println!(
-                                            "🔍 DEBUG: WAR structure not found, treating as ZIP"
-                                        );
+                                        info!("🔍 DEBUG: WAR structure not found, treating as ZIP");
                                     }
                                     Ok(SupportedFileType::Zip) // ZIP-based but not a proper WAR
                                 }
                             }
                             _ => {
                                 if debug {
-                                    println!("🔍 DEBUG: Generic ZIP file");
+                                    info!("🔍 DEBUG: Generic ZIP file");
                                 }
                                 Ok(SupportedFileType::Zip)
                             }
@@ -295,7 +293,7 @@ impl FileValidator {
         let search_pattern = b"META-INF/";
         let found = self.contains_pattern(buffer, search_pattern);
         if debug {
-            println!("🔍 DEBUG: JAR pattern search for 'META-INF/': {found}");
+            info!("🔍 DEBUG: JAR pattern search for 'META-INF/': {found}");
         }
         found
     }
@@ -311,7 +309,7 @@ impl FileValidator {
         let search_pattern = b"WEB-INF/";
         let found = self.contains_pattern(buffer, search_pattern);
         if debug {
-            println!("🔍 DEBUG: WAR pattern search for 'WEB-INF/': {found}");
+            info!("🔍 DEBUG: WAR pattern search for 'WEB-INF/': {found}");
         }
         found
     }

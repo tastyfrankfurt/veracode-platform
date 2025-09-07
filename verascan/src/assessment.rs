@@ -1,3 +1,4 @@
+use log::{error, info};
 use std::borrow::Cow;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -251,9 +252,7 @@ impl AssessmentSubmitter {
             ScanType::Sandbox => {
                 if let Some(ref sandbox_name) = self.config.sandbox_name {
                     if self.config.debug {
-                        println!(
-                            "🔍 Ensuring sandbox exists and getting legacy ID: {sandbox_name}"
-                        );
+                        info!("🔍 Ensuring sandbox exists and getting legacy ID: {sandbox_name}");
                     }
 
                     let sandbox_api = self.client.sandbox_api();
@@ -263,14 +262,14 @@ impl AssessmentSubmitter {
                     {
                         Ok(Some(sandbox)) => {
                             if self.config.debug {
-                                println!("✅ Sandbox already exists: {sandbox_name}");
+                                info!("✅ Sandbox already exists: {sandbox_name}");
                             }
                             sandbox
                         }
                         Ok(None) | Err(_) => {
                             // Sandbox doesn't exist, create it
                             if self.config.debug {
-                                println!("📦 Creating new sandbox: {sandbox_name}");
+                                info!("📦 Creating new sandbox: {sandbox_name}");
                             }
 
                             match sandbox_api
@@ -278,11 +277,11 @@ impl AssessmentSubmitter {
                                 .await
                             {
                                 Ok(created_sandbox) => {
-                                    println!("✅ Sandbox created: {sandbox_name}");
+                                    info!("✅ Sandbox created: {sandbox_name}");
                                     created_sandbox
                                 }
                                 Err(e) => {
-                                    eprintln!("❌ Failed to create sandbox: {e}");
+                                    error!("❌ Failed to create sandbox: {e}");
                                     return Err(AssessmentError::SandboxError(format!(
                                         "Failed to create sandbox {sandbox_name}: {e}"
                                     )));
@@ -302,7 +301,7 @@ impl AssessmentSubmitter {
                     );
 
                     if self.config.debug {
-                        println!(
+                        info!(
                             "📋 Sandbox ID: {} (Legacy: {})",
                             sandbox_id.for_rest_api(),
                             sandbox_id.for_xml_api()
@@ -327,7 +326,7 @@ impl AssessmentSubmitter {
         sandbox_legacy_id: Option<&str>,
     ) -> Result<BuildId, AssessmentError> {
         if self.config.debug {
-            println!("🔍 Checking/creating build for uploads...");
+            info!("🔍 Checking/creating build for uploads...");
         }
 
         let workflow = VeracodeWorkflow::new(self.client.clone());
@@ -349,12 +348,12 @@ impl AssessmentSubmitter {
         {
             Ok(build) => {
                 if self.config.debug {
-                    println!("✅ Build ready for uploads: {}", build.build_id);
+                    info!("✅ Build ready for uploads: {}", build.build_id);
                 }
                 Ok(BuildId::new(Cow::Owned(build.build_id)))
             }
             Err(e) => {
-                eprintln!("❌ Failed to ensure build exists: {e}");
+                error!("❌ Failed to ensure build exists: {e}");
                 Err(AssessmentError::ScanError(format!(
                     "Failed to ensure build exists: {e}"
                 )))
@@ -385,10 +384,10 @@ impl AssessmentSubmitter {
 
         if self.config.debug {
             let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
-            println!(
+            info!(
                 "✅ Cumulative file size validation passed: {total_size_mb:.2} MB total (within 5120 MB limit)"
             );
-            println!("📊 Files to process: {}", files.len());
+            info!("📊 Files to process: {}", files.len());
         }
 
         // Get sandbox legacy ID if sandbox scan
@@ -413,10 +412,10 @@ impl AssessmentSubmitter {
         sandbox_legacy_id: Option<&str>,
     ) -> Result<Vec<String>, AssessmentError> {
         if self.config.debug {
-            println!("🚀 Starting sequential file upload for assessment scan");
-            println!("📁 Files to upload: {}", files.len());
-            println!("   App Profile: {}", self.config.app_profile_name);
-            println!(
+            info!("🚀 Starting sequential file upload for assessment scan");
+            info!("📁 Files to upload: {}", files.len());
+            info!("   App Profile: {}", self.config.app_profile_name);
+            info!(
                 "   App ID: {} (GUID: {})",
                 app_id.for_xml_api(),
                 app_id.for_rest_api()
@@ -424,11 +423,11 @@ impl AssessmentSubmitter {
             match self.config.scan_type {
                 ScanType::Sandbox => {
                     if let Some(ref sandbox_name) = self.config.sandbox_name {
-                        println!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
+                        info!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
                     }
                 }
                 ScanType::Policy => {
-                    println!("   Scan Type: Policy Scan");
+                    info!("   Scan Type: Policy Scan");
                 }
             }
         }
@@ -438,7 +437,7 @@ impl AssessmentSubmitter {
         // Upload each file
         for (index, file) in files.iter().enumerate() {
             if self.config.debug {
-                println!(
+                info!(
                     "📤 Uploading file {}/{}: {}",
                     index + 1,
                     files.len(),
@@ -457,18 +456,18 @@ impl AssessmentSubmitter {
                         .and_then(|name| name.to_str())
                         .unwrap_or("unknown")
                         .to_string();
-                    println!("✅ File uploaded: {file_name}");
+                    info!("✅ File uploaded: {file_name}");
                     uploaded_files.push(file_name);
                 }
                 Err(e) => {
-                    eprintln!("❌ Failed to upload file: {e}");
+                    error!("❌ Failed to upload file: {e}");
                     return Err(e);
                 }
             }
         }
 
         if self.config.debug {
-            println!(
+            info!(
                 "✅ All files uploaded successfully: {} files",
                 uploaded_files.len()
             );
@@ -487,11 +486,11 @@ impl AssessmentSubmitter {
         let num_threads = std::cmp::min(self.config.threads, files.len());
 
         if self.config.debug {
-            println!("🚀 Starting concurrent file upload for assessment scan");
-            println!("📁 Files to upload: {}", files.len());
-            println!("   Using {num_threads} threads");
-            println!("   App Profile: {}", self.config.app_profile_name);
-            println!(
+            info!("🚀 Starting concurrent file upload for assessment scan");
+            info!("📁 Files to upload: {}", files.len());
+            info!("   Using {num_threads} threads");
+            info!("   App Profile: {}", self.config.app_profile_name);
+            info!(
                 "   App ID: {} (GUID: {})",
                 app_id.for_xml_api(),
                 app_id.for_rest_api()
@@ -499,17 +498,17 @@ impl AssessmentSubmitter {
             match self.config.scan_type {
                 ScanType::Sandbox => {
                     if let Some(ref sandbox_name) = self.config.sandbox_name {
-                        println!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
+                        info!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
                     }
                 }
                 ScanType::Policy => {
-                    println!("   Scan Type: Policy Scan");
+                    info!("   Scan Type: Policy Scan");
                 }
             }
         } else {
-            println!("🚀 Starting {} concurrent file uploads", files.len());
+            info!("🚀 Starting {} concurrent file uploads", files.len());
             if num_threads < files.len() {
-                println!("   Using {} threads for {} files", num_threads, files.len());
+                info!("   Using {} threads for {} files", num_threads, files.len());
             }
         }
 
@@ -540,7 +539,7 @@ impl AssessmentSubmitter {
                     .to_string();
 
                 if submitter_ref.config.debug {
-                    println!(
+                    info!(
                         "📤 Thread {}: Starting upload for {}",
                         index + 1,
                         file_path.display()
@@ -557,18 +556,18 @@ impl AssessmentSubmitter {
                 {
                     Ok(_) => {
                         if submitter_ref.config.debug {
-                            println!(
+                            info!(
                                 "✅ Thread {}: Upload completed for {}",
                                 index + 1,
                                 file_name
                             );
                         } else {
-                            println!("✅ File uploaded: {file_name}");
+                            info!("✅ File uploaded: {file_name}");
                         }
                         Ok((index, file_name))
                     }
                     Err(e) => {
-                        eprintln!(
+                        error!(
                             "❌ Thread {}: Failed to upload {}: {}",
                             index + 1,
                             file_name,
@@ -617,13 +616,13 @@ impl AssessmentSubmitter {
         let successful_uploads: Vec<String> = uploaded_files.into_iter().flatten().collect();
 
         if self.config.debug {
-            println!(
+            info!(
                 "✅ All {} files uploaded successfully using {} threads",
                 successful_uploads.len(),
                 num_threads
             );
         } else {
-            println!(
+            info!(
                 "✅ All {} files uploaded successfully",
                 successful_uploads.len()
             );
@@ -653,13 +652,13 @@ impl AssessmentSubmitter {
 
         if self.config.debug {
             let size_mb = file_size as f64 / (1024.0 * 1024.0);
-            println!("📁 File: {file_name} ({size_mb:.2} MB)");
-            println!("✅ File size validation passed (within 2048 MB limit)");
+            info!("📁 File: {file_name} ({size_mb:.2} MB)");
+            info!("✅ File size validation passed (within 2048 MB limit)");
 
             if file_size > SIZE_THRESHOLD {
-                println!("   Using large file upload (>100MB)");
+                info!("   Using large file upload (>100MB)");
             } else {
-                println!("   Using standard upload (<100MB)");
+                info!("   Using standard upload (<100MB)");
             }
         }
 
@@ -675,7 +674,7 @@ impl AssessmentSubmitter {
                         let progress_callback =
                             |bytes_sent: u64, total_bytes: u64, progress: f64| {
                                 if progress > 0.0 && (progress * 100.0) as u64 % 25 == 0 {
-                                    println!(
+                                    info!(
                                         "   📈 {}: {:.0}% ({}/{})",
                                         file_name,
                                         progress * 100.0,
@@ -714,7 +713,7 @@ impl AssessmentSubmitter {
                     // Create progress callback for large file uploads
                     let progress_callback = |bytes_sent: u64, total_bytes: u64, progress: f64| {
                         if progress > 0.0 && (progress * 100.0) as u64 % 25 == 0 {
-                            println!(
+                            info!(
                                 "   📈 {}: {:.0}% ({}/{})",
                                 file_name,
                                 progress * 100.0,
@@ -779,7 +778,7 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("🔍 Starting prescan analysis...");
+            info!("🔍 Starting prescan analysis...");
         }
 
         let scan_api = self.client.scan_api();
@@ -797,7 +796,7 @@ impl AssessmentSubmitter {
                     };
 
                     if self.config.debug {
-                        println!(
+                        info!(
                             "🔧 Prescan request - App ID: {}, Sandbox ID: {}, Autoscan: {}",
                             request.app_id,
                             request.sandbox_id.as_ref().unwrap_or(&"None".to_string()),
@@ -826,14 +825,14 @@ impl AssessmentSubmitter {
 
         match prescan_result {
             Ok(()) => {
-                println!("✅ Prescan started");
+                info!("✅ Prescan started");
                 if self.config.debug {
-                    println!("🔍 Prescan started for build ID: {}", build_id.id());
+                    info!("🔍 Prescan started for build ID: {}", build_id.id());
                 }
                 Ok(())
             }
             Err(e) => {
-                eprintln!("❌ Failed to start prescan: {e}");
+                error!("❌ Failed to start prescan: {e}");
                 Err(AssessmentError::ScanError(format!(
                     "Failed to start prescan: {e}"
                 )))
@@ -849,8 +848,8 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("🚀 Starting scan analysis...");
-            println!("   Build ID: {}", build_id.id());
+            info!("🚀 Starting scan analysis...");
+            info!("   Build ID: {}", build_id.id());
         }
 
         let scan_api = self.client.scan_api();
@@ -920,14 +919,14 @@ impl AssessmentSubmitter {
 
         match scan_result {
             Ok(_) => {
-                println!("✅ Scan started successfully");
+                info!("✅ Scan started successfully");
                 if self.config.debug {
-                    println!("🔍 Scan initiated for build: {build_id}");
+                    info!("🔍 Scan initiated for build: {build_id}");
                 }
                 Ok(())
             }
             Err(e) => {
-                eprintln!("❌ Failed to start scan: {e}");
+                error!("❌ Failed to start scan: {e}");
                 Err(AssessmentError::ScanError(format!(
                     "Failed to start scan: {e}"
                 )))
@@ -963,20 +962,20 @@ impl AssessmentSubmitter {
 
         // Check if we should exit early (--no-wait specified)
         if !self.config.monitor_completion {
-            println!(
+            info!(
                 "⏳ Prescan submitted successfully - not waiting for completion (--no-wait specified)"
             );
-            println!("   Build ID: {}", &build_id);
+            info!("   Build ID: {}", &build_id);
             return Ok(build_id);
         }
 
         // Check if we need to manually start scan (only if autoscan is disabled)
         if !self.is_autoscan_enabled() {
             if self.config.debug {
-                println!("🔄 Autoscan disabled, will manually start scan after prescan completes");
+                info!("🔄 Autoscan disabled, will manually start scan after prescan completes");
             }
         } else if self.config.debug {
-            println!("🤖 Autoscan enabled, scan will start automatically after prescan");
+            info!("🤖 Autoscan enabled, scan will start automatically after prescan");
         }
 
         // Use two-phase monitoring approach matching Java implementation
@@ -987,7 +986,7 @@ impl AssessmentSubmitter {
                 .await?;
 
             if self.config.debug {
-                println!("🔄 Prescan complete, manually starting scan...");
+                info!("🔄 Prescan complete, manually starting scan...");
             }
             self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
@@ -1016,7 +1015,7 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("⏳ Waiting for prescan to complete...");
+            info!("⏳ Waiting for prescan to complete...");
         }
 
         let scan_api = self.client.scan_api();
@@ -1026,7 +1025,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
+                info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1040,15 +1039,15 @@ impl AssessmentSubmitter {
             {
                 Ok(prescan_results) => {
                     if self.config.debug {
-                        println!(
+                        info!(
                             "🔍 Debug: Prescan status received: {}",
                             prescan_results.status
                         );
                     }
                     if prescan_results.status == "Pre-Scan Success" {
-                        println!("✅ Prescan completed successfully");
+                        info!("✅ Prescan completed successfully");
                         if self.config.debug {
-                            println!("📊 Prescan results ready - modules available for scanning");
+                            info!("📊 Prescan results ready - modules available for scanning");
                         }
                         return Ok(());
                     } else if prescan_results.status.contains("Failed")
@@ -1060,7 +1059,7 @@ impl AssessmentSubmitter {
                         )));
                     } else {
                         if self.config.debug {
-                            println!(
+                            info!(
                                 "⏳ Prescan status: {}, waiting {} seconds...",
                                 prescan_results.status, poll_interval
                             );
@@ -1074,7 +1073,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting prescan status: {e}, retrying...");
+                        info!("⚠️  Error getting prescan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1095,7 +1094,7 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("⏳ Waiting for main scan to complete...");
+            info!("⏳ Waiting for main scan to complete...");
         }
 
         let scan_api = self.client.scan_api();
@@ -1105,7 +1104,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Scan poll attempt {poll_count}/{max_polls}");
+                info!("🔄 Scan poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1122,23 +1121,23 @@ impl AssessmentSubmitter {
                     let status = &build_info.status;
 
                     if self.config.debug {
-                        println!("📊 Scan status: {status}");
+                        info!("📊 Scan status: {status}");
                         if let Some(progress) = build_info.scan_progress_percentage {
-                            println!("📈 Progress: {progress}%");
+                            info!("📈 Progress: {progress}%");
                         }
                     }
 
                     match status.as_str() {
                         "Results Ready" => {
-                            println!("✅ Scan completed successfully");
+                            info!("✅ Scan completed successfully");
                             if self.config.debug {
-                                println!("📊 Results are ready for download");
+                                info!("📊 Results are ready for download");
                             }
                             return Ok(());
                         }
                         "Scan In Progress" | "Submitted to Engine" | "Pre-Scan Success" => {
                             if self.config.debug {
-                                println!(
+                                info!(
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             } else {
@@ -1161,7 +1160,7 @@ impl AssessmentSubmitter {
                         }
                         _ => {
                             if self.config.debug {
-                                println!(
+                                info!(
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             } else {
@@ -1177,7 +1176,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting scan status: {e}, retrying...");
+                        info!("⚠️  Error getting scan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1201,9 +1200,9 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("🔍 Starting two-phase scan monitoring (Java-compatible approach)");
-            println!("   Phase 1: Prescan monitoring (30s intervals)");
-            println!("   Phase 2: Build status monitoring (60s intervals)");
+            info!("🔍 Starting two-phase scan monitoring (Java-compatible approach)");
+            info!("   Phase 1: Prescan monitoring (30s intervals)");
+            info!("   Phase 2: Build status monitoring (60s intervals)");
         }
 
         // Phase 1: Monitor prescan status until "Pre-Scan Success" or failure
@@ -1213,7 +1212,7 @@ impl AssessmentSubmitter {
         {
             Ok(()) => {
                 if self.config.debug {
-                    println!("✅ Phase 1 complete - transitioning to main scan monitoring");
+                    info!("✅ Phase 1 complete - transitioning to main scan monitoring");
                 }
             }
             Err(e) => return Err(e),
@@ -1223,7 +1222,7 @@ impl AssessmentSubmitter {
         match self.monitor_build_phase(app_id, build_id, sandbox_id).await {
             Ok(()) => {
                 if self.config.debug {
-                    println!("✅ Phase 2 complete - scan finished successfully");
+                    info!("✅ Phase 2 complete - scan finished successfully");
                 }
                 Ok(())
             }
@@ -1239,7 +1238,7 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("🔄 Phase 1: Monitoring prescan status...");
+            info!("🔄 Phase 1: Monitoring prescan status...");
         }
 
         let scan_api = self.client.scan_api();
@@ -1249,7 +1248,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
+                info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1263,12 +1262,12 @@ impl AssessmentSubmitter {
             {
                 Ok(prescan_results) => {
                     if self.config.debug {
-                        println!("📊 Prescan status: {}", prescan_results.status);
+                        info!("📊 Prescan status: {}", prescan_results.status);
                     }
 
                     match prescan_results.status.as_str() {
                         "Pre-Scan Success" => {
-                            println!("✅ Prescan completed successfully");
+                            info!("✅ Prescan completed successfully");
                             return Ok(());
                         }
                         "Pre-Scan Failed" | "Pre-Scan Cancelled" | "Prescan Failed"
@@ -1281,9 +1280,7 @@ impl AssessmentSubmitter {
                         _ => {
                             // Continue polling for other statuses (including "Pre-Scan Submitted")
                             if self.config.debug {
-                                println!(
-                                    "⏳ Prescan in progress, waiting {poll_interval} seconds..."
-                                );
+                                info!("⏳ Prescan in progress, waiting {poll_interval} seconds...");
                             } else {
                                 print!(".");
                                 std::io::stdout().flush().unwrap();
@@ -1297,7 +1294,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting prescan status: {e}, retrying...");
+                        info!("⚠️  Error getting prescan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1318,7 +1315,7 @@ impl AssessmentSubmitter {
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         if self.config.debug {
-            println!("🔄 Phase 2: Monitoring build status...");
+            info!("🔄 Phase 2: Monitoring build status...");
         }
 
         let scan_api = self.client.scan_api();
@@ -1328,7 +1325,7 @@ impl AssessmentSubmitter {
 
         for poll_count in 1..=max_polls {
             if self.config.debug {
-                println!("🔄 Build status poll attempt {poll_count}/{max_polls}");
+                info!("🔄 Build status poll attempt {poll_count}/{max_polls}");
             }
 
             let sandbox_legacy_id_str = match self.config.scan_type {
@@ -1342,15 +1339,15 @@ impl AssessmentSubmitter {
             {
                 Ok(build_info) => {
                     if self.config.debug {
-                        println!("📊 Build status: {}", build_info.status);
+                        info!("📊 Build status: {}", build_info.status);
                         if let Some(progress) = build_info.scan_progress_percentage {
-                            println!("📈 Progress: {progress}%");
+                            info!("📈 Progress: {progress}%");
                         }
                     }
 
                     match build_info.status.as_str() {
                         "Results Ready" => {
-                            println!("✅ Scan completed successfully");
+                            info!("✅ Scan completed successfully");
                             return Ok(());
                         }
                         "Scan in Process"
@@ -1359,7 +1356,7 @@ impl AssessmentSubmitter {
                         | "Pre-Scan Success" => {
                             // Continue polling for active scan states
                             if self.config.debug {
-                                println!("⏳ Scan in progress, waiting {poll_interval} seconds...");
+                                info!("⏳ Scan in progress, waiting {poll_interval} seconds...");
                             } else {
                                 print!(".");
                                 std::io::stdout().flush().unwrap();
@@ -1381,7 +1378,7 @@ impl AssessmentSubmitter {
                         _ => {
                             // Continue polling for unknown statuses (defensive)
                             if self.config.debug {
-                                println!(
+                                info!(
                                     "⏳ Unknown status '{}', continuing to wait {} seconds...",
                                     build_info.status, poll_interval
                                 );
@@ -1398,7 +1395,7 @@ impl AssessmentSubmitter {
                 }
                 Err(e) => {
                     if self.config.debug {
-                        println!("⚠️  Error getting build status: {e}, retrying...");
+                        info!("⚠️  Error getting build status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
@@ -1423,7 +1420,7 @@ impl AssessmentSubmitter {
 
         // Get summary report with policy compliance check (combined single API call)
         if self.config.debug {
-            println!(
+            info!(
                 "📝 Exporting summary report to: {}",
                 self.config.export_results_path
             );
@@ -1443,9 +1440,9 @@ impl AssessmentSubmitter {
         {
             Ok((report, status)) => (report, status.map(|s| s.into_owned())),
             Err(e) => {
-                eprintln!("❌ Failed to get summary report: {e}");
+                error!("❌ Failed to get summary report: {e}");
                 if self.config.break_build {
-                    eprintln!("   Break build evaluation will be skipped due to error");
+                    error!("   Break build evaluation will be skipped due to error");
                 }
                 return Err(AssessmentError::ScanError(format!(
                     "Failed to retrieve summary report: {e}"
@@ -1484,12 +1481,12 @@ impl AssessmentSubmitter {
             Ok(json_string) => {
                 match std::fs::write(&self.config.export_results_path, json_string) {
                     Ok(_) => {
-                        println!(
+                        info!(
                             "✅ Summary report exported to: {}",
                             self.config.export_results_path
                         );
                         if self.config.debug {
-                            println!(
+                            info!(
                                 "📊 Policy compliance status: {}",
                                 summary_report.policy_compliance_status
                             );
@@ -1500,9 +1497,9 @@ impl AssessmentSubmitter {
                             use veracode_platform::policy::PolicyApi;
                             if let Some(status) = compliance_status {
                                 let exit_code = PolicyApi::get_exit_code_for_status(&status);
-                                println!("\n❌ Platform policy compliance FAILED - breaking build");
-                                println!("   Status: {status}");
-                                println!("   Exit code: {exit_code}");
+                                info!("\n❌ Platform policy compliance FAILED - breaking build");
+                                info!("   Status: {status}");
+                                info!("   Exit code: {exit_code}");
                                 std::process::exit(exit_code);
                             }
                         }
@@ -1510,7 +1507,7 @@ impl AssessmentSubmitter {
                         Ok(())
                     }
                     Err(e) => {
-                        eprintln!(
+                        error!(
                             "❌ Failed to write results to {}: {}",
                             self.config.export_results_path, e
                         );
@@ -1521,7 +1518,7 @@ impl AssessmentSubmitter {
                 }
             }
             Err(e) => {
-                eprintln!("❌ Failed to serialize results: {e}");
+                error!("❌ Failed to serialize results: {e}");
                 Err(AssessmentError::UploadError(format!(
                     "Failed to serialize results: {e}"
                 )))
@@ -1534,14 +1531,14 @@ impl AssessmentSubmitter {
 
     /// Display scan configuration
     pub fn display_config(&self) {
-        println!("📊 Assessment Scan Configuration:");
-        println!("   App Profile: {}", self.config.app_profile_name);
-        println!("   Scan Type: {:?}", self.config.scan_type);
+        info!("📊 Assessment Scan Configuration:");
+        info!("   App Profile: {}", self.config.app_profile_name);
+        info!("   Scan Type: {:?}", self.config.scan_type);
         if let Some(ref sandbox_name) = self.config.sandbox_name {
-            println!("   Sandbox: {sandbox_name}");
+            info!("   Sandbox: {sandbox_name}");
         }
-        println!("   Auto-recreate Sandbox: enabled");
-        println!(
+        info!("   Auto-recreate Sandbox: enabled");
+        info!(
             "   Autoscan: {}",
             if self.config.autoscan {
                 "enabled"
@@ -1551,14 +1548,14 @@ impl AssessmentSubmitter {
         );
 
         if let Some(ref modules) = self.config.selected_modules {
-            println!("   Selected Modules: {}", modules.join(", "));
+            info!("   Selected Modules: {}", modules.join(", "));
         } else {
-            println!("   Scan All Modules: enabled (all nonfatal top-level modules)");
+            info!("   Scan All Modules: enabled (all nonfatal top-level modules)");
         }
 
-        println!("   Upload Threads: {}", self.config.threads);
-        println!("   Timeout: {} minutes", self.config.timeout);
-        println!(
+        info!("   Upload Threads: {}", self.config.threads);
+        info!("   Timeout: {} minutes", self.config.timeout);
+        info!(
             "   Monitor Completion: {}",
             if self.config.monitor_completion {
                 "enabled"
@@ -1566,9 +1563,9 @@ impl AssessmentSubmitter {
                 "disabled (--no-wait)"
             }
         );
-        println!("   Export Results: {}", self.config.export_results_path);
+        info!("   Export Results: {}", self.config.export_results_path);
         if self.config.break_build {
-            println!(
+            info!(
                 "   Policy Wait: {} retries, {} seconds interval (max {} minutes)",
                 self.config.policy_wait_max_retries,
                 self.config.policy_wait_retry_delay_seconds,

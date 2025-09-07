@@ -6,6 +6,8 @@
 use std::borrow::Cow;
 use std::path::{Path, PathBuf};
 
+use log::info;
+
 /// Configuration for path resolution
 #[derive(Debug, Clone)]
 pub struct PathResolverConfig {
@@ -60,8 +62,8 @@ impl PathResolver {
     /// Returns `Cow<str>` to avoid unnecessary allocations when the path doesn't need to be modified.
     pub fn resolve_file_path<'a>(&self, file_path: &'a str) -> Cow<'a, str> {
         if self.config.debug {
-            println!("🔍 DEBUG: Resolving file path: '{file_path}'");
-            println!(
+            info!("🔍 DEBUG: Resolving file path: '{file_path}'");
+            info!(
                 "   Project directory: '{}'",
                 self.config.project_dir.display()
             );
@@ -71,7 +73,7 @@ impl PathResolver {
         let file_path_buf = Path::new(file_path);
 
         if self.config.debug {
-            println!(
+            info!(
                 "   Path is_absolute: {}, is_relative: {}",
                 file_path_buf.is_absolute(),
                 file_path_buf.is_relative()
@@ -81,7 +83,7 @@ impl PathResolver {
         // PRECHECK: First check if the path is already valid before attempting discovery
         if let Some(valid_path) = self.precheck_file_validity(file_path) {
             if self.config.debug {
-                println!("   ✅ Precheck found valid path: '{valid_path}'");
+                info!("   ✅ Precheck found valid path: '{valid_path}'");
             }
             return valid_path;
         }
@@ -91,11 +93,11 @@ impl PathResolver {
             if let Ok(relative_path) = file_path_buf.strip_prefix(&self.config.project_dir) {
                 let result = Self::path_to_cow_str(relative_path);
                 if self.config.debug {
-                    println!("   ✅ Stripped project prefix, result: '{result}'");
+                    info!("   ✅ Stripped project prefix, result: '{result}'");
                 }
                 return result;
             } else if self.config.debug {
-                println!("   ⚠️  Cannot strip project prefix from absolute path");
+                info!("   ⚠️  Cannot strip project prefix from absolute path");
             }
         }
 
@@ -104,13 +106,13 @@ impl PathResolver {
         // We need to find where this actually exists in the repository structure
 
         if self.config.debug {
-            println!("   🔍 Searching for file in project structure...");
+            info!("   🔍 Searching for file in project structure...");
         }
 
         // Try to find the file by its full relative path first
         if let Some(found_path) = self.find_file_by_relative_path(file_path) {
             if self.config.debug {
-                println!("   ✅ Found by relative path search: '{found_path}'");
+                info!("   ✅ Found by relative path search: '{found_path}'");
             }
             return Cow::Owned(found_path);
         }
@@ -118,11 +120,11 @@ impl PathResolver {
         // If that fails, try to find by filename only
         if let Some(filename) = file_path_buf.file_name().and_then(|n| n.to_str()) {
             if self.config.debug {
-                println!("   🔍 Searching by filename only: '{filename}'");
+                info!("   🔍 Searching by filename only: '{filename}'");
             }
             if let Some(found_path) = self.find_file_in_project(filename) {
                 if self.config.debug {
-                    println!("   ✅ Found by filename search: '{found_path}'");
+                    info!("   ✅ Found by filename search: '{found_path}'");
                 }
                 return Cow::Owned(found_path);
             }
@@ -130,7 +132,7 @@ impl PathResolver {
 
         // Last resort: return the original path
         if self.config.debug {
-            println!("   ❌ Could not resolve path, returning original: '{file_path}'");
+            info!("   ❌ Could not resolve path, returning original: '{file_path}'");
         }
         Cow::Borrowed(file_path)
     }
@@ -140,7 +142,7 @@ impl PathResolver {
     /// Should be found at: src/main/java/com/example/vulnerable/CryptoUtils.java
     pub fn find_file_by_relative_path(&self, relative_path: &str) -> Option<String> {
         if self.config.debug {
-            println!("   🔍 Searching for relative path: '{relative_path}'");
+            info!("   🔍 Searching for relative path: '{relative_path}'");
         }
 
         // Common Java source directory patterns to search
@@ -159,7 +161,7 @@ impl PathResolver {
         for source_dir in &common_source_dirs {
             let candidate_path = self.config.project_dir.join(source_dir).join(relative_path);
             if self.config.debug {
-                println!("     Checking exact path: {}", candidate_path.display());
+                info!("     Checking exact path: {}", candidate_path.display());
             }
 
             // Must check that the EXACT file exists (not just a partial match)
@@ -184,18 +186,18 @@ impl PathResolver {
                             {
                                 let result_str = result.to_string_lossy().to_string();
                                 if self.config.debug {
-                                    println!("     ✅ Found exact path match at: {result_str}");
+                                    info!("     ✅ Found exact path match at: {result_str}");
                                 }
                                 return Some(result_str);
                             }
                         } else if self.config.debug {
-                            println!(
+                            info!(
                                 "     ⚠️  Path ends with target but not at boundary: {normalized_candidate}"
                             );
                         }
                     }
                 } else if self.config.debug {
-                    println!(
+                    info!(
                         "     ⚠️  Could not convert path to string: {}",
                         candidate_path.display()
                     );
@@ -206,21 +208,21 @@ impl PathResolver {
         // Also try the relative path directly in case it's already correct
         let direct_path = self.config.project_dir.join(relative_path);
         if self.config.debug {
-            println!("     Checking direct path: {}", direct_path.display());
+            info!("     Checking direct path: {}", direct_path.display());
         }
 
         if direct_path.exists() && direct_path.is_file() {
             if let Ok(result) = direct_path.strip_prefix(&self.config.project_dir) {
                 let result_str = result.to_string_lossy().to_string();
                 if self.config.debug {
-                    println!("     ✅ Found exact direct match: {result_str}");
+                    info!("     ✅ Found exact direct match: {result_str}");
                 }
                 return Some(result_str);
             }
         }
 
         if self.config.debug {
-            println!("     ❌ No exact path match found in any source directories");
+            info!("     ❌ No exact path match found in any source directories");
         }
         None
     }
@@ -228,7 +230,7 @@ impl PathResolver {
     /// Find a file by name within the project directory tree
     pub fn find_file_in_project(&self, filename: &str) -> Option<String> {
         if self.config.debug {
-            println!("   🔍 Recursive search for filename: '{filename}'");
+            info!("   🔍 Recursive search for filename: '{filename}'");
         }
         Self::search_for_file(&self.config.project_dir, filename, &self.config.project_dir)
     }
@@ -265,7 +267,7 @@ impl PathResolver {
     /// This method simply checks if the provided file path exists as-is in the project directory
     fn precheck_file_validity<'a>(&self, file_path: &'a str) -> Option<Cow<'a, str>> {
         if self.config.debug {
-            println!("   🔍 Precheck: Checking if file path exists in project directory...");
+            info!("   🔍 Precheck: Checking if file path exists in project directory...");
         }
 
         let file_path_buf = Path::new(file_path);
@@ -274,7 +276,7 @@ impl PathResolver {
         if file_path_buf.is_absolute() {
             if file_path_buf.exists() && file_path_buf.is_file() {
                 if self.config.debug {
-                    println!("   ✅ Precheck: Absolute path exists");
+                    info!("   ✅ Precheck: Absolute path exists");
                 }
                 // Try to make it relative to project directory if it's within the project
                 if let Ok(relative_path) = file_path_buf.strip_prefix(&self.config.project_dir) {
@@ -289,14 +291,14 @@ impl PathResolver {
             let full_path = self.config.project_dir.join(file_path);
             if full_path.exists() && full_path.is_file() {
                 if self.config.debug {
-                    println!("   ✅ Precheck: File path exists in project directory");
+                    info!("   ✅ Precheck: File path exists in project directory");
                 }
                 return Some(Cow::Borrowed(file_path));
             }
         }
 
         if self.config.debug {
-            println!(
+            info!(
                 "   ❌ Precheck: File path does not exist in project directory, proceeding with discovery"
             );
         }

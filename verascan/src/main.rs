@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{debug, info, warn};
+use log::{LevelFilter, debug, error, info, warn};
 use verascan::{
     Args, Commands, execute_assessment_scan, execute_file_search, execute_findings_export,
     execute_pipeline_scan, execute_policy_download, load_api_credentials,
@@ -7,9 +7,18 @@ use verascan::{
 };
 
 fn main() {
-    env_logger::init();
+    let args = Args::parse();
 
-    let mut args = Args::parse();
+    // Initialize logger based on debug flag
+    env_logger::Builder::from_default_env()
+        .filter_level(if args.debug {
+            LevelFilter::Debug
+        } else {
+            LevelFilter::Info
+        })
+        .init();
+
+    let mut args = args;
 
     // Try enhanced credential loading with vault support first
     match std::env::var("VAULT_CLI_ADDR") {
@@ -25,13 +34,13 @@ fn main() {
                         args.api_id = Some(api_id);
                         args.api_key = Some(api_key);
                     } else {
-                        eprintln!("❌ Failed to extract credentials from secure wrapper");
+                        error!("❌ Failed to extract credentials from secure wrapper");
                         std::process::exit(1);
                     }
                 }
                 Err(e) => {
                     warn!("Enhanced credential loading failed: {e}");
-                    eprintln!("❌ Failed to load credentials: {e}");
+                    error!("❌ Failed to load credentials: {e}");
                     std::process::exit(1);
                 }
             }
@@ -46,7 +55,7 @@ fn main() {
 
     // Validate conditional requirements
     if let Err(e) = args.validate_conditional_requirements() {
-        eprintln!("❌ {e}");
+        error!("❌ {e}");
         std::process::exit(1);
     }
 

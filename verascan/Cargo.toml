@@ -57,7 +57,7 @@ env_logger = "0.11"
 
 # Vault client for secure credential management
 vaultrs = "0.7"
-backoff = "0.4"
+backoff = { version = "0.4", features = ["futures", "tokio"] }
 
 [dev-dependencies]
 tempfile = "3.20"

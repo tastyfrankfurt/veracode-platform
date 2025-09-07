@@ -7,6 +7,8 @@ use crate::path_resolver::PathResolver;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
+use log::info;
+
 /// Secure token wrapper that prevents accidental exposure in logs
 #[derive(Clone)]
 pub struct SecureToken(String);
@@ -153,7 +155,7 @@ pub fn resolve_file_path<'a>(
         Some(resolver) => resolver.resolve_file_path(file_path),
         None => {
             if debug {
-                println!("   No path resolver configured, returning original path: '{file_path}'");
+                info!("   No path resolver configured, returning original path: '{file_path}'");
             }
             Cow::Borrowed(file_path)
         }

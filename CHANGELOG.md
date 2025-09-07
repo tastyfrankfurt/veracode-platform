@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.3] - 2025-09-07
+
+### Changed
+- **Structured Logging Implementation**: Migrated from `println!` and `eprintln!` macros to structured logging with `log` crate
+  - **Dependency Addition**: Added `log = "0.4"` to veracode-api library for standardized logging
+  - **CLI Integration**: Updated main.rs with `env_logger` initialization tied to debug flag for proper log level control
+  - **Systematic Conversion**: Replaced logging patterns across ~50+ Rust files:
+    - `println!(...)` → `info!(...)`
+    - `eprintln!(...)` → `error!(...)`
+    - Conditional debug prints → `debug!(...)`
+  - **Import Management**: Added appropriate `use log::{debug, error, info, warn};` imports to all files using log macros
+  - **Code Cleanup**: Removed unused debug fields from `PipelineApi` and `FindingsApi` structs and updated constructor calls
+  - **Clippy Compliance**: All code passes strict clippy checks with `-D warnings -D clippy::all`
+
+### Benefits
+- **Consistent Logging**: Unified logging approach across the entire codebase with proper log levels
+- **CLI Debug Control**: Debug flag now properly controls log verbosity using standard Rust logging infrastructure
+- **Production Ready**: Structured logging enables better observability and debugging in production deployments
+- **Framework Compatibility**: Standard `log` crate integration allows easy switching of logging backends (env_logger, tracing, etc.)
+- **Performance**: Efficient logging with compile-time log level filtering when using release builds
+
 ## [0.4.2] - 2025-08-15
 
 ### Added
