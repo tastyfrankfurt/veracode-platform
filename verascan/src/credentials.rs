@@ -1,5 +1,5 @@
 use crate::cli::Args;
-use log::{debug, info};
+use log::{debug, error, info};
 
 /// Source of credentials for debugging and logging purposes
 #[derive(Debug, Clone)]
@@ -163,9 +163,9 @@ impl SecureApiCredentials {
         match (&self.api_id, &self.api_key) {
             (Some(id), Some(key)) => Ok((id.as_str().into(), key.as_str().into())),
             _ => {
-                eprintln!("❌ Pipeline scan requires Veracode API credentials");
-                eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
-                eprintln!("💡 API credentials must contain only alphanumeric characters");
+                error!("❌ Pipeline scan requires Veracode API credentials");
+                error!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
+                error!("💡 API credentials must contain only alphanumeric characters");
                 Err("Missing API credentials".into())
             }
         }
@@ -176,9 +176,9 @@ impl SecureApiCredentials {
         match (&self.api_id, &self.api_key) {
             (Some(id), Some(key)) => Ok((id.as_str(), key.as_str())),
             _ => {
-                eprintln!("❌ Pipeline scan requires Veracode API credentials");
-                eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
-                eprintln!("💡 API credentials must contain only alphanumeric characters");
+                error!("❌ Pipeline scan requires Veracode API credentials");
+                error!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
+                error!("💡 API credentials must contain only alphanumeric characters");
                 Err("Missing API credentials".into())
             }
         }
@@ -224,7 +224,7 @@ pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     args.api_id = match std::env::var("VERACODE_API_ID") {
         Ok(id) => {
             if let Err(e) = validate_api_credential(&id, "VERACODE_API_ID") {
-                eprintln!("❌ Invalid VERACODE_API_ID: {e}");
+                error!("❌ Invalid VERACODE_API_ID: {e}");
                 return Err(1);
             }
             Some(id)
@@ -235,7 +235,7 @@ pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     args.api_key = match std::env::var("VERACODE_API_KEY") {
         Ok(key) => {
             if let Err(e) = validate_api_credential(&key, "VERACODE_API_KEY") {
-                eprintln!("❌ Invalid VERACODE_API_KEY: {e}");
+                error!("❌ Invalid VERACODE_API_KEY: {e}");
                 return Err(1);
             }
             Some(key)
@@ -251,7 +251,7 @@ pub fn load_secure_api_credentials() -> Result<SecureApiCredentials, i32> {
     match load_secure_api_credentials_from_env() {
         Ok(credentials) => Ok(credentials),
         Err(e) => {
-            eprintln!("❌ Failed to load credentials: {e}");
+            error!("❌ Failed to load credentials: {e}");
             Err(1)
         }
     }
@@ -264,9 +264,9 @@ pub fn check_pipeline_credentials(
     match (&args.api_id, &args.api_key) {
         (Some(id), Some(key)) => Ok((id.clone(), key.clone())), // Clone needed for owned return
         _ => {
-            eprintln!("❌ Pipeline scan requires Veracode API credentials");
-            eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
-            eprintln!("💡 API credentials must contain only alphanumeric characters");
+            error!("❌ Pipeline scan requires Veracode API credentials");
+            error!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
+            error!("💡 API credentials must contain only alphanumeric characters");
             Err("Missing API credentials".into())
         }
     }
@@ -279,9 +279,9 @@ pub fn check_pipeline_credentials_ref(
     match (&args.api_id, &args.api_key) {
         (Some(id), Some(key)) => Ok((id, key)), // Zero-copy references
         _ => {
-            eprintln!("❌ Pipeline scan requires Veracode API credentials");
-            eprintln!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
-            eprintln!("💡 API credentials must contain only alphanumeric characters");
+            error!("❌ Pipeline scan requires Veracode API credentials");
+            error!("💡 Set VERACODE_API_ID and VERACODE_API_KEY environment variables");
+            error!("💡 API credentials must contain only alphanumeric characters");
             Err("Missing API credentials".into())
         }
     }

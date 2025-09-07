@@ -63,6 +63,8 @@ pub use vault_client::{
     VaultCredentialClient, load_secure_api_credentials_with_vault, load_vault_config_from_env,
 };
 
+use log::error;
+
 /// Execute findings export workflow from completed scans using existing credentials
 pub async fn execute_findings_export(args: &Args) -> Result<(), i32> {
     use crate::scan::configure_veracode_with_env_vars;
@@ -145,7 +147,7 @@ pub async fn execute_findings_export(args: &Args) -> Result<(), i32> {
     // Execute export workflow
     let export_workflow = ExportWorkflow::new(client, static_config);
     export_workflow.execute().await.map_err(|e| {
-        eprintln!("❌ Export failed: {e}");
+        error!("❌ Export failed: {e}");
         1
     })?;
 

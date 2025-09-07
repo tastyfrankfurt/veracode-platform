@@ -17,6 +17,8 @@ use sha2::{Digest, Sha256};
 use std::env;
 use std::path::{Path, PathBuf};
 
+use log::{error, info};
+
 /// GitLab client configuration
 #[derive(Clone)]
 pub struct GitLabClientConfig {
@@ -96,9 +98,9 @@ impl GitLabClient {
         let client = Self::from_env(debug)?;
 
         if debug {
-            println!("✅ Environment variables validated:");
-            println!("   Project ID: {}", client.config.project_id);
-            println!("   GitLab URL: {}", client.http_client.base_url());
+            info!("✅ Environment variables validated:");
+            info!("   Project ID: {}", client.config.project_id);
+            info!("   GitLab URL: {}", client.http_client.base_url());
         }
 
         // Test API connectivity by checking project access
@@ -116,7 +118,7 @@ impl GitLabClient {
 
         HttpClientError::print_validation_success("GitLab");
         if debug {
-            println!("   Project: {project_name} ({project_path})");
+            info!("   Project: {project_name} ({project_path})");
             HttpClientError::print_api_access();
         }
 
@@ -131,7 +133,7 @@ impl GitLabClient {
                 HttpClientError::print_permission_result("Issue creation", true);
             }
             Err(HttpClientError::ApiError { status, .. }) => {
-                println!("   Issue creation: ⚠️  May be restricted (status: {status})");
+                info!("   Issue creation: ⚠️  May be restricted (status: {status})");
             }
             Err(e) => {
                 HttpClientError::print_permission_error("Issue creation", &e.to_string());
@@ -147,7 +149,7 @@ impl GitLabClient {
         aggregated: &AggregatedFindings,
     ) -> Result<Vec<GitLabIssueResponse>, GitLabClientError> {
         if self.debug {
-            println!(
+            info!(
                 "📝 Creating GitLab issues from {} findings",
                 aggregated.findings.len()
             );
@@ -175,7 +177,7 @@ impl GitLabClient {
             match self.issue_already_exists(&issue_payload.title).await {
                 Ok(true) => {
                     if self.debug {
-                        println!(
+                        info!(
                             "⏭️  Skipping duplicate issue {}/{}: {}",
                             index + 1,
                             aggregated.findings.len(),
@@ -189,7 +191,7 @@ impl GitLabClient {
                     // Continue with issue creation
                 }
                 Err(e) => {
-                    eprintln!(
+                    error!(
                         "⚠️  Warning: Failed to check for duplicates for {}: {}. Creating issue anyway.",
                         finding.title, e
                     );
@@ -197,7 +199,7 @@ impl GitLabClient {
             }
 
             if self.debug {
-                println!(
+                info!(
                     "📋 Creating issue {}/{}: {}",
                     index + 1,
                     aggregated.findings.len(),
@@ -208,14 +210,14 @@ impl GitLabClient {
             match self.create_issue(&issue_payload).await {
                 Ok(issue) => {
                     if self.debug {
-                        println!("✅ Created issue #{}: {}", issue.iid, issue.web_url);
+                        info!("✅ Created issue #{}: {}", issue.iid, issue.web_url);
                     } else {
-                        println!("✅ Created issue #{}: {}", issue.iid, finding.title);
+                        info!("✅ Created issue #{}: {}", issue.iid, finding.title);
                     }
                     created_issues.push(issue);
                 }
                 Err(e) => {
-                    eprintln!("❌ Failed to create issue for {}: {}", finding.title, e);
+                    error!("❌ Failed to create issue for {}: {}", finding.title, e);
                 }
             }
 
@@ -224,14 +226,14 @@ impl GitLabClient {
         }
 
         if skipped_count > 0 {
-            println!("ℹ️  Skipped {skipped_count} informational findings");
+            info!("ℹ️  Skipped {skipped_count} informational findings");
         }
 
         if duplicate_count > 0 {
-            println!("⏭️  Skipped {duplicate_count} duplicate issues");
+            info!("⏭️  Skipped {duplicate_count} duplicate issues");
         }
 
-        println!("✅ Created {} GitLab issues", created_issues.len());
+        info!("✅ Created {} GitLab issues", created_issues.len());
 
         Ok(created_issues)
     }
@@ -255,7 +257,7 @@ impl GitLabClient {
         );
 
         if self.debug {
-            println!("🔍 Searching for existing issue: {title}");
+            info!("🔍 Searching for existing issue: {title}");
         }
 
         let issues: Vec<GitLabIssueResponse> = self.http_client.get(&endpoint).await?;
@@ -264,9 +266,9 @@ impl GitLabClient {
         let exact_match = issues.iter().any(|issue| issue.title == title);
 
         if self.debug && exact_match {
-            println!("✅ Found existing issue with exact title match");
+            info!("✅ Found existing issue with exact title match");
         } else if self.debug {
-            println!("🆕 No existing issue found with exact title match");
+            info!("🆕 No existing issue found with exact title match");
         }
 
         Ok(exact_match)

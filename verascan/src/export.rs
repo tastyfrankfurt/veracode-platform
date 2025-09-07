@@ -19,6 +19,8 @@ use veracode_platform::pipeline::{Finding, FindingFiles, FindingsSummary, Source
 use veracode_platform::sandbox::SandboxApi;
 use veracode_platform::{VeracodeClient, VeracodeError};
 
+use log::info;
+
 /// Configuration for findings export from completed scans
 #[derive(Debug, Clone)]
 pub struct ExportConfig<'a> {
@@ -153,9 +155,9 @@ impl ExportWorkflow {
         // Export in requested format
         self.export_findings(&findings).await?;
 
-        println!("✅ Export completed successfully");
-        println!("   Total findings: {}", findings.findings.len());
-        println!("   Output: {}", self.config.output_path);
+        info!("✅ Export completed successfully");
+        info!("   Total findings: {}", findings.findings.len());
+        info!("   Output: {}", self.config.output_path);
 
         Ok(())
     }
@@ -666,7 +668,7 @@ impl ExportWorkflow {
             .export_to_baseline_format(findings, &json_path)
             .map_err(|e| ExportError::Io(std::io::Error::other(e.to_string())))?;
 
-        println!("✅ JSON baseline format exported: {}", json_path.display());
+        info!("✅ JSON baseline format exported: {}", json_path.display());
         Ok(())
     }
 
@@ -683,7 +685,7 @@ impl ExportWorkflow {
             .export_to_csv(findings, &csv_path)
             .map_err(|e| ExportError::Io(std::io::Error::other(e.to_string())))?;
 
-        println!("✅ CSV export completed: {}", csv_path.display());
+        info!("✅ CSV export completed: {}", csv_path.display());
         Ok(())
     }
 
@@ -705,7 +707,7 @@ impl ExportWorkflow {
         let csv_path = self.ensure_extension(base_path, "csv");
         self.export_csv(findings, &csv_path).await?;
 
-        println!("✅ All format exports completed");
+        info!("✅ All format exports completed");
         Ok(())
     }
 

@@ -1,4 +1,5 @@
 use crate::findings::{AggregatedFindings, FindingWithSource, create_finding_hash};
+use log::{error, info};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
@@ -322,7 +323,7 @@ impl BaselineManager {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "📝 Creating baseline file from {} findings",
                 aggregated.findings.len()
             );
@@ -332,9 +333,9 @@ impl BaselineManager {
         let json_content = serde_json::to_string_pretty(&baseline)?;
         fs::write(output_path, json_content)?;
 
-        println!("✅ Baseline file created: {}", output_path.display());
-        println!("   Total findings: {}", baseline.summary.total);
-        println!(
+        info!("✅ Baseline file created: {}", output_path.display());
+        info!("   Total findings: {}", baseline.summary.total);
+        info!(
             "   Source scans: {}",
             baseline.metadata.source_scan.source_files.len()
         );
@@ -348,7 +349,7 @@ impl BaselineManager {
         baseline_path: &Path,
     ) -> Result<OwnedBaselineFile, Box<dyn std::error::Error>> {
         if self.debug {
-            println!("📖 Loading baseline file: {}", baseline_path.display());
+            info!("📖 Loading baseline file: {}", baseline_path.display());
         }
 
         if !baseline_path.exists() {
@@ -362,7 +363,7 @@ impl BaselineManager {
             .map_err(|e| format!("Failed to parse baseline file: {e}"))?;
 
         if self.debug {
-            println!(
+            info!(
                 "✅ Baseline loaded: {} findings from {}",
                 baseline.summary.total, baseline.metadata.created_at
             );
@@ -378,7 +379,7 @@ impl BaselineManager {
         baseline: &'a BaselineFile<'a>,
     ) -> Result<BaselineComparison<'a>, Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "🔍 Comparing {} current findings against {} baseline findings",
                 current.findings.len(),
                 baseline.findings.len()
@@ -388,14 +389,14 @@ impl BaselineManager {
         let comparison = self.perform_comparison(current, baseline)?;
 
         if self.debug {
-            println!("✅ Comparison complete:");
-            println!("   New findings: {}", comparison.summary.new_count);
-            println!("   Fixed findings: {}", comparison.summary.fixed_count);
-            println!(
+            info!("✅ Comparison complete:");
+            info!("   New findings: {}", comparison.summary.new_count);
+            info!("   Fixed findings: {}", comparison.summary.fixed_count);
+            info!(
                 "   Unchanged findings: {}",
                 comparison.summary.unchanged_count
             );
-            println!("   Net change: {:+}", comparison.summary.net_change);
+            info!("   Net change: {:+}", comparison.summary.net_change);
         }
 
         Ok(comparison)
@@ -408,7 +409,7 @@ impl BaselineManager {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "💾 Exporting comparison results to: {}",
                 output_path.display()
             );
@@ -417,61 +418,61 @@ impl BaselineManager {
         let json_content = serde_json::to_string_pretty(comparison)?;
         fs::write(output_path, json_content)?;
 
-        println!("✅ Comparison results exported: {}", output_path.display());
+        info!("✅ Comparison results exported: {}", output_path.display());
         Ok(())
     }
 
     /// Display comparison summary
     pub fn display_comparison_summary<'a>(&self, comparison: &BaselineComparison<'a>) {
-        println!("\n📊 Baseline Comparison Summary");
-        println!("═══════════════════════════════════════");
+        info!("\n📊 Baseline Comparison Summary");
+        info!("═══════════════════════════════════════");
 
-        println!("📅 Baseline Info:");
-        println!(
+        info!("📅 Baseline Info:");
+        info!(
             "   Created: {}",
             comparison.metadata.baseline_info.created_at
         );
-        println!(
+        info!(
             "   Source Scan: {}",
             comparison.metadata.baseline_info.source_scan.scan_id
         );
-        println!(
+        info!(
             "   Baseline Findings: {}",
             comparison.metadata.baseline_info.finding_count
         );
 
-        println!("\n📈 Comparison Results:");
-        println!("   🆕 New Findings: {}", comparison.summary.new_count);
-        println!("   ✅ Fixed Findings: {}", comparison.summary.fixed_count);
-        println!(
+        info!("\n📈 Comparison Results:");
+        info!("   🆕 New Findings: {}", comparison.summary.new_count);
+        info!("   ✅ Fixed Findings: {}", comparison.summary.fixed_count);
+        info!(
             "   ➡️  Unchanged Findings: {}",
             comparison.summary.unchanged_count
         );
-        println!(
+        info!(
             "   📊 Net Change: {:+} findings",
             comparison.summary.net_change
         );
 
         if comparison.summary.new_count > 0 {
-            println!("\n🆕 New Findings by Severity:");
+            info!("\n🆕 New Findings by Severity:");
             for (severity, count) in &comparison.summary.new_by_severity {
                 if *count > 0 {
-                    println!("   {severity}: {count}");
+                    info!("   {severity}: {count}");
                 }
             }
         }
 
         if comparison.summary.fixed_count > 0 {
-            println!("\n✅ Fixed Findings by Severity:");
+            info!("\n✅ Fixed Findings by Severity:");
             for (severity, count) in &comparison.summary.fixed_by_severity {
                 if *count > 0 {
-                    println!("   {severity}: {count}");
+                    info!("   {severity}: {count}");
                 }
             }
         }
 
         if !comparison.summary.new_cwe_breakdown.is_empty() {
-            println!("\n🔍 New CWE Types:");
+            info!("\n🔍 New CWE Types:");
             for (index, cwe_id) in comparison
                 .summary
                 .new_cwe_breakdown
@@ -479,7 +480,7 @@ impl BaselineManager {
                 .take(5)
                 .enumerate()
             {
-                println!("   {}. CWE-{}", index + 1, cwe_id);
+                info!("   {}. CWE-{}", index + 1, cwe_id);
             }
         }
     }
@@ -753,7 +754,7 @@ impl BaselineManager {
         policy_path: &Path,
     ) -> Result<PolicyFile, Box<dyn std::error::Error>> {
         if self.debug {
-            println!("📖 Loading policy file: {}", policy_path.display());
+            info!("📖 Loading policy file: {}", policy_path.display());
         }
 
         if !policy_path.exists() {
@@ -765,7 +766,7 @@ impl BaselineManager {
             .map_err(|e| format!("Failed to parse policy file: {e}"))?;
 
         if self.debug {
-            println!(
+            info!(
                 "✅ Policy loaded: {} (version {})",
                 policy.metadata.name, policy.metadata.version
             );
@@ -781,7 +782,7 @@ impl BaselineManager {
         policy: &PolicyFile,
     ) -> Result<PolicyAssessment, Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "🔍 Assessing {} findings against policy '{}'",
                 findings.findings.len(),
                 policy.metadata.name
@@ -798,19 +799,19 @@ impl BaselineManager {
         for rule in &policy.rules {
             if !rule.enabled {
                 if self.debug {
-                    println!("   Skipping disabled rule: {}", rule.name);
+                    info!("   Skipping disabled rule: {}", rule.name);
                 }
                 continue;
             }
 
             if self.debug {
-                println!("   Evaluating rule: {}", rule.name);
+                info!("   Evaluating rule: {}", rule.name);
             }
 
             let rule_result = self.evaluate_policy_rule(rule, &findings.findings);
 
             if self.debug {
-                println!(
+                info!(
                     "     → Rule result: {} (found {} matching findings, max allowed: {})",
                     if rule_result.passed { "PASS" } else { "FAIL" },
                     rule_result.finding_count,
@@ -869,8 +870,8 @@ impl BaselineManager {
 
         // Debug summary before moving rule_results
         if self.debug {
-            println!("✅ Policy assessment complete:");
-            println!(
+            info!("✅ Policy assessment complete:");
+            info!(
                 "   Overall result: {}",
                 if rules_failed == 0 && all_violations.is_empty() {
                     "PASS"
@@ -878,28 +879,28 @@ impl BaselineManager {
                     "FAIL"
                 }
             );
-            println!("   Rules passed: {rules_passed}");
-            println!("   Rules failed: {rules_failed}");
-            println!("   Total violations: {}", all_violations.len());
+            info!("   Rules passed: {rules_passed}");
+            info!("   Rules failed: {rules_failed}");
+            info!("   Total violations: {}", all_violations.len());
 
             // Detailed rules summary
-            println!("\n📋 Detailed Rules Summary:");
+            info!("\n📋 Detailed Rules Summary:");
             for (index, rule_result) in rule_results.iter().enumerate() {
                 let status = if rule_result.passed {
                     "✅ PASS"
                 } else {
                     "❌ FAIL"
                 };
-                println!("   {}. {} - {}", index + 1, status, rule_result.rule.name);
-                println!(
+                info!("   {}. {} - {}", index + 1, status, rule_result.rule.name);
+                info!(
                     "      Found: {} findings (max allowed: {})",
                     rule_result.finding_count, rule_result.rule.max_allowed
                 );
 
                 if !rule_result.violating_findings.is_empty() {
-                    println!("      Violations:");
+                    info!("      Violations:");
                     for violation in &rule_result.violating_findings {
-                        println!(
+                        info!(
                             "        • CWE-{} (severity {}) in {}:{}",
                             violation.finding.cwe_id,
                             violation.finding.severity,
@@ -910,7 +911,7 @@ impl BaselineManager {
                 }
 
                 if !rule_result.rule.cwe_ids.is_empty() {
-                    println!("      CWE filter: {:?}", rule_result.rule.cwe_ids);
+                    info!("      CWE filter: {:?}", rule_result.rule.cwe_ids);
                 }
                 if !rule_result.rule.severity_levels.is_empty() {
                     let severity_names: Vec<String> = rule_result
@@ -919,13 +920,10 @@ impl BaselineManager {
                         .iter()
                         .map(|&s| severity_to_name(s).into())
                         .collect();
-                    println!("      Severity filter: {severity_names:?}");
+                    info!("      Severity filter: {severity_names:?}");
                 }
             }
 
-            if !rule_results.is_empty() {
-                println!();
-            }
         }
 
         // Determine overall pass/fail
@@ -966,15 +964,15 @@ impl BaselineManager {
         let mut matching_findings = Vec::new();
 
         if self.debug {
-            println!(
+            info!(
                 "       Checking rule against {} total findings",
                 findings.len()
             );
-            println!(
+            info!(
                 "       Rule CWE filter: {:?} (empty = all CWEs)",
                 rule.cwe_ids
             );
-            println!(
+            info!(
                 "       Rule severity filter: {:?} (empty = all severities)",
                 rule.severity_levels
             );
@@ -988,7 +986,7 @@ impl BaselineManager {
                 || rule.severity_levels.contains(&finding.finding.severity);
 
             if self.debug && matches_cwe && matches_severity {
-                println!(
+                info!(
                     "       ✓ Finding matches: CWE-{} severity {} in {}:{}",
                     finding.finding.cwe_id,
                     finding.finding.severity,
@@ -1012,7 +1010,7 @@ impl BaselineManager {
         };
 
         if self.debug {
-            println!(
+            info!(
                 "       Final result: {} matching findings (limit: {})",
                 finding_count, rule.max_allowed
             );
@@ -1130,40 +1128,40 @@ impl BaselineManager {
 
     /// Display policy assessment summary
     pub fn display_policy_summary(&self, assessment: &PolicyAssessment) {
-        println!("\n📊 Policy Assessment Summary");
-        println!("═══════════════════════════════════════");
+        info!("\n📊 Policy Assessment Summary");
+        info!("═══════════════════════════════════════");
 
-        println!("📋 Policy Info:");
-        println!("   Name: {}", assessment.metadata.policy_info.name);
-        println!("   Version: {}", assessment.metadata.policy_info.version);
+        info!("📋 Policy Info:");
+        info!("   Name: {}", assessment.metadata.policy_info.name);
+        info!("   Version: {}", assessment.metadata.policy_info.version);
         if let Some(desc) = &assessment.metadata.policy_info.description {
-            println!("   Description: {desc}");
+            info!("   Description: {desc}");
         }
 
-        println!("\n📈 Assessment Results:");
+        info!("\n📈 Assessment Results:");
         let status = if assessment.passed {
             "✅ PASS"
         } else {
             "❌ FAIL"
         };
-        println!("   Overall Result: {status}");
-        println!("   Rules Passed: {}", assessment.summary.rules_passed);
-        println!("   Rules Failed: {}", assessment.summary.rules_failed);
-        println!(
+        info!("   Overall Result: {status}");
+        info!("   Rules Passed: {}", assessment.summary.rules_passed);
+        info!("   Rules Failed: {}", assessment.summary.rules_failed);
+        info!(
             "   Total Violations: {}",
             assessment.summary.total_violations
         );
 
         if !assessment.violations.is_empty() {
-            println!("\n❌ Policy Violations by Severity:");
+            info!("\n❌ Policy Violations by Severity:");
             for (severity, count) in &assessment.summary.violations_by_severity {
                 if *count > 0 {
-                    println!("   {severity}: {count}");
+                    info!("   {severity}: {count}");
                 }
             }
 
             if !assessment.summary.violation_cwe_breakdown.is_empty() {
-                println!("\n🔍 Top Violation CWE Types:");
+                info!("\n🔍 Top Violation CWE Types:");
                 for (index, cwe_id) in assessment
                     .summary
                     .violation_cwe_breakdown
@@ -1171,7 +1169,7 @@ impl BaselineManager {
                     .take(5)
                     .enumerate()
                 {
-                    println!("   {}. CWE-{}", index + 1, cwe_id);
+                    info!("   {}. CWE-{}", index + 1, cwe_id);
                 }
             }
         }
@@ -1184,7 +1182,7 @@ impl BaselineManager {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "💾 Exporting policy assessment to: {}",
                 output_path.display()
             );
@@ -1193,7 +1191,7 @@ impl BaselineManager {
         let json_content = serde_json::to_string_pretty(assessment)?;
         fs::write(output_path, json_content)?;
 
-        println!("✅ Policy assessment exported: {}", output_path.display());
+        info!("✅ Policy assessment exported: {}", output_path.display());
         Ok(())
     }
 }
@@ -1222,12 +1220,12 @@ pub fn execute_baseline_create(
     match manager.create_baseline(aggregated, output_path) {
         Ok(()) => {
             if debug {
-                println!("🎯 Baseline creation completed successfully");
+                info!("🎯 Baseline creation completed successfully");
             }
             Ok(())
         }
         Err(e) => {
-            eprintln!("❌ Failed to create baseline: {e}");
+            error!("❌ Failed to create baseline: {e}");
             Err(1)
         }
     }
@@ -1245,7 +1243,7 @@ pub fn execute_baseline_compare(
     let baseline = match manager.load_baseline(baseline_path) {
         Ok(baseline) => baseline,
         Err(e) => {
-            eprintln!("❌ Failed to load baseline file: {e}");
+            error!("❌ Failed to load baseline file: {e}");
             return Err(1);
         }
     };
@@ -1253,7 +1251,7 @@ pub fn execute_baseline_compare(
     let comparison = match manager.compare_with_baseline(current, &baseline) {
         Ok(comparison) => comparison.into_owned(),
         Err(e) => {
-            eprintln!("❌ Failed to perform baseline comparison: {e}");
+            error!("❌ Failed to perform baseline comparison: {e}");
             return Err(1);
         }
     };
@@ -1264,7 +1262,7 @@ pub fn execute_baseline_compare(
     // Export if requested
     if let Some(output) = output_path {
         if let Err(e) = manager.export_comparison(&comparison, output) {
-            eprintln!("⚠️  Warning: Failed to export comparison results: {e}");
+            error!("⚠️  Warning: Failed to export comparison results: {e}");
         }
     }
 
@@ -1283,7 +1281,7 @@ pub fn execute_policy_file_assessment(
     let policy = match manager.load_policy_file(policy_path) {
         Ok(policy) => policy,
         Err(e) => {
-            eprintln!("❌ Failed to load policy file: {e}");
+            error!("❌ Failed to load policy file: {e}");
             return Err(1);
         }
     };
@@ -1291,7 +1289,7 @@ pub fn execute_policy_file_assessment(
     let assessment = match manager.assess_against_policy(findings, &policy) {
         Ok(assessment) => assessment,
         Err(e) => {
-            eprintln!("❌ Failed to perform policy assessment: {e}");
+            error!("❌ Failed to perform policy assessment: {e}");
             return Err(1);
         }
     };
@@ -1302,7 +1300,7 @@ pub fn execute_policy_file_assessment(
     // Export if requested
     if let Some(output) = output_path {
         if let Err(e) = manager.export_policy_assessment(&assessment, output) {
-            eprintln!("⚠️  Warning: Failed to export policy assessment: {e}");
+            error!("⚠️  Warning: Failed to export policy assessment: {e}");
         }
     }
 
@@ -1322,7 +1320,7 @@ pub async fn execute_policy_name_assessment(
     use veracode_platform::VeracodeConfig;
 
     if args.debug {
-        println!("🔍 Downloading policy '{policy_name}' for assessment");
+        info!("🔍 Downloading policy '{policy_name}' for assessment");
     }
 
     // Get API credentials using secure handling
@@ -1338,7 +1336,7 @@ pub async fn execute_policy_name_assessment(
     }
 
     let client = VeracodeClient::new(veracode_config).map_err(|e| {
-        eprintln!("❌ Failed to create Veracode client: {e}");
+        error!("❌ Failed to create Veracode client: {e}");
         1
     })?;
 
@@ -1346,7 +1344,7 @@ pub async fn execute_policy_name_assessment(
 
     // Get list of policies to find the one matching the name
     let policies = policy_api.list_policies(None).await.map_err(|e| {
-        eprintln!("❌ Failed to list policies: {e}");
+        error!("❌ Failed to list policies: {e}");
         1
     })?;
 
@@ -1355,10 +1353,10 @@ pub async fn execute_policy_name_assessment(
         .iter()
         .find(|policy| policy.name.to_lowercase() == policy_name.to_lowercase())
         .ok_or_else(|| {
-            eprintln!("❌ Policy '{policy_name}' not found");
-            eprintln!("💡 Available policies:");
+            error!("❌ Policy '{policy_name}' not found");
+            error!("💡 Available policies:");
             for policy in &policies {
-                eprintln!("   - {}", policy.name);
+                error!("   - {}", policy.name);
             }
             1
         })?;
@@ -1368,7 +1366,7 @@ pub async fn execute_policy_name_assessment(
         .get_policy(&target_policy.guid)
         .await
         .map_err(|e| {
-            eprintln!("❌ Failed to download policy details: {e}");
+            error!("❌ Failed to download policy details: {e}");
             1
         })?;
 
@@ -1379,7 +1377,7 @@ pub async fn execute_policy_name_assessment(
     let assessment = match manager.assess_against_policy(findings, &policy_file) {
         Ok(assessment) => assessment,
         Err(e) => {
-            eprintln!("❌ Failed to perform policy assessment: {e}");
+            error!("❌ Failed to perform policy assessment: {e}");
             return Err(1);
         }
     };
@@ -1390,7 +1388,7 @@ pub async fn execute_policy_name_assessment(
     // Export if requested
     if let Some(output) = output_path {
         if let Err(e) = manager.export_policy_assessment(&assessment, output) {
-            eprintln!("⚠️  Warning: Failed to export policy assessment: {e}");
+            error!("⚠️  Warning: Failed to export policy assessment: {e}");
         }
     }
 
@@ -1403,9 +1401,9 @@ fn convert_platform_policy_to_policy_file(
     debug: bool,
 ) -> PolicyFile {
     if debug {
-        println!("🔄 Converting Veracode platform policy to assessment format");
-        println!("   Policy: {}", platform_policy.name);
-        println!("   Finding rules: {}", platform_policy.finding_rules.len());
+        info!("🔄 Converting Veracode platform policy to assessment format");
+        info!("   Policy: {}", platform_policy.name);
+        info!("   Finding rules: {}", platform_policy.finding_rules.len());
     }
 
     // Create basic policy metadata
@@ -1428,7 +1426,7 @@ fn convert_platform_policy_to_policy_file(
 
     for finding_rule in &platform_policy.finding_rules {
         if debug {
-            println!(
+            info!(
                 "   Processing rule: {} = {}",
                 finding_rule.rule_type, finding_rule.value
             );
@@ -1465,7 +1463,7 @@ fn convert_platform_policy_to_policy_file(
                         }
 
                         if debug {
-                            println!(
+                            info!(
                                 "     → Created MAX_SEVERITY rule: no {} findings allowed",
                                 severity_names.join(", ")
                             );
@@ -1499,7 +1497,7 @@ fn convert_platform_policy_to_policy_file(
                     });
 
                     if debug {
-                        println!(
+                        info!(
                             "     → Created MIN_SCORE rule: max {estimated_max_findings} total findings for score {min_score}"
                         );
                     }
@@ -1507,7 +1505,7 @@ fn convert_platform_policy_to_policy_file(
             }
             _ => {
                 if debug {
-                    println!(
+                    info!(
                         "     → Skipping unsupported rule type: {}",
                         finding_rule.rule_type
                     );
@@ -1527,7 +1525,7 @@ fn convert_platform_policy_to_policy_file(
         });
 
         if debug {
-            println!("   → No parseable rules found, created default permissive rule");
+            info!("   → No parseable rules found, created default permissive rule");
         }
     }
 
@@ -1545,7 +1543,7 @@ fn parse_region(region_str: &str) -> Result<VeracodeRegion, i32> {
         "european" => Ok(VeracodeRegion::European),
         "federal" => Ok(VeracodeRegion::Federal),
         _ => {
-            eprintln!("❌ Invalid region '{region_str}'. Use: commercial, european, or federal");
+            error!("❌ Invalid region '{region_str}'. Use: commercial, european, or federal");
             Err(1)
         }
     }

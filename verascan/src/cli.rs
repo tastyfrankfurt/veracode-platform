@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use log::{error, info};
 use serde_json;
 
 #[derive(Parser)]
@@ -467,7 +468,7 @@ fn validate_sandbox_name(s: &str) -> Result<String, String> {
 
     // Show user the transformation if any forward slashes were replaced
     if s.contains('/') {
-        println!("📝 Sandbox name transformed: '{s}' → '{sanitized_name}'");
+        info!("📝 Sandbox name transformed: '{s}' → '{sanitized_name}'");
     }
 
     // Use the existing validate_name_field function for standard validation
@@ -797,7 +798,7 @@ pub fn parse_business_criticality(
         "very-low" | "verylow" | "very_low" => BusinessCriticality::VeryLow,
         _ => {
             // This should not happen due to CLI validation, but provide a fallback
-            eprintln!(
+            error!(
                 "⚠️  Warning: Invalid business criticality '{criticality_str}', defaulting to Medium"
             );
             BusinessCriticality::Medium

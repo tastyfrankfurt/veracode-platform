@@ -4,6 +4,7 @@
 //! with support for pagination, filtering, and automatic collection of all results.
 
 use crate::{VeracodeClient, VeracodeError};
+use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -317,21 +318,12 @@ pub enum FindingsError {
 #[derive(Clone)]
 pub struct FindingsApi {
     client: VeracodeClient,
-    debug: bool,
 }
 
 impl FindingsApi {
     /// Create new findings API client
     pub fn new(client: VeracodeClient) -> Self {
-        Self {
-            client,
-            debug: false,
-        }
-    }
-
-    /// Create new findings API client with debug enabled
-    pub fn new_with_debug(client: VeracodeClient, debug: bool) -> Self {
-        Self { client, debug }
+        Self { client }
     }
 
     /// Get findings with pagination
@@ -339,9 +331,7 @@ impl FindingsApi {
         &self,
         query: &FindingsQuery<'_>,
     ) -> Result<FindingsResponse, FindingsError> {
-        if self.debug {
-            println!("🔍 Getting findings for app: {}", query.app_guid);
-        }
+        debug!("Getting findings for app: {}", query.app_guid);
 
         let endpoint = format!("/appsec/v2/applications/{}/findings", query.app_guid);
         let mut params = Vec::new();
@@ -349,9 +339,7 @@ impl FindingsApi {
         // Add context for sandbox scans
         if let Some(context) = &query.context {
             params.push(("context".to_string(), context.to_string()));
-            if self.debug {
-                println!("   Using sandbox context: {context}");
-            }
+            debug!("Using sandbox context: {context}");
         }
 
         // Add pagination parameters
@@ -384,13 +372,11 @@ impl FindingsApi {
             params.push(("violates_policy".to_string(), violates_policy.to_string()));
         }
 
-        if self.debug {
-            println!(
-                "📡 Calling findings endpoint: {} with {} parameters",
-                endpoint,
-                params.len()
-            );
-        }
+        debug!(
+            "Calling findings endpoint: {} with {} parameters",
+            endpoint,
+            params.len()
+        );
 
         // Convert Vec<(String, String)> to Vec<(&str, &str)>
         let params_ref: Vec<(&str, &str)> = params
@@ -423,37 +409,31 @@ impl FindingsApi {
                 source: VeracodeError::Http(e),
             })?;
 
-        if self.debug {
-            println!("📄 Raw API response (first 500 chars):");
-            println!("{}", &response_text[..response_text.len().min(500)]);
-            if response_text.len() > 500 {
-                println!(
-                    "... [truncated {} more characters]",
-                    response_text.len() - 500
-                );
-            }
+        if response_text.len() > 500 {
+            debug!(
+                "Raw API response (first 500 chars): {}... [truncated {} more characters]",
+                &response_text[..500],
+                response_text.len() - 500
+            );
+        } else {
+            debug!("Raw API response: {response_text}");
         }
 
         let findings_response: FindingsResponse =
             serde_json::from_str(&response_text).map_err(|e| {
-                if self.debug {
-                    println!("❌ JSON parsing error: {e}");
-                    println!("📄 Full response that failed to parse:");
-                    println!("{response_text}");
-                }
+                error!("JSON parsing error: {e}");
+                debug!("Full response that failed to parse: {response_text}");
                 FindingsError::RequestFailed {
                     source: VeracodeError::Serialization(e),
                 }
             })?;
 
-        if self.debug {
-            println!(
-                "✅ Retrieved {} findings on page {}/{}",
-                findings_response.findings().len(),
-                findings_response.current_page() + 1,
-                findings_response.total_pages()
-            );
-        }
+        debug!(
+            "Retrieved {} findings on page {}/{}",
+            findings_response.findings().len(),
+            findings_response.current_page() + 1,
+            findings_response.total_pages()
+        );
 
         Ok(findings_response)
     }
@@ -463,9 +443,7 @@ impl FindingsApi {
         &self,
         query: &FindingsQuery<'_>,
     ) -> Result<Vec<RestFinding>, FindingsError> {
-        if self.debug {
-            println!("🔄 Getting all findings for app: {}", query.app_guid);
-        }
+        debug!("Getting all findings for app: {}", query.app_guid);
 
         let mut all_findings = Vec::new();
         let mut current_page = 0;
@@ -479,29 +457,23 @@ impl FindingsApi {
             let response = self.get_findings(&page_query).await?;
 
             if response.findings().is_empty() {
-                if self.debug {
-                    println!("   No more findings found on page {current_page}");
-                }
+                debug!("No more findings found on page {current_page}");
                 break;
             }
 
             let page_findings = response.findings().len();
             all_findings.extend_from_slice(response.findings());
 
-            if self.debug {
-                println!(
-                    "   Added {} findings from page {}, total so far: {}",
-                    page_findings,
-                    current_page,
-                    all_findings.len()
-                );
-            }
+            debug!(
+                "Added {} findings from page {}, total so far: {}",
+                page_findings,
+                current_page,
+                all_findings.len()
+            );
 
             // Check if we've reached the last page
             if response.is_last_page() {
-                if self.debug {
-                    println!("   Reached last page ({current_page}), stopping");
-                }
+                debug!("Reached last page ({current_page}), stopping");
                 break;
             }
 
@@ -509,21 +481,19 @@ impl FindingsApi {
 
             // Safety check to prevent infinite loops
             if current_page > 1000 {
-                println!(
-                    "⚠️  Reached maximum page limit (1000) while fetching findings for app: {}",
+                warn!(
+                    "Reached maximum page limit (1000) while fetching findings for app: {}",
                     query.app_guid
                 );
                 break;
             }
         }
 
-        if self.debug {
-            println!(
-                "✅ Retrieved total of {} findings across {} pages",
-                all_findings.len(),
-                current_page + 1
-            );
-        }
+        debug!(
+            "Retrieved total of {} findings across {} pages",
+            all_findings.len(),
+            current_page + 1
+        );
         Ok(all_findings)
     }
 

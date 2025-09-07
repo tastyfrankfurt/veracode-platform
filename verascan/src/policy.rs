@@ -1,6 +1,7 @@
 use crate::cli::Args;
 use crate::scan::configure_veracode_with_env_vars;
 use crate::{check_secure_pipeline_credentials, load_secure_api_credentials};
+use log::{error, info};
 use std::fs;
 use std::path::PathBuf;
 use veracode_platform::{VeracodeConfig, VeracodeRegion};
@@ -16,7 +17,7 @@ fn create_policy_filename(policy_name: &str) -> String {
 }
 
 pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32> {
-    println!("🔍 Policy Download requested for: {policy_name}");
+    info!("🔍 Policy Download requested for: {policy_name}");
 
     // Use secure API credentials handling
     let secure_creds = load_secure_api_credentials().map_err(|_| 1)?;
@@ -36,7 +37,7 @@ fn parse_region(region_str: &str) -> Result<VeracodeRegion, i32> {
         s if s.eq_ignore_ascii_case("european") => Ok(VeracodeRegion::European),
         s if s.eq_ignore_ascii_case("federal") => Ok(VeracodeRegion::Federal),
         _ => {
-            eprintln!("❌ Invalid region '{region_str}'. Use: commercial, european, or federal");
+            error!("❌ Invalid region '{region_str}'. Use: commercial, european, or federal");
             Err(1)
         }
     }
@@ -48,7 +49,7 @@ fn execute_policy_download_with_runtime(
     args: &Args,
 ) -> Result<(), i32> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| {
-        eprintln!("❌ Failed to create async runtime: {e}");
+        error!("❌ Failed to create async runtime: {e}");
         1
     })?;
 
@@ -63,24 +64,24 @@ async fn download_policy_by_name(
     use veracode_platform::VeracodeClient;
 
     let client = VeracodeClient::new(veracode_config).map_err(|e| {
-        eprintln!("❌ Failed to create Veracode client: {e}");
+        error!("❌ Failed to create Veracode client: {e}");
         1
     })?;
 
     let policy_api = client.policy_api();
 
     if args.debug {
-        println!("🔍 Searching for policies...");
+        info!("🔍 Searching for policies...");
     }
 
     // Get list of policies to find the one matching the name
     let policies = policy_api.list_policies(None).await.map_err(|e| {
-        eprintln!("❌ Failed to list policies: {e}");
+        error!("❌ Failed to list policies: {e}");
         1
     })?;
 
     if args.debug {
-        println!("📋 Found {} total policies", policies.len());
+        info!("📋 Found {} total policies", policies.len());
     }
 
     // Find policy by name (case-insensitive) - avoid double allocation
@@ -88,16 +89,16 @@ async fn download_policy_by_name(
         .iter()
         .find(|policy| policy.name.eq_ignore_ascii_case(policy_name))
         .ok_or_else(|| {
-            eprintln!("❌ Policy '{policy_name}' not found");
-            eprintln!("💡 Available policies:");
+            error!("❌ Policy '{policy_name}' not found");
+            error!("💡 Available policies:");
             for policy in &policies {
-                eprintln!("   - {}", policy.name);
+                error!("   - {}", policy.name);
             }
             1
         })?;
 
     if args.debug {
-        println!(
+        info!(
             "✅ Found policy: {} (GUID: {})",
             target_policy.name, target_policy.guid
         );
@@ -108,7 +109,7 @@ async fn download_policy_by_name(
         .get_policy(&target_policy.guid)
         .await
         .map_err(|e| {
-            eprintln!("❌ Failed to download policy details: {e}");
+            error!("❌ Failed to download policy details: {e}");
             1
         })?;
 
@@ -117,29 +118,29 @@ async fn download_policy_by_name(
     let filepath = PathBuf::from(&filename);
 
     if args.debug {
-        println!("💾 Saving policy to: {}", filepath.display());
+        info!("💾 Saving policy to: {}", filepath.display());
     }
 
     // Convert policy to JSON
     let json_content = serde_json::to_string_pretty(&full_policy).map_err(|e| {
-        eprintln!("❌ Failed to serialize policy to JSON: {e}");
+        error!("❌ Failed to serialize policy to JSON: {e}");
         1
     })?;
 
     // Write to file
     fs::write(&filepath, json_content).map_err(|e| {
-        eprintln!("❌ Failed to write policy file: {e}");
+        error!("❌ Failed to write policy file: {e}");
         1
     })?;
 
-    println!("✅ Policy '{}' downloaded successfully", target_policy.name);
-    println!("📁 Saved as: {}", filepath.display());
-    println!("📊 Policy details:");
-    println!("   - GUID: {}", full_policy.guid);
-    println!("   - Type: {}", full_policy.policy_type);
-    println!("   - Version: {}", full_policy.version);
+    info!("✅ Policy '{}' downloaded successfully", target_policy.name);
+    info!("📁 Saved as: {}", filepath.display());
+    info!("📊 Policy details:");
+    info!("   - GUID: {}", full_policy.guid);
+    info!("   - Type: {}", full_policy.policy_type);
+    info!("   - Version: {}", full_policy.version);
     if let Some(desc) = &full_policy.description {
-        println!("   - Description: {desc}");
+        info!("   - Description: {desc}");
     }
 
     Ok(())

@@ -1,9 +1,11 @@
-use crate::gitlab_common::strip_html_tags;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::path::Path;
 use veracode_platform::pipeline::{Finding, FindingsSummary, ScanResults, ScanStatus};
+
+use crate::gitlab_common::strip_html_tags;
+use log::info;
 
 /// Create a standardized hash for finding comparison across the codebase
 pub fn create_finding_hash(finding: &Finding) -> String {
@@ -188,9 +190,9 @@ impl FindingsAggregator {
         min_severity_filter: Option<u32>,
     ) -> AggregatedFindings {
         if self.debug {
-            println!("🔍 Aggregating findings from {} scans", scan_results.len());
+            info!("🔍 Aggregating findings from {} scans", scan_results.len());
             if let Some(min_sev) = min_severity_filter {
-                println!(
+                info!(
                     "🔽 Filtering out findings below severity level: {} ({})",
                     min_sev,
                     self.severity_to_name(min_sev)
@@ -208,7 +210,7 @@ impl FindingsAggregator {
             let source_file = source_files.get(index).unwrap_or(&default_file_name);
 
             if self.debug {
-                println!(
+                info!(
                     "📊 Processing scan {} of {}: {} findings",
                     index + 1,
                     scan_results.len(),
@@ -233,7 +235,7 @@ impl FindingsAggregator {
                 if let Some(min_severity) = min_severity_filter {
                     if finding.severity < min_severity {
                         if self.debug {
-                            println!(
+                            info!(
                                 "🔽 Filtered out finding: {} (severity {} < {})",
                                 finding.title, finding.severity, min_severity
                             );
@@ -265,13 +267,13 @@ impl FindingsAggregator {
         let stats = self.calculate_statistics(&all_findings, scan_results.len());
 
         if self.debug {
-            println!(
+            info!(
                 "✅ Aggregation complete: {} total findings from {} scans",
                 total_summary.total,
                 scan_results.len()
             );
             if min_severity_filter.is_some() {
-                println!("   (After severity filtering)");
+                info!("   (After severity filtering)");
             }
         }
 
@@ -381,7 +383,7 @@ impl FindingsAggregator {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "💾 Exporting aggregated findings to: {}",
                 output_path.display()
             );
@@ -390,7 +392,7 @@ impl FindingsAggregator {
         let json_string = serde_json::to_string_pretty(aggregated)?;
         std::fs::write(output_path, json_string)?;
 
-        println!(
+        info!(
             "✅ Aggregated findings exported to: {}",
             output_path.display()
         );
@@ -404,7 +406,7 @@ impl FindingsAggregator {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "💾 Exporting findings in baseline format to: {}",
                 output_path.display()
             );
@@ -416,7 +418,7 @@ impl FindingsAggregator {
         let json_string = serde_json::to_string_pretty(&baseline_file)?;
         std::fs::write(output_path, json_string)?;
 
-        println!(
+        info!(
             "✅ Findings exported in baseline format to: {}",
             output_path.display()
         );
@@ -535,7 +537,7 @@ impl FindingsAggregator {
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.debug {
-            println!(
+            info!(
                 "💾 Exporting aggregated findings to CSV: {}",
                 output_path.display()
             );
@@ -585,7 +587,7 @@ impl FindingsAggregator {
         }
 
         std::fs::write(output_path, csv_content)?;
-        println!(
+        info!(
             "✅ Aggregated findings exported to CSV: {}",
             output_path.display()
         );
@@ -597,12 +599,12 @@ impl FindingsAggregator {
         let filtered_findings: Vec<&FindingWithSource> = aggregated.findings.iter().collect();
 
         if filtered_findings.is_empty() {
-            println!("\n📝 No findings match the specified criteria");
+            info!("\n📝 No findings match the specified criteria");
             return;
         }
 
-        println!("\n📝 Detailed Security Findings");
-        println!("═══════════════════════════════════════════════════════════════");
+        info!("\n📝 Detailed Security Findings");
+        info!("═══════════════════════════════════════════════════════════════");
 
         let display_count = if limit == 0 {
             filtered_findings.len()
@@ -615,38 +617,38 @@ impl FindingsAggregator {
             let finding = &finding_with_source.finding;
             let source = &finding_with_source.source_scan;
 
-            println!("\n{}. 🚨 {}", index + 1, finding.title);
-            println!(
+            info!("\n{}. 🚨 {}", index + 1, finding.title);
+            info!(
                 "   ┌─ Severity: {} ({})",
                 self.severity_to_emoji(finding.severity),
                 self.severity_to_name(finding.severity)
             );
-            println!("   ├─ CWE-{}: {}", finding.cwe_id, finding.issue_type);
-            println!("   ├─ File: {}", finding.files.source_file.file);
-            println!("   ├─ Line: {}", finding.files.source_file.line);
+            info!("   ├─ CWE-{}: {}", finding.cwe_id, finding.issue_type);
+            info!("   ├─ File: {}", finding.files.source_file.file);
+            info!("   ├─ Line: {}", finding.files.source_file.line);
 
             if let Some(ref function_name) = finding.files.source_file.function_name {
                 if !function_name.is_empty() {
-                    println!("   ├─ Function: {function_name}");
+                    info!("   ├─ Function: {function_name}");
                 }
             }
 
-            println!(
+            info!(
                 "   ├─ Source Scan: {} ({})",
                 source.source_file, source.scan_id
             );
-            println!(
+            info!(
                 "   └─ Description: {}",
                 strip_html_tags(&finding.display_text)
             );
         }
 
         if filtered_findings.len() > display_count {
-            println!(
+            info!(
                 "\n... and {} more findings",
                 filtered_findings.len() - display_count
             );
-            println!("Use --findings-limit 0 to show all findings or increase the limit");
+            info!("Use --findings-limit 0 to show all findings or increase the limit");
         }
 
         // Show severity summary for findings
@@ -663,7 +665,7 @@ impl FindingsAggregator {
             }
         }
 
-        println!("\n📊 Findings Summary:");
+        info!("\n📊 Findings Summary:");
         let severity_names = [
             "Informational",
             "Very Low",
@@ -676,7 +678,7 @@ impl FindingsAggregator {
 
         for (severity_level, &count) in severity_counts.iter().enumerate() {
             if count > 0 {
-                println!(
+                info!(
                     "   {} {}: {}",
                     severity_emojis[severity_level], severity_names[severity_level], count
                 );
@@ -738,45 +740,45 @@ impl FindingsAggregator {
 
     /// Display aggregated findings summary
     pub fn display_summary(&self, aggregated: &AggregatedFindings) {
-        println!("\n📊 Aggregated Findings Summary");
-        println!("═══════════════════════════════════════");
+        info!("\n📊 Aggregated Findings Summary");
+        info!("═══════════════════════════════════════");
 
         // Overall statistics
-        println!("📈 Overall Statistics:");
-        println!("   Total Scans Processed: {}", aggregated.stats.total_scans);
-        println!("   Total Findings: {}", aggregated.stats.total_findings);
-        println!("   Unique CWE Types: {}", aggregated.stats.unique_cwe_count);
-        println!(
+        info!("📈 Overall Statistics:");
+        info!("   Total Scans Processed: {}", aggregated.stats.total_scans);
+        info!("   Total Findings: {}", aggregated.stats.total_findings);
+        info!("   Unique CWE Types: {}", aggregated.stats.unique_cwe_count);
+        info!(
             "   Files with Findings: {}",
             aggregated.stats.unique_files_count
         );
 
         // Severity breakdown
-        println!("\n🎯 Severity Breakdown:");
+        info!("\n🎯 Severity Breakdown:");
         if aggregated.summary.very_high > 0 {
-            println!("   Very High: {}", aggregated.summary.very_high);
+            info!("   Very High: {}", aggregated.summary.very_high);
         }
         if aggregated.summary.high > 0 {
-            println!("   High: {}", aggregated.summary.high);
+            info!("   High: {}", aggregated.summary.high);
         }
         if aggregated.summary.medium > 0 {
-            println!("   Medium: {}", aggregated.summary.medium);
+            info!("   Medium: {}", aggregated.summary.medium);
         }
         if aggregated.summary.low > 0 {
-            println!("   Low: {}", aggregated.summary.low);
+            info!("   Low: {}", aggregated.summary.low);
         }
         if aggregated.summary.very_low > 0 {
-            println!("   Very Low: {}", aggregated.summary.very_low);
+            info!("   Very Low: {}", aggregated.summary.very_low);
         }
         if aggregated.summary.informational > 0 {
-            println!("   Informational: {}", aggregated.summary.informational);
+            info!("   Informational: {}", aggregated.summary.informational);
         }
 
         // Top CWE IDs
         if !aggregated.stats.top_cwe_ids.is_empty() {
-            println!("\n🔍 Top Security Issues (CWE):");
+            info!("\n🔍 Top Security Issues (CWE):");
             for (index, cwe_stat) in aggregated.stats.top_cwe_ids.iter().enumerate() {
-                println!(
+                info!(
                     "   {}. CWE-{}: {} occurrences ({:.1}%)",
                     index + 1,
                     cwe_stat.cwe_id,
@@ -787,21 +789,21 @@ impl FindingsAggregator {
         }
 
         // Scan details
-        println!("\n📋 Individual Scan Details:");
+        info!("\n📋 Individual Scan Details:");
         for (index, metadata) in aggregated.scan_metadata.iter().enumerate() {
-            println!(
+            info!(
                 "   Scan {}: {} ({} findings)",
                 index + 1,
                 metadata.source_file,
                 metadata.finding_count
             );
             if self.debug {
-                println!(
+                info!(
                     "      ID: {}, Status: {}",
                     metadata.scan_id, metadata.scan_status
                 );
                 if let Some(ref uri) = metadata.project_uri {
-                    println!("      URI: {uri}");
+                    info!("      URI: {uri}");
                 }
             }
         }
