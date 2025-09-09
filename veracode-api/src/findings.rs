@@ -166,31 +166,37 @@ pub struct FindingsResponse {
 
 impl FindingsResponse {
     /// Get the findings from this response
+    #[must_use]
     pub fn findings(&self) -> &[RestFinding] {
         &self.embedded.findings
     }
 
     /// Check if there's a next page available
+    #[must_use]
     pub fn has_next_page(&self) -> bool {
         self.links.next.is_some()
     }
 
     /// Get current page number (0-based)
+    #[must_use]
     pub fn current_page(&self) -> u32 {
         self.page.number
     }
 
     /// Get total number of pages
+    #[must_use]
     pub fn total_pages(&self) -> u32 {
         self.page.total_pages
     }
 
     /// Check if this is the last page
+    #[must_use]
     pub fn is_last_page(&self) -> bool {
         self.page.number + 1 >= self.page.total_pages
     }
 
     /// Get total number of findings across all pages
+    #[must_use]
     pub fn total_elements(&self) -> u32 {
         self.page.total_elements
     }
@@ -219,6 +225,7 @@ pub struct FindingsQuery<'a> {
 
 impl<'a> FindingsQuery<'a> {
     /// Create new query for policy scan findings
+    #[must_use]
     pub fn new(app_guid: &'a str) -> Self {
         Self {
             app_guid: Cow::Borrowed(app_guid),
@@ -233,6 +240,7 @@ impl<'a> FindingsQuery<'a> {
     }
 
     /// Create new query for sandbox scan findings
+    #[must_use]
     pub fn for_sandbox(app_guid: &'a str, sandbox_guid: &'a str) -> Self {
         Self {
             app_guid: Cow::Borrowed(app_guid),
@@ -247,12 +255,14 @@ impl<'a> FindingsQuery<'a> {
     }
 
     /// Add sandbox context to existing query
+    #[must_use]
     pub fn with_sandbox(mut self, sandbox_guid: &'a str) -> Self {
         self.context = Some(Cow::Borrowed(sandbox_guid));
         self
     }
 
     /// Add pagination parameters
+    #[must_use]
     pub fn with_pagination(mut self, page: u32, size: u32) -> Self {
         self.page = Some(page);
         self.size = Some(size);
@@ -260,24 +270,28 @@ impl<'a> FindingsQuery<'a> {
     }
 
     /// Filter by severity levels (0-5)
+    #[must_use]
     pub fn with_severity(mut self, severity: Vec<u32>) -> Self {
         self.severity = Some(severity);
         self
     }
 
     /// Filter by CWE IDs
+    #[must_use]
     pub fn with_cwe(mut self, cwe_ids: Vec<String>) -> Self {
         self.cwe_id = Some(cwe_ids);
         self
     }
 
     /// Filter by scan type
+    #[must_use]
     pub fn with_scan_type(mut self, scan_type: &'a str) -> Self {
         self.scan_type = Some(Cow::Borrowed(scan_type));
         self
     }
 
     /// Filter to policy violations only
+    #[must_use]
     pub fn policy_violations_only(mut self) -> Self {
         self.violates_policy = Some(true);
         self
@@ -322,6 +336,7 @@ pub struct FindingsApi {
 
 impl FindingsApi {
     /// Create new findings API client
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         Self { client }
     }
@@ -392,7 +407,7 @@ impl FindingsApi {
                 VeracodeError::NotFound { .. } if query.context.is_some() => {
                     FindingsError::SandboxNotFound {
                         app_guid: query.app_guid.to_string(),
-                        sandbox_guid: query.context.as_ref().unwrap().to_string(),
+                        sandbox_guid: query.context.as_ref().expect("context is_some() was checked").to_string(),
                     }
                 }
                 VeracodeError::NotFound { .. } => FindingsError::ApplicationNotFound {

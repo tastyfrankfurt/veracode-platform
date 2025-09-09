@@ -19,12 +19,13 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - 🧪 **Sandbox API** - Development sandbox management via REST API
 - 🔨 **Build API** - Build management and SAST operations via XML API
 - 📊 **Scan API** - File upload and scan operations via XML API
-- 📋 **Policy API** - Security policy management and compliance evaluation via REST API
+- 📋 **Policy API** - Security policy management and compliance evaluation with intelligent REST/XML API fallback
 - 🚀 **Async/Await** - Built on tokio for high-performance concurrent operations
 - ⚡ **Type-Safe** - Full Rust type safety with comprehensive serde serialization
 - 📊 **Rich Data Types** - Comprehensive data structures for all API responses
 - 🔧 **Workflow Helpers** - High-level operations combining multiple API calls
 - 🔄 **Intelligent Retry Logic** - Automatic retry with exponential backoff for transient failures and smart rate limit handling
+- 🔀 **API Fallback System** - Automatic fallback from REST API to XML API on permission errors for maximum compatibility
 - ⏱️ **Configurable Timeouts** - Customizable connection and request timeouts for different use cases
 - ⚡ **Performance Optimized** - Advanced memory allocation optimizations for high-throughput applications
 - 🔒 **Debug Safety** - All sensitive credentials show `[REDACTED]` in debug output
@@ -36,7 +37,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.4.1"
+veracode-platform = "0.5.0"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -229,8 +230,8 @@ let pre_scan = scan_api.begin_pre_scan(BeginPreScanRequest {
 });
 ```
 
-### Policy API (REST)
-Security policy and compliance management:
+### Policy API (REST + XML Fallback)
+Security policy and compliance management with intelligent API fallback:
 
 ```rust
 let policy_api = client.policy_api();
@@ -238,24 +239,51 @@ let policy_api = client.policy_api();
 // Get organizational policies
 let policies = policy_api.get_policies().await?;
 
-// Evaluate policy compliance
-let compliance = policy_api.evaluate_policy_compliance(
-    &app_guid, 
-    &policy_guid, 
-    None
-).await?;
-println!("Compliance status: {:?}", compliance.status);
-println!("Score: {}/100", compliance.score.unwrap_or(0));
+// Evaluate policy compliance with automatic fallback
+let (summary_report_opt, compliance_status, api_source) = policy_api
+    .get_policy_status_with_fallback(
+        &app_guid,          // Application GUID (for REST API)
+        &app_id,           // Application ID (for XML API fallback)
+        Some(&build_id),   // Build ID
+        sandbox_guid.as_deref(), // Optional sandbox GUID
+        sandbox_id.as_deref(),   // Optional sandbox ID (for fallback)
+        30,                // Max retries
+        10,                // Retry delay seconds
+        true,              // Enable break build evaluation
+        false,             // Don't force buildinfo API
+    )
+    .await?;
 
-// Initiate policy-based scan
-let scan_request = PolicyScanRequest {
-    application_guid: app_guid.to_string(),
-    policy_guid: policy_guid.to_string(),
-    scan_type: ScanType::Static,
-    sandbox_guid: None,
-    config: None,
-};
-let scan_result = policy_api.initiate_policy_scan(scan_request).await?;
+use veracode_platform::ApiSource;
+match api_source {
+    ApiSource::SummaryReport => {
+        println!("✅ Used summary report API successfully");
+        if let Some(report) = summary_report_opt {
+            println!("Full summary report available");
+        }
+    },
+    ApiSource::BuildInfo => {
+        println!("🔄 Used getbuildinfo.do API (fallback)");
+        println!("Policy status only - no full summary report");
+    }
+}
+println!("Policy compliance status: {}", compliance_status);
+
+// Force buildinfo API usage (for restricted permissions)
+let (_, status, _) = policy_api
+    .get_policy_status_with_fallback(
+        &app_guid, &app_id, Some(&build_id), 
+        None, None, 30, 10, true, 
+        true  // Force buildinfo API
+    )
+    .await?;
+
+// Check if build should break
+use veracode_platform::PolicyApi;
+if PolicyApi::should_break_build(&compliance_status) {
+    let exit_code = PolicyApi::get_exit_code_for_status(&compliance_status);
+    println!("❌ Build should break - exit code: {}", exit_code);
+}
 ```
 
 ### Build API (XML)

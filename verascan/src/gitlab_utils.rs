@@ -20,6 +20,7 @@ pub struct GitLabUrlConfig {
 
 impl GitLabUrlConfig {
     /// Create a new GitLab URL configuration
+    #[must_use]
     pub fn new(
         api_url: String,
         project_id: String,
@@ -41,6 +42,7 @@ impl GitLabUrlConfig {
 /// 1. Use project_web_url if available (most reliable)
 /// 2. Use project_path_with_namespace + host extraction
 /// 3. Fallback to project_id based URLs
+#[must_use]
 pub fn create_pipeline_url(config: &GitLabUrlConfig, pipeline_id: &str) -> String {
     // First try using CI_PROJECT_URL if available (most reliable)
     if let Some(ref project_url) = config.project_web_url {
@@ -77,6 +79,7 @@ pub fn create_pipeline_url(config: &GitLabUrlConfig, pipeline_id: &str) -> Strin
 /// - "<https://gitlab.com/api/v4/projects/>" -> Some("gitlab.com")
 /// - "<https://git.company.com/api/v4/projects/>" -> Some("git.company.com")
 /// - "invalid-url" -> None
+#[must_use]
 pub fn extract_gitlab_host(api_url: &str) -> Option<String> {
     // Try parsing as proper URL first
     if let Ok(url) = Url::parse(api_url) {

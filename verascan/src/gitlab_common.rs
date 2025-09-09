@@ -7,17 +7,19 @@ use crate::path_resolver::PathResolver;
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
-use log::info;
+use log::debug;
 
 /// Secure token wrapper that prevents accidental exposure in logs
 #[derive(Clone)]
 pub struct SecureToken(String);
 
 impl SecureToken {
+    #[must_use]
     pub fn new(token: String) -> Self {
         SecureToken(token)
     }
 
+    #[must_use]
     pub fn as_str(&self) -> &str {
         &self.0
     }
@@ -62,6 +64,7 @@ pub struct GitLabIssueResponse {
 }
 
 /// Convert Veracode severity to human-readable name
+#[must_use]
 pub fn get_severity_name(severity: u32) -> &'static str {
     match severity {
         5 => "Very High",
@@ -75,6 +78,7 @@ pub fn get_severity_name(severity: u32) -> &'static str {
 }
 
 /// Strip HTML tags from display text to get plain text message
+#[must_use]
 pub fn strip_html_tags(html: &str) -> String {
     // Simple HTML tag removal
     let mut result = String::new();
@@ -102,6 +106,7 @@ pub fn strip_html_tags(html: &str) -> String {
 }
 
 /// Create a hyperlink to the source file with line number
+#[must_use]
 pub fn create_file_link(
     file_path: &str,
     line_number: u32,
@@ -124,6 +129,7 @@ pub fn create_file_link(
 }
 
 /// Get project web URL from available configuration
+#[must_use]
 pub fn get_project_web_url(
     project_web_url: Option<&str>,
     project_path_with_namespace: Option<&str>,
@@ -146,17 +152,15 @@ pub fn get_project_web_url(
 }
 
 /// Resolve file path using path resolver or return original path
+#[must_use]
 pub fn resolve_file_path<'a>(
     file_path: &'a str,
     path_resolver: Option<&PathResolver>,
-    debug: bool,
 ) -> Cow<'a, str> {
     match path_resolver {
         Some(resolver) => resolver.resolve_file_path(file_path),
         None => {
-            if debug {
-                info!("   No path resolver configured, returning original path: '{file_path}'");
-            }
+            debug!("   No path resolver configured, returning original path: '{file_path}'");
             Cow::Borrowed(file_path)
         }
     }

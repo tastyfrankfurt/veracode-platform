@@ -73,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!();
 
     // Validate GitLab connectivity
-    match GitLabIssuesClient::validate_gitlab_connection(true).await {
+    match GitLabIssuesClient::validate_gitlab_connection().await {
         Ok(()) => {
             println!("🎉 GitLab integration is ready!");
             println!("   You can now use --create-gitlab-issues with your scans");

@@ -10,7 +10,7 @@ use crate::{
     sandbox::{Sandbox, SandboxError},
     scan::ScanError,
 };
-use log::info;
+use log::{debug, info};
 
 /// High-level workflow operations for Veracode platform
 pub struct VeracodeWorkflow {
@@ -102,6 +102,7 @@ pub struct WorkflowConfig {
 
 impl WorkflowConfig {
     /// Create a new workflow configuration
+    #[must_use]
     pub fn new(app_name: String, sandbox_name: String) -> Self {
         Self {
             app_name,
@@ -116,42 +117,49 @@ impl WorkflowConfig {
     }
 
     /// Set business criticality
+    #[must_use]
     pub fn with_business_criticality(mut self, criticality: BusinessCriticality) -> Self {
         self.business_criticality = criticality;
         self
     }
 
     /// Set application description
+    #[must_use]
     pub fn with_app_description(mut self, description: String) -> Self {
         self.app_description = Some(description);
         self
     }
 
     /// Set sandbox description
+    #[must_use]
     pub fn with_sandbox_description(mut self, description: String) -> Self {
         self.sandbox_description = Some(description);
         self
     }
 
     /// Add file to upload
+    #[must_use]
     pub fn with_file(mut self, file_path: String) -> Self {
         self.file_paths.push(file_path);
         self
     }
 
     /// Add multiple files to upload
+    #[must_use]
     pub fn with_files(mut self, file_paths: Vec<String>) -> Self {
         self.file_paths.extend(file_paths);
         self
     }
 
     /// Set auto-scan behavior
+    #[must_use]
     pub fn with_auto_scan(mut self, auto_scan: bool) -> Self {
         self.auto_scan = auto_scan;
         self
     }
 
     /// Set scan all modules behavior
+    #[must_use]
     pub fn with_scan_all_modules(mut self, scan_all: bool) -> Self {
         self.scan_all_modules = scan_all;
         self
@@ -181,6 +189,7 @@ pub struct WorkflowResultData {
 
 impl VeracodeWorkflow {
     /// Create a new workflow instance
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         Self { client }
     }
@@ -774,9 +783,9 @@ impl VeracodeWorkflow {
             .await
         {
             Ok(build) => {
-                info!("   📋 Build already exists: {}", build.build_id);
+                debug!("   📋 Build already exists: {}", build.build_id);
                 if let Some(build_version) = &build.version {
-                    info!("      Existing Version: {build_version}");
+                    debug!("      Existing Version: {build_version}");
                 }
 
                 // Parse build status from attributes
@@ -789,7 +798,7 @@ impl VeracodeWorkflow {
                     .unwrap_or("Unknown");
 
                 let build_status = crate::build::BuildStatus::from_string(build_status_str);
-                info!("      Build Status: {build_status}");
+                debug!("      Build Status: {build_status}");
 
                 // Check deletion policy
                 if deletion_policy == 0 {
@@ -801,7 +810,7 @@ impl VeracodeWorkflow {
 
                 // Special handling for "Results Ready" builds - create new build to preserve results
                 if build_status == crate::build::BuildStatus::ResultsReady {
-                    info!(
+                    debug!(
                         "   📋 Build has 'Results Ready' status - creating new build to preserve existing results"
                     );
                     self.create_build_for_upload(app_id, sandbox_id, version)
@@ -878,14 +887,16 @@ impl VeracodeWorkflow {
     ) -> WorkflowResult<Build> {
         let build_api = self.client.build_api();
 
-        let build_version = version.map(|v| v.to_string()).unwrap_or_else(|| {
+        let build_version = if let Some(v) = version {
+            v.to_string()
+        } else {
             // Generate a version based on timestamp if none provided
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .map_err(|e| WorkflowError::Workflow(format!("System time error: {e}")))?
                 .as_secs();
             format!("build-{timestamp}")
-        });
+        };
 
         match build_api
             .create_build(&crate::build::CreateBuildRequest {
@@ -1134,7 +1145,8 @@ impl VeracodeWorkflow {
         version: Option<&str>,
     ) -> WorkflowResult<crate::scan::UploadedFile> {
         // Check file size to determine upload strategy
-        let file_metadata = std::fs::metadata(file_path)
+        let file_metadata = tokio::fs::metadata(file_path)
+            .await
             .map_err(|e| WorkflowError::Workflow(format!("Cannot access file {file_path}: {e}")))?;
 
         let file_size = file_metadata.len();

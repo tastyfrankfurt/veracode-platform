@@ -1,10 +1,6 @@
-use crate::cli::Args;
-use crate::scan::configure_veracode_with_env_vars;
-use crate::{check_secure_pipeline_credentials, load_secure_api_credentials};
-use log::{error, info};
-use std::fs;
+use log::{debug, error, info};
 use std::path::PathBuf;
-use veracode_platform::{VeracodeConfig, VeracodeRegion};
+use veracode_platform::VeracodeConfig;
 
 /// Efficiently create a sanitized filename for policy download
 #[inline]
@@ -16,50 +12,21 @@ fn create_policy_filename(policy_name: &str) -> String {
     }
 }
 
-pub fn execute_policy_download(args: &Args, policy_name: &str) -> Result<(), i32> {
-    info!("🔍 Policy Download requested for: {policy_name}");
-
-    // Use secure API credentials handling
-    let secure_creds = load_secure_api_credentials().map_err(|_| 1)?;
-    let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
-
-    let region = parse_region(&args.region)?;
-    let base_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
-    let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
-
-    execute_policy_download_with_runtime(veracode_config, policy_name, args)
-}
-
-fn parse_region(region_str: &str) -> Result<VeracodeRegion, i32> {
-    // Use case-insensitive matching without allocating
-    match region_str {
-        s if s.eq_ignore_ascii_case("commercial") => Ok(VeracodeRegion::Commercial),
-        s if s.eq_ignore_ascii_case("european") => Ok(VeracodeRegion::European),
-        s if s.eq_ignore_ascii_case("federal") => Ok(VeracodeRegion::Federal),
-        _ => {
-            error!("❌ Invalid region '{region_str}'. Use: commercial, european, or federal");
-            Err(1)
-        }
-    }
-}
-
-fn execute_policy_download_with_runtime(
+pub fn execute_policy_download(
     veracode_config: VeracodeConfig,
     policy_name: &str,
-    args: &Args,
 ) -> Result<(), i32> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| {
         error!("❌ Failed to create async runtime: {e}");
         1
     })?;
 
-    rt.block_on(async { download_policy_by_name(veracode_config, policy_name, args).await })
+    rt.block_on(async { download_policy_by_name(veracode_config, policy_name).await })
 }
 
 async fn download_policy_by_name(
     veracode_config: VeracodeConfig,
     policy_name: &str,
-    args: &Args,
 ) -> Result<(), i32> {
     use veracode_platform::VeracodeClient;
 
@@ -70,9 +37,7 @@ async fn download_policy_by_name(
 
     let policy_api = client.policy_api();
 
-    if args.debug {
-        info!("🔍 Searching for policies...");
-    }
+    debug!("🔍 Searching for policies...");
 
     // Get list of policies to find the one matching the name
     let policies = policy_api.list_policies(None).await.map_err(|e| {
@@ -80,9 +45,7 @@ async fn download_policy_by_name(
         1
     })?;
 
-    if args.debug {
-        info!("📋 Found {} total policies", policies.len());
-    }
+    debug!("📋 Found {} total policies", policies.len());
 
     // Find policy by name (case-insensitive) - avoid double allocation
     let target_policy = policies
@@ -97,12 +60,10 @@ async fn download_policy_by_name(
             1
         })?;
 
-    if args.debug {
-        info!(
-            "✅ Found policy: {} (GUID: {})",
-            target_policy.name, target_policy.guid
-        );
-    }
+    debug!(
+        "✅ Found policy: {} (GUID: {})",
+        target_policy.name, target_policy.guid
+    );
 
     // Get the full policy details
     let full_policy = policy_api
@@ -117,9 +78,7 @@ async fn download_policy_by_name(
     let filename = create_policy_filename(policy_name);
     let filepath = PathBuf::from(&filename);
 
-    if args.debug {
-        info!("💾 Saving policy to: {}", filepath.display());
-    }
+    debug!("💾 Saving policy to: {}", filepath.display());
 
     // Convert policy to JSON
     let json_content = serde_json::to_string_pretty(&full_policy).map_err(|e| {
@@ -128,10 +87,12 @@ async fn download_policy_by_name(
     })?;
 
     // Write to file
-    fs::write(&filepath, json_content).map_err(|e| {
-        error!("❌ Failed to write policy file: {e}");
-        1
-    })?;
+    tokio::fs::write(&filepath, json_content)
+        .await
+        .map_err(|e| {
+            error!("❌ Failed to write policy file: {e}");
+            1
+        })?;
 
     info!("✅ Policy '{}' downloaded successfully", target_policy.name);
     info!("📁 Saved as: {}", filepath.display());

@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize GitLab client
     println!("\n🔗 Initializing GitLab client...");
-    let mut client = GitLabIssuesClient::from_env(true)?;
+    let mut client = GitLabIssuesClient::from_env()?;
 
     println!("✅ GitLab client initialized successfully");
 

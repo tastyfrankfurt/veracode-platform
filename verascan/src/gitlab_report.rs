@@ -11,7 +11,7 @@ use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
-use log::info;
+use log::{debug, info};
 
 /// GitLab SAST report structure
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -240,13 +240,13 @@ impl Default for GitLabExportConfig {
 /// GitLab exporter for converting Veracode findings to GitLab SAST format
 pub struct GitLabExporter {
     config: GitLabExportConfig,
-    debug: bool,
 }
 
 impl GitLabExporter {
     /// Create a new GitLab exporter
-    pub fn new(config: GitLabExportConfig, debug: bool) -> Self {
-        Self { config, debug }
+    #[must_use]
+    pub fn new(config: GitLabExportConfig) -> Self {
+        Self { config }
     }
 
     /// Set the project directory for resolving file paths
@@ -266,28 +266,26 @@ impl GitLabExporter {
         self.config.project_dir = Some(absolute_path.clone());
 
         // Create path resolver when project dir is set
-        let resolver_config = PathResolverConfig::new(&absolute_path, self.debug);
+        let resolver_config = PathResolverConfig::new(&absolute_path);
         self.config.path_resolver = Some(PathResolver::new(resolver_config));
 
         self
     }
 
     /// Export aggregated findings to GitLab SAST format
-    pub fn export_to_gitlab_sast(
+    pub async fn export_to_gitlab_sast(
         &self,
         aggregated: &AggregatedFindings,
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.debug {
-            info!(
-                "💾 Exporting aggregated findings to GitLab SAST format: {}",
-                output_path.display()
-            );
-        }
+        debug!(
+            "💾 Exporting aggregated findings to GitLab SAST format: {}",
+            output_path.display()
+        );
 
         let gitlab_report = self.convert_to_gitlab_format(aggregated)?;
         let json_string = serde_json::to_string_pretty(&gitlab_report)?;
-        std::fs::write(output_path, json_string)?;
+        tokio::fs::write(output_path, json_string).await?;
 
         info!(
             "✅ GitLab SAST report exported to: {}",
@@ -307,9 +305,7 @@ impl GitLabExporter {
 
         let vulnerabilities = if let Some(ref rest_findings) = aggregated.original_rest_findings {
             // Use original REST findings to preserve exploitability data
-            if self.debug {
-                info!("🔄 Using original REST findings to preserve exploitability data");
-            }
+            debug!("🔄 Using original REST findings to preserve exploitability data");
             let scan_id = aggregated
                 .scan_metadata
                 .first()
@@ -374,7 +370,7 @@ impl GitLabExporter {
 
     /// Resolve file path using shared utility
     fn resolve_file_path(&self, file_path: &str) -> String {
-        resolve_file_path(file_path, self.config.path_resolver.as_ref(), self.debug).into_owned()
+        resolve_file_path(file_path, self.config.path_resolver.as_ref()).into_owned()
     }
 
     /// Convert a Veracode finding to GitLab vulnerability format using the unified mapper
@@ -523,7 +519,7 @@ mod tests {
 
     #[test]
     fn test_convert_finding_to_vulnerability() {
-        let exporter = GitLabExporter::new(GitLabExportConfig::default(), false);
+        let exporter = GitLabExporter::new(GitLabExportConfig::default());
 
         let finding = Finding {
             issue_id: 123,
@@ -596,7 +592,7 @@ mod tests {
 
     #[test]
     fn test_full_gitlab_report_serialization() {
-        let exporter = GitLabExporter::new(GitLabExportConfig::default(), false);
+        let exporter = GitLabExporter::new(GitLabExportConfig::default());
 
         let finding = Finding {
             issue_id: 123,

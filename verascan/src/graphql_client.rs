@@ -59,36 +59,33 @@ pub struct GraphQLClientConfig {
     pub endpoint: String,
     pub auth_token: Option<String>,
     pub custom_headers: HashMap<String, String>,
-    pub debug: bool,
     pub env_prefix: String,
 }
 
 impl GraphQLClientConfig {
+    #[must_use]
     pub fn new(endpoint: String) -> Self {
         Self {
             endpoint,
             auth_token: None,
             custom_headers: HashMap::new(),
-            debug: false,
             env_prefix: "VERASCAN".to_string(),
         }
     }
 
+    #[must_use]
     pub fn with_auth_token(mut self, token: String) -> Self {
         self.auth_token = Some(token);
         self
     }
 
+    #[must_use]
     pub fn with_header(mut self, key: String, value: String) -> Self {
         self.custom_headers.insert(key, value);
         self
     }
 
-    pub fn with_debug(mut self, debug: bool) -> Self {
-        self.debug = debug;
-        self
-    }
-
+    #[must_use]
     pub fn with_env_prefix(mut self, prefix: String) -> Self {
         self.env_prefix = prefix;
         self
@@ -106,7 +103,7 @@ impl GraphQLClient {
     pub fn new(config: GraphQLClientConfig) -> Result<Self, GraphQLClientError> {
         let mut builder =
             HttpClientConfigBuilder::for_api_client(config.endpoint.clone(), &config.env_prefix)
-                .with_api_debug_mode("GraphQL", config.debug);
+                .with_api("GraphQL");
 
         // Apply authentication if provided
         if let Some(ref token) = config.auth_token {
@@ -204,7 +201,7 @@ impl GraphQLClient {
     /// Test connectivity to the GraphQL endpoint
     pub async fn test_connectivity(&self) -> Result<(), GraphQLClientError> {
         // Use a simple introspection query to test connectivity
-        let introspection_query = r#"
+        let introspection_query = r"
             query IntrospectionQuery {
                 __schema {
                     queryType {
@@ -212,7 +209,7 @@ impl GraphQLClient {
                     }
                 }
             }
-        "#;
+        ";
 
         let request = GraphQLRequest {
             query: introspection_query.to_string(),
@@ -220,9 +217,7 @@ impl GraphQLClient {
             operation_name: Some("IntrospectionQuery".to_string()),
         };
 
-        if self.config.debug {
-            HttpClientError::print_connectivity_test("GraphQL");
-        }
+        HttpClientError::print_connectivity_test("GraphQL");
 
         let response: GraphQLResponse = self.http_client.post("", &request).await?;
 
@@ -235,21 +230,15 @@ impl GraphQLClient {
             )));
         }
 
-        if self.config.debug {
-            HttpClientError::print_connectivity_success("GraphQL");
-        }
+        HttpClientError::print_connectivity_success("GraphQL");
 
         Ok(())
     }
 
     /// Get the endpoint URL
+    #[must_use]
     pub fn endpoint(&self) -> &str {
         &self.config.endpoint
-    }
-
-    /// Check if debug mode is enabled
-    pub fn is_debug(&self) -> bool {
-        self.config.debug
     }
 }
 
@@ -260,10 +249,9 @@ pub struct GitHubGraphQLClient {
 
 impl GitHubGraphQLClient {
     /// Create a new GitHub GraphQL client
-    pub fn new(token: String, debug: bool) -> Result<Self, GraphQLClientError> {
+    pub fn new(token: String) -> Result<Self, GraphQLClientError> {
         let config = GraphQLClientConfig::new("https://api.github.com/graphql".to_string())
-            .with_auth_token(token)
-            .with_debug(debug);
+            .with_auth_token(token);
 
         let client = GraphQLClient::new(config)?;
 
@@ -276,7 +264,7 @@ impl GitHubGraphQLClient {
         owner: &str,
         name: &str,
     ) -> Result<Value, GraphQLClientError> {
-        let query = r#"
+        let query = r"
             query GetRepository($owner: String!, $name: String!) {
                 repository(owner: $owner, name: $name) {
                     id
@@ -310,7 +298,7 @@ impl GitHubGraphQLClient {
                     }
                 }
             }
-        "#;
+        ";
 
         let variables = json!({
             "owner": owner,
@@ -328,7 +316,7 @@ impl GitHubGraphQLClient {
         body: &str,
         labels: Vec<String>,
     ) -> Result<Value, GraphQLClientError> {
-        let mutation = r#"
+        let mutation = r"
             mutation CreateIssue($repositoryId: ID!, $title: String!, $body: String!, $labelIds: [ID!]) {
                 createIssue(input: {
                     repositoryId: $repositoryId,
@@ -345,7 +333,7 @@ impl GitHubGraphQLClient {
                     }
                 }
             }
-        "#;
+        ";
 
         let variables = json!({
             "repositoryId": repository_id,
@@ -428,28 +416,25 @@ mod tests {
     fn test_graphql_client_config() {
         let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string())
             .with_auth_token("test-token".to_string())
-            .with_header("X-Custom-Header".to_string(), "custom-value".to_string())
-            .with_debug(true);
+            .with_header("X-Custom-Header".to_string(), "custom-value".to_string());
 
         assert_eq!(config.endpoint, "https://api.example.com/graphql");
         assert_eq!(
             config.custom_headers.get("X-Custom-Header"),
             Some(&"custom-value".to_string())
         );
-        assert!(config.debug);
+        // Debug functionality removed from config
         assert_eq!(config.auth_token, Some("test-token".to_string()));
     }
 
     #[tokio::test]
     async fn test_graphql_client_creation() {
-        let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string())
-            .with_debug(false);
+        let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string());
 
         let client = GraphQLClient::new(config);
         assert!(client.is_ok());
 
         let client = client.unwrap();
         assert_eq!(client.endpoint(), "https://api.example.com/graphql");
-        assert!(!client.is_debug());
     }
 }
