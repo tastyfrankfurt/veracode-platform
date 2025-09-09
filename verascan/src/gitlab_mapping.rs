@@ -38,23 +38,22 @@ impl ScanTypeDetector {
         }
 
         // Check for Findings API structure
-        if let Some(embedded) = data.get("_embedded") {
-            if embedded.get("findings").is_some() {
-                // Check if it's a sandbox scan by looking for sandbox context
-                if let Some(findings) = embedded.get("findings").and_then(|f| f.as_array()) {
-                    if !findings.is_empty() {
-                        if let Some(context_type) = findings[0].get("context_type") {
-                            if context_type == "SANDBOX" {
-                                return ScanType::Sandbox;
-                            } else if context_type == "POLICY" {
-                                return ScanType::Policy;
-                            }
-                        }
-                    }
+        if let Some(embedded) = data.get("_embedded")
+            && embedded.get("findings").is_some()
+        {
+            // Check if it's a sandbox scan by looking for sandbox context
+            if let Some(findings) = embedded.get("findings").and_then(|f| f.as_array())
+                && !findings.is_empty()
+                && let Some(context_type) = findings[0].get("context_type")
+            {
+                if context_type == "SANDBOX" {
+                    return ScanType::Sandbox;
+                } else if context_type == "POLICY" {
+                    return ScanType::Policy;
                 }
-                // Default to Policy if no specific context found
-                return ScanType::Policy;
             }
+            // Default to Policy if no specific context found
+            return ScanType::Policy;
         }
 
         // Default fallback
@@ -155,10 +154,11 @@ impl UrlFilter {
         // Check for URL replacements
         for (pattern, replacement) in &self.config.url_replacements {
             if source_url.contains(pattern) && pattern.contains("cwes") {
-                if let Some(cwe_id) = cwe_id {
-                    if !cwe_id.is_empty() && cwe_id != "0" {
-                        return Some(format!("https://{replacement}{cwe_id}.html"));
-                    }
+                if let Some(cwe_id) = cwe_id
+                    && !cwe_id.is_empty()
+                    && cwe_id != "0"
+                {
+                    return Some(format!("https://{replacement}{cwe_id}.html"));
                 }
                 // If no valid CWE ID, remove the URL
                 return None;

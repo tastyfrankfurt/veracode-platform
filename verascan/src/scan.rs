@@ -383,13 +383,13 @@ fn redact_url_password(url: &str) -> String {
             let protocol = &url[..protocol_end + 3]; // Include ://
             let credentials_and_host = &url[protocol_end + 3..]; // Everything after protocol
 
-            if let Some(colon_pos) = credentials_and_host.find(':') {
-                if colon_pos < at_pos - protocol_end - 3 {
-                    // Colon is in credentials part
-                    let username = &credentials_and_host[..colon_pos];
-                    let after_at = &credentials_and_host[at_pos - protocol_end - 3 + 1..]; // Everything after @
-                    return format!("{protocol}{username}:[REDACTED]@{after_at}");
-                }
+            if let Some(colon_pos) = credentials_and_host.find(':')
+                && colon_pos < at_pos - protocol_end - 3
+            {
+                // Colon is in credentials part
+                let username = &credentials_and_host[..colon_pos];
+                let after_at = &credentials_and_host[at_pos - protocol_end - 3 + 1..]; // Everything after @
+                return format!("{protocol}{username}:[REDACTED]@{after_at}");
             }
         }
     }
@@ -417,11 +417,11 @@ fn convert_git_url_to_web_url(git_url: &str) -> Option<String> {
     }
 
     // Handle SSH URLs (git@host:owner/repo.git)
-    if url.starts_with("git@") {
-        if let Some((host, path)) = extract_ssh_url_parts(url) {
-            let clean_path = path.strip_suffix(".git").unwrap_or(&path);
-            return Some(format!("https://{host}/{clean_path}"));
-        }
+    if url.starts_with("git@")
+        && let Some((host, path)) = extract_ssh_url_parts(url)
+    {
+        let clean_path = path.strip_suffix(".git").unwrap_or(&path);
+        return Some(format!("https://{host}/{clean_path}"));
     }
 
     // Handle git:// URLs
@@ -540,16 +540,15 @@ async fn execute_single_scan(
                 create_gitlab_issues,
                 ..
             } = &args.command
+                && *create_gitlab_issues
             {
-                if *create_gitlab_issues {
-                    handle_gitlab_issues_creation_from_results_async(
-                        &results_vec,
-                        matched_files,
-                        args,
-                        veracode_config,
-                    )
-                    .await;
-                }
+                handle_gitlab_issues_creation_from_results_async(
+                    &results_vec,
+                    matched_files,
+                    args,
+                    veracode_config,
+                )
+                .await;
             }
 
             Ok(())
@@ -582,16 +581,15 @@ async fn execute_concurrent_scans(
                 create_gitlab_issues,
                 ..
             } = &args.command
+                && *create_gitlab_issues
             {
-                if *create_gitlab_issues {
-                    handle_gitlab_issues_creation_from_results_async(
-                        &results_vec,
-                        matched_files,
-                        args,
-                        veracode_config,
-                    )
-                    .await;
-                }
+                handle_gitlab_issues_creation_from_results_async(
+                    &results_vec,
+                    matched_files,
+                    args,
+                    veracode_config,
+                )
+                .await;
             }
 
             Ok(())
@@ -716,10 +714,9 @@ async fn handle_findings_export(
             findings_limit,
             ..
         } = &args.command
+            && *show_findings
         {
-            if *show_findings {
-                aggregator.display_detailed_findings(&final_filtered, *findings_limit);
-            }
+            aggregator.display_detailed_findings(&final_filtered, *findings_limit);
         }
 
         // Export based on format
@@ -922,13 +919,14 @@ fn ensure_extension(path: &str, extension: &str) -> Result<PathBuf, String> {
     }
 
     // Check if parent directory exists (if there is one)
-    if let Some(parent) = path_buf.parent() {
-        if !parent.as_os_str().is_empty() && !parent.exists() {
-            return Err(format!(
-                "Parent directory '{}' does not exist. Please create it first.",
-                parent.display()
-            ));
-        }
+    if let Some(parent) = path_buf.parent()
+        && !parent.as_os_str().is_empty()
+        && !parent.exists()
+    {
+        return Err(format!(
+            "Parent directory '{}' does not exist. Please create it first.",
+            parent.display()
+        ));
     }
 
     // Ensure the file has the correct extension (optimized OsStr comparison)
@@ -1258,17 +1256,17 @@ async fn export_pass_fail_violations(
     let mut criteria_description = Vec::with_capacity(4); // Max 4 criteria types
 
     // 1. Policy violations (highest priority)
-    if let Some(assessment) = policy_assessment {
-        if !assessment.violations.is_empty() {
-            violating_findings.extend(assessment.violations.clone());
-            criteria_description.push(format!(
-                "Policy '{}' violations",
-                assessment.metadata.policy_info.name
-            ));
+    if let Some(assessment) = policy_assessment
+        && !assessment.violations.is_empty()
+    {
+        violating_findings.extend(assessment.violations.clone());
+        criteria_description.push(format!(
+            "Policy '{}' violations",
+            assessment.metadata.policy_info.name
+        ));
 
-            export_policy_violations(assessment, output_path).await;
-            return; // Policy takes precedence, export and return
-        }
+        export_policy_violations(assessment, output_path).await;
+        return; // Policy takes precedence, export and return
     }
 
     // 2. Baseline violations (only if no severity/CWE criteria specified)
@@ -1738,17 +1736,16 @@ async fn execute_assessment_scan_async(
                     app.id,
                     app.guid
                 );
-                if let Some(profile) = &app.profile {
-                    if let Some(teams) = &profile.teams {
-                        if !teams.is_empty() {
-                            let team_names: Vec<String> = teams
-                                .iter()
-                                .filter_map(|t| t.team_name.as_ref())
-                                .cloned()
-                                .collect();
-                            debug!("   Associated teams: {}", team_names.join(", "));
-                        }
-                    }
+                if let Some(profile) = &app.profile
+                    && let Some(teams) = &profile.teams
+                    && !teams.is_empty()
+                {
+                    let team_names: Vec<String> = teams
+                        .iter()
+                        .filter_map(|t| t.team_name.as_ref())
+                        .cloned()
+                        .collect();
+                    debug!("   Associated teams: {}", team_names.join(", "));
                 }
                 info!("✅ Application ready: {app_profile_name}");
                 crate::assessment::ApplicationId::new(app.guid, app.id.to_string())

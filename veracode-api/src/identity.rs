@@ -727,13 +727,13 @@ impl<'a> IdentityApi<'a> {
             for role_id in provided_role_ids {
                 if let Some(role) = roles.iter().find(|r| &r.role_id == role_id) {
                     // Check if this is a human-only role
-                    if let Some(ref desc) = role.role_description {
-                        if human_role_descriptions.contains(&desc.as_str()) {
-                            return Err(IdentityError::InvalidInput(format!(
-                                "Role '{}' (description: '{}') is a human-only role and cannot be assigned to API users.",
-                                role.role_name, desc
-                            )));
-                        }
+                    if let Some(ref desc) = role.role_description
+                        && human_role_descriptions.contains(&desc.as_str())
+                    {
+                        return Err(IdentityError::InvalidInput(format!(
+                            "Role '{}' (description: '{}') is a human-only role and cannot be assigned to API users.",
+                            role.role_name, desc
+                        )));
                     }
 
                     // API users can only be assigned roles where is_api is true
@@ -797,15 +797,15 @@ impl<'a> IdentityApi<'a> {
                 }
 
                 // If user has no teams, also assign "No Team Restrictions" role
-                if !has_teams {
-                    if let Some(no_team_role) = roles.iter().find(|r| {
+                if !has_teams
+                    && let Some(no_team_role) = roles.iter().find(|r| {
                         r.role_description
                             .as_ref()
                             .is_some_and(|desc| desc == "No Team Restriction API")
                             || r.role_name.to_lowercase() == "noteamrestrictionapi"
-                    }) {
-                        default_role_ids.push(no_team_role.role_id.clone());
-                    }
+                    })
+                {
+                    default_role_ids.push(no_team_role.role_id.clone());
                 }
             }
 
@@ -1090,14 +1090,12 @@ impl<'a> IdentityApi<'a> {
                         page += 1;
 
                         // Check pagination info if available
-                        if let Some(page_info) = roles_response.page {
-                            if let (Some(current_page), Some(total_pages)) =
+                        if let Some(page_info) = roles_response.page
+                            && let (Some(current_page), Some(total_pages)) =
                                 (page_info.number, page_info.total_pages)
-                            {
-                                if current_page + 1 >= total_pages {
-                                    break;
-                                }
-                            }
+                            && current_page + 1 >= total_pages
+                        {
+                            break;
                         }
 
                         continue;
@@ -1183,14 +1181,12 @@ impl<'a> IdentityApi<'a> {
                         page += 1;
 
                         // Check pagination info if available
-                        if let Some(page_info) = teams_response.page {
-                            if let (Some(current_page), Some(total_pages)) =
+                        if let Some(page_info) = teams_response.page
+                            && let (Some(current_page), Some(total_pages)) =
                                 (page_info.number, page_info.total_pages)
-                            {
-                                if current_page + 1 >= total_pages {
-                                    break; // Last page reached
-                                }
-                            }
+                            && current_page + 1 >= total_pages
+                        {
+                            break; // Last page reached
                         }
 
                         continue;

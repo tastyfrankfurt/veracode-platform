@@ -392,17 +392,17 @@ impl VeracodeClient {
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
-        if let Some(params) = query_params {
-            if !params.is_empty() {
-                url.push('?');
-                for (i, (key, value)) in params.iter().enumerate() {
-                    if i > 0 {
-                        url.push('&');
-                    }
-                    url.push_str(key);
-                    url.push('=');
-                    url.push_str(value);
+        if let Some(params) = query_params
+            && !params.is_empty()
+        {
+            url.push('?');
+            for (i, (key, value)) in params.iter().enumerate() {
+                if i > 0 {
+                    url.push('&');
                 }
+                url.push_str(key);
+                url.push('=');
+                url.push_str(value);
             }
         }
 
@@ -715,13 +715,12 @@ impl VeracodeClient {
                 if let Some(embedded) = json_value.get("_embedded") {
                     if let Some(items_array) =
                         embedded.as_object().and_then(|obj| obj.values().next())
+                        && let Some(items) = items_array.as_array()
                     {
-                        if let Some(items) = items_array.as_array() {
-                            if items.is_empty() {
-                                break; // No more items
-                            }
-                            all_items.extend(items.clone());
+                        if items.is_empty() {
+                            break; // No more items
                         }
+                        all_items.extend(items.clone());
                     }
                 } else if let Some(items) = json_value.as_array() {
                     // Handle direct array response
@@ -740,10 +739,9 @@ impl VeracodeClient {
                     if let (Some(current), Some(total)) = (
                         page_obj.get("number").and_then(|n| n.as_u64()),
                         page_obj.get("totalPages").and_then(|n| n.as_u64()),
-                    ) {
-                        if current + 1 >= total {
-                            break; // Last page reached
-                        }
+                    ) && current + 1 >= total
+                    {
+                        break; // Last page reached
                     }
                 }
             } else {

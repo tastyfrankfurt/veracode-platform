@@ -847,10 +847,10 @@ impl VeracodeWorkflow {
                     self.create_build_for_upload(app_id, sandbox_id, version)
                         .await
                 } else {
-                    return Err(WorkflowError::Workflow(format!(
+                    Err(WorkflowError::Workflow(format!(
                         "Build {} has status '{}' which is not safe to delete with policy {} (0=Never, 1=Safe only, 2=Except Results Ready). Cannot proceed with upload.",
                         build.build_id, build_status, deletion_policy
-                    )));
+                    )))
                 }
             }
             Err(crate::build::BuildError::BuildNotFound) => {

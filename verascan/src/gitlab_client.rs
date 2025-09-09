@@ -479,22 +479,23 @@ impl GitLabClient {
             finding.files.source_file.line
         ));
 
-        if let Some(ref function_name) = finding.files.source_file.function_name {
-            if !function_name.is_empty() && function_name != "UNKNOWN" {
-                description.push_str(&format!("| **Function** | `{function_name}` |\n"));
-            }
+        if let Some(ref function_name) = finding.files.source_file.function_name
+            && !function_name.is_empty()
+            && function_name != "UNKNOWN"
+        {
+            description.push_str(&format!("| **Function** | `{function_name}` |\n"));
         }
 
         description.push_str(&format!("| **Scan ID** | `{}` |\n", source.scan_id));
         description.push_str(&format!("| **Project** | {} |\n", source.project_name));
 
         // Add flaw details link if available
-        if let Some(ref flaw_details_link) = finding.flaw_details_link {
-            if !flaw_details_link.is_empty() {
-                description.push_str(&format!(
-                    "| **Flaw Details** | [View in Veracode]({flaw_details_link}) |\n"
-                ));
-            }
+        if let Some(ref flaw_details_link) = finding.flaw_details_link
+            && !flaw_details_link.is_empty()
+        {
+            description.push_str(&format!(
+                "| **Flaw Details** | [View in Veracode]({flaw_details_link}) |\n"
+            ));
         }
 
         description.push('\n');
@@ -532,13 +533,13 @@ impl GitLabClient {
         }
 
         // Flaw details link
-        if let Some(ref flaw_details_link) = finding.flaw_details_link {
-            if !flaw_details_link.is_empty() {
-                links_section.push_str(&format!(
-                    "- [Detailed Vulnerability Information (Veracode)]({flaw_details_link})\n"
-                ));
-                has_links = true;
-            }
+        if let Some(ref flaw_details_link) = finding.flaw_details_link
+            && !flaw_details_link.is_empty()
+        {
+            links_section.push_str(&format!(
+                "- [Detailed Vulnerability Information (Veracode)]({flaw_details_link})\n"
+            ));
+            has_links = true;
         }
 
         // Add the links section if we have any links

@@ -49,7 +49,7 @@ impl PathResolver {
     }
 
     /// Helper method to convert Path to Cow<str> efficiently
-    fn path_to_cow_str(path: &Path) -> Cow<str> {
+    fn path_to_cow_str(path: &Path) -> Cow<'_, str> {
         Cow::Owned(path.to_string_lossy().into_owned())
     }
 
@@ -185,12 +185,13 @@ impl PathResolver {
         let direct_path = self.config.project_dir.join(relative_path);
         debug!("     Checking direct path: {}", direct_path.display());
 
-        if direct_path.exists() && direct_path.is_file() {
-            if let Ok(result) = direct_path.strip_prefix(&self.config.project_dir) {
-                let result_str = result.to_string_lossy().to_string();
-                debug!("     ✅ Found exact direct match: {result_str}");
-                return Some(result_str);
-            }
+        if direct_path.exists()
+            && direct_path.is_file()
+            && let Ok(result) = direct_path.strip_prefix(&self.config.project_dir)
+        {
+            let result_str = result.to_string_lossy().to_string();
+            debug!("     ✅ Found exact direct match: {result_str}");
+            return Some(result_str);
         }
 
         debug!("     ❌ No exact path match found in any source directories");
@@ -211,12 +212,12 @@ impl PathResolver {
                 let entry_path = entry.path();
 
                 if entry_path.is_file() {
-                    if let Some(entry_filename) = entry_path.file_name().and_then(|n| n.to_str()) {
-                        if entry_filename == filename {
-                            // Found the file! Return its path relative to project root
-                            if let Ok(relative_path) = entry_path.strip_prefix(project_root) {
-                                return Some(relative_path.to_string_lossy().to_string());
-                            }
+                    if let Some(entry_filename) = entry_path.file_name().and_then(|n| n.to_str())
+                        && entry_filename == filename
+                    {
+                        // Found the file! Return its path relative to project root
+                        if let Ok(relative_path) = entry_path.strip_prefix(project_root) {
+                            return Some(relative_path.to_string_lossy().to_string());
                         }
                     }
                 } else if entry_path.is_dir() {

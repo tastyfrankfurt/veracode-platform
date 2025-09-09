@@ -174,13 +174,14 @@ impl ExportWorkflow {
 
         // Validate output path
         let output_path = Path::new(self.config.output_path.as_ref());
-        if let Some(parent) = output_path.parent() {
-            if !parent.as_os_str().is_empty() && !parent.exists() {
-                return Err(ExportError::InvalidConfig(format!(
-                    "Output directory does not exist: {}",
-                    parent.display()
-                )));
-            }
+        if let Some(parent) = output_path.parent()
+            && !parent.as_os_str().is_empty()
+            && !parent.exists()
+        {
+            return Err(ExportError::InvalidConfig(format!(
+                "Output directory does not exist: {}",
+                parent.display()
+            )));
         }
 
         Ok(())

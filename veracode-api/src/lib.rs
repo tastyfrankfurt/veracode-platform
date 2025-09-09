@@ -412,14 +412,14 @@ impl VeracodeClient {
     /// Get a sandbox API instance.
     /// Uses REST API (api.veracode.*).
     #[must_use]
-    pub fn sandbox_api(&self) -> SandboxApi {
+    pub fn sandbox_api(&self) -> SandboxApi<'_> {
         SandboxApi::new(self)
     }
 
     /// Get an identity API instance.
     /// Uses REST API (api.veracode.*).
     #[must_use]
-    pub fn identity_api(&self) -> IdentityApi {
+    pub fn identity_api(&self) -> IdentityApi<'_> {
         IdentityApi::new(self)
     }
 
@@ -433,7 +433,7 @@ impl VeracodeClient {
     /// Get a policy API instance.
     /// Uses REST API (api.veracode.*).
     #[must_use]
-    pub fn policy_api(&self) -> PolicyApi {
+    pub fn policy_api(&self) -> PolicyApi<'_> {
         PolicyApi::new(self)
     }
 

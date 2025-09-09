@@ -358,12 +358,12 @@ impl RobustHttpClient {
                         .file_name(file_name.to_string()),
                 );
 
-                if let Some(ref json) = additional_fields_json {
-                    if let Some(obj) = json.as_object() {
-                        for (key, value) in obj {
-                            if let Some(text) = value.as_str() {
-                                retry_form = retry_form.text(key.clone(), text.to_string());
-                            }
+                if let Some(ref json) = additional_fields_json
+                    && let Some(obj) = json.as_object()
+                {
+                    for (key, value) in obj {
+                        if let Some(text) = value.as_str() {
+                            retry_form = retry_form.text(key.clone(), text.to_string());
                         }
                     }
                 }
