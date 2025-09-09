@@ -19,7 +19,7 @@ use veracode_platform::pipeline::{Finding, FindingFiles, FindingsSummary, Source
 use veracode_platform::sandbox::SandboxApi;
 use veracode_platform::{VeracodeClient, VeracodeError};
 
-use log::info;
+use log::{debug, info};
 
 /// Configuration for findings export from completed scans
 #[derive(Debug, Clone)]
@@ -37,7 +37,6 @@ pub struct ExportConfig<'a> {
     /// Project directory for GitLab file path resolution
     pub project_dir: Option<PathBuf>,
     /// Enable debug logging
-    pub debug: bool,
     /// Minimum severity filter (0-5, optional)
     pub min_severity: Option<u32>,
 }
@@ -121,29 +120,28 @@ pub struct ExportWorkflow {
 
 impl ExportWorkflow {
     /// Create a new export workflow
+    #[must_use]
     pub fn new(client: VeracodeClient, config: ExportConfig<'static>) -> Self {
         Self { client, config }
     }
 
     /// Execute the complete export workflow
     pub async fn execute(&self) -> Result<(), ExportError> {
-        if self.config.debug {
-            log::info!("🚀 Starting findings export from completed scan");
-            log::info!("   Application Profile: {}", self.config.app_profile_name);
-            if let Some(ref sandbox_name) = self.config.sandbox_name {
-                log::info!("   Sandbox name: {sandbox_name} (sandbox scan)");
-            } else if let Some(ref sandbox_guid) = self.config.sandbox_guid {
-                log::info!("   Sandbox GUID: {sandbox_guid} (sandbox scan)");
-            } else {
-                log::info!("   Scan type: Policy scan");
-            }
-            log::info!("   Export format: {}", self.config.export_format);
-            if let Some(min_sev) = self.config.min_severity {
-                log::info!(
-                    "   Minimum severity filter: {} and above",
-                    FindingsAggregator::severity_level_to_name(min_sev)
-                );
-            }
+        debug!("🚀 Starting findings export from completed scan");
+        debug!("   Application Profile: {}", self.config.app_profile_name);
+        if let Some(ref sandbox_name) = self.config.sandbox_name {
+            debug!("   Sandbox name: {sandbox_name} (sandbox scan)");
+        } else if let Some(ref sandbox_guid) = self.config.sandbox_guid {
+            debug!("   Sandbox GUID: {sandbox_guid} (sandbox scan)");
+        } else {
+            debug!("   Scan type: Policy scan");
+        }
+        debug!("   Export format: {}", self.config.export_format);
+        if let Some(min_sev) = self.config.min_severity {
+            debug!(
+                "   Minimum severity filter: {} and above",
+                FindingsAggregator::severity_level_to_name(min_sev)
+            );
         }
 
         // Validate configuration
@@ -164,9 +162,7 @@ impl ExportWorkflow {
 
     /// Validate export configuration
     fn validate_config(&self) -> Result<(), ExportError> {
-        if self.config.debug {
-            log::debug!("🔍 Validating export configuration");
-        }
+        debug!("🔍 Validating export configuration");
 
         // Validate export format
         let format = self.config.export_format.to_lowercase();
@@ -197,12 +193,10 @@ impl ExportWorkflow {
         let policy_api = PolicyApi::new(&self.client);
         let findings_api = FindingsApi::new(self.client.clone());
 
-        if self.config.debug {
-            log::debug!(
-                "🔍 Looking up application: {}",
-                self.config.app_profile_name
-            );
-        }
+        debug!(
+            "🔍 Looking up application: {}",
+            self.config.app_profile_name
+        );
 
         // Look up application GUID from profile name
         let applications = self
@@ -234,15 +228,11 @@ impl ExportWorkflow {
 
         let app_guid = &app.guid;
 
-        if self.config.debug {
-            log::debug!("✅ Found application GUID: {app_guid}");
-        }
+        debug!("✅ Found application GUID: {app_guid}");
 
         // Resolve sandbox name to GUID if sandbox_name is provided
         let resolved_sandbox_guid = if let Some(ref sandbox_name) = self.config.sandbox_name {
-            if self.config.debug {
-                log::debug!("🔍 Resolving sandbox GUID for name: {sandbox_name}");
-            }
+            debug!("🔍 Resolving sandbox GUID for name: {sandbox_name}");
 
             let sandbox_api = SandboxApi::new(&self.client);
             match sandbox_api
@@ -250,12 +240,10 @@ impl ExportWorkflow {
                 .await
             {
                 Ok(Some(sandbox)) => {
-                    if self.config.debug {
-                        log::debug!(
-                            "✅ Found sandbox GUID: {} for name: {sandbox_name}",
-                            sandbox.guid
-                        );
-                    }
+                    debug!(
+                        "✅ Found sandbox GUID: {} for name: {sandbox_name}",
+                        sandbox.guid
+                    );
                     Some(sandbox.guid.clone())
                 }
                 Ok(None) => {
@@ -274,12 +262,10 @@ impl ExportWorkflow {
                 }
             }
         } else {
-            self.config.sandbox_guid.as_ref().map(|s| s.to_string())
+            self.config.sandbox_guid.as_ref().map(ToString::to_string)
         };
 
-        if self.config.debug {
-            log::debug!("🔍 Getting summary report from Veracode Policy API");
-        }
+        debug!("🔍 Getting summary report from Veracode Policy API");
 
         // Get summary report which contains policy compliance and findings summary
         let summary_report = policy_api
@@ -300,35 +286,27 @@ impl ExportWorkflow {
                 }
             })?;
 
-        if self.config.debug {
-            log::info!(
-                "✅ Retrieved summary report for app: {}",
-                summary_report.app_name
-            );
-            log::info!(
-                "   Policy compliance: {}",
-                summary_report.policy_compliance_status
-            );
-            if let Some(ref sandbox_name) = summary_report.sandbox_name {
-                log::info!("   Sandbox: {sandbox_name}");
-            }
+        debug!(
+            "✅ Retrieved summary report for app: {}",
+            summary_report.app_name
+        );
+        debug!(
+            "   Policy compliance: {}",
+            summary_report.policy_compliance_status
+        );
+        if let Some(ref sandbox_name) = summary_report.sandbox_name {
+            debug!("   Sandbox: {sandbox_name}");
         }
 
         // Get actual findings using FindingsApi with proper query filtering
-        if self.config.debug {
-            log::debug!("🔍 Getting findings from Veracode Findings API");
-        }
+        debug!("🔍 Getting findings from Veracode Findings API");
 
         // Build findings query with optional severity filtering
         let mut query = if let Some(ref sandbox_guid) = resolved_sandbox_guid {
-            if self.config.debug {
-                log::debug!("   Retrieving sandbox findings for GUID: {sandbox_guid}");
-            }
+            debug!("   Retrieving sandbox findings for GUID: {sandbox_guid}");
             FindingsQuery::for_sandbox(app_guid, sandbox_guid)
         } else {
-            if self.config.debug {
-                log::debug!("   Retrieving policy scan findings");
-            }
+            debug!("   Retrieving policy scan findings");
             FindingsQuery::new(app_guid)
         };
 
@@ -336,12 +314,10 @@ impl ExportWorkflow {
         if let Some(min_severity) = self.config.min_severity {
             let severity_filter: Vec<u32> = (min_severity..=5).collect();
             query = query.with_severity(severity_filter);
-            if self.config.debug {
-                log::debug!(
-                    "   Applying severity filter: {} and above",
-                    FindingsAggregator::severity_level_to_name(min_severity)
-                );
-            }
+            debug!(
+                "   Applying severity filter: {} and above",
+                FindingsAggregator::severity_level_to_name(min_severity)
+            );
         }
 
         let rest_findings = findings_api.get_all_findings(&query).await.map_err(|e| {
@@ -349,23 +325,19 @@ impl ExportWorkflow {
             ExportError::from(e)
         })?;
 
-        if self.config.debug {
-            log::info!(
-                "✅ Retrieved {} findings from Veracode API",
-                rest_findings.len()
-            );
-        }
+        debug!(
+            "✅ Retrieved {} findings from Veracode API",
+            rest_findings.len()
+        );
 
         // Convert findings to aggregated format
         let aggregated = self.convert_findings_to_aggregated(&summary_report, &rest_findings)?;
 
-        if self.config.debug {
-            log::info!(
-                "📊 Processed {} findings for export",
-                aggregated.findings.len()
-            );
-            self.display_summary_overview(&summary_report);
-        }
+        debug!(
+            "📊 Processed {} findings for export",
+            aggregated.findings.len()
+        );
+        self.display_summary_overview(&summary_report);
 
         Ok(aggregated)
     }
@@ -376,12 +348,10 @@ impl ExportWorkflow {
         summary_report: &veracode_platform::policy::SummaryReport,
         rest_findings: &[RestFinding],
     ) -> Result<AggregatedFindings, ExportError> {
-        if self.config.debug {
-            log::debug!(
-                "🔄 Converting {} REST findings to pipeline format",
-                rest_findings.len()
-            );
-        }
+        debug!(
+            "🔄 Converting {} REST findings to pipeline format",
+            rest_findings.len()
+        );
 
         // Convert REST findings to pipeline Finding format
         // Note: Severity filtering is now done at the API level via FindingsQuery
@@ -616,13 +586,11 @@ impl ExportWorkflow {
         let format = self.config.export_format.to_lowercase();
         let output_path = Path::new(self.config.output_path.as_ref());
 
-        if self.config.debug {
-            log::debug!(
-                "📄 Exporting {} findings in {} format",
-                findings.findings.len(),
-                format
-            );
-        }
+        debug!(
+            "📄 Exporting {} findings in {} format",
+            findings.findings.len(),
+            format
+        );
 
         match format.as_str() {
             "gitlab" => self.export_gitlab_sast(findings, output_path).await,
@@ -643,13 +611,14 @@ impl ExportWorkflow {
         let gitlab_config = GitLabExportConfig::default();
 
         let gitlab_exporter = if let Some(ref project_dir) = self.config.project_dir {
-            GitLabExporter::new(gitlab_config, self.config.debug).with_project_dir(project_dir)
+            GitLabExporter::new(gitlab_config).with_project_dir(project_dir)
         } else {
-            GitLabExporter::new(gitlab_config, self.config.debug)
+            GitLabExporter::new(gitlab_config)
         };
 
         gitlab_exporter
             .export_to_gitlab_sast(findings, &gitlab_path)
+            .await
             .map_err(|e| ExportError::Io(std::io::Error::other(e.to_string())))?;
 
         Ok(())
@@ -662,10 +631,11 @@ impl ExportWorkflow {
         output_path: &Path,
     ) -> Result<(), ExportError> {
         let json_path = self.ensure_extension(output_path, "json");
-        let aggregator = FindingsAggregator::new(self.config.debug);
+        let aggregator = FindingsAggregator::new();
 
         aggregator
             .export_to_baseline_format(findings, &json_path)
+            .await
             .map_err(|e| ExportError::Io(std::io::Error::other(e.to_string())))?;
 
         info!("✅ JSON baseline format exported: {}", json_path.display());
@@ -679,10 +649,11 @@ impl ExportWorkflow {
         output_path: &Path,
     ) -> Result<(), ExportError> {
         let csv_path = self.ensure_extension(output_path, "csv");
-        let aggregator = FindingsAggregator::new(self.config.debug);
+        let aggregator = FindingsAggregator::new();
 
         aggregator
             .export_to_csv(findings, &csv_path)
+            .await
             .map_err(|e| ExportError::Io(std::io::Error::other(e.to_string())))?;
 
         info!("✅ CSV export completed: {}", csv_path.display());
@@ -758,7 +729,6 @@ mod tests {
             export_format: Cow::Borrowed("gitlab"),
             output_path: Cow::Borrowed("/tmp/test_output"),
             project_dir: None,
-            debug: true,
             min_severity: Some(3),
         };
 
@@ -794,7 +764,6 @@ mod tests {
             export_format: Cow::Borrowed("gitlab"),
             output_path: Cow::Borrowed("/tmp/test"),
             project_dir: None,
-            debug: false,
             min_severity: None,
         };
 
@@ -814,7 +783,6 @@ mod tests {
             export_format: Cow::Borrowed("gitlab"),
             output_path: Cow::Borrowed("/tmp/test"),
             project_dir: None,
-            debug: false,
             min_severity: None,
         };
 
@@ -838,7 +806,6 @@ mod tests {
                 export_format: Cow::Borrowed("gitlab"),
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
-                debug: false,
                 min_severity: None,
             },
         };
@@ -866,7 +833,6 @@ mod tests {
                 export_format: Cow::Borrowed("gitlab"),
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
-                debug: false,
                 min_severity: None,
             },
         };
@@ -891,7 +857,6 @@ mod tests {
             export_format: Cow::Borrowed("gitlab"),
             output_path: Cow::Borrowed("/tmp/test.json"),
             project_dir: None,
-            debug: false,
             min_severity: None,
         };
 
@@ -911,7 +876,6 @@ mod tests {
             export_format: Cow::Borrowed("xml"), // Invalid format
             output_path: Cow::Borrowed("/tmp/test.json"),
             project_dir: None,
-            debug: false,
             min_severity: None,
         };
 
@@ -1038,7 +1002,6 @@ mod tests {
                 export_format: Cow::Borrowed("gitlab"),
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
-                debug: false,
                 min_severity: None,
             },
         };
@@ -1103,7 +1066,6 @@ mod tests {
                 export_format: Cow::Borrowed("gitlab"),
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
-                debug: false,
                 min_severity: None,
             },
         };
@@ -1133,7 +1095,6 @@ mod tests {
             export_format: Cow::Borrowed("all"),
             output_path: Cow::Borrowed("/path/to/output.json"),
             project_dir: Some(std::path::PathBuf::from("/project")),
-            debug: true,
             min_severity: Some(4), // High severity
         };
 
@@ -1147,7 +1108,7 @@ mod tests {
         assert_eq!(config.export_format, "all");
         assert_eq!(config.output_path, "/path/to/output.json");
         assert!(config.project_dir.is_some());
-        assert!(config.debug);
+        // Debug functionality removed from config
         assert_eq!(config.min_severity, Some(4));
     }
 }

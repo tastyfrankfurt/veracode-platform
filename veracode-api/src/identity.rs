@@ -372,6 +372,7 @@ pub struct UserQuery {
 
 impl UserQuery {
     /// Create a new empty user query
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -395,12 +396,14 @@ impl UserQuery {
     }
 
     /// Filter by user type
+    #[must_use]
     pub fn with_user_type(mut self, user_type: UserType) -> Self {
         self.user_type = Some(user_type);
         self
     }
 
     /// Set pagination
+    #[must_use]
     pub fn with_pagination(mut self, page: u32, size: u32) -> Self {
         self.page = Some(page);
         self.size = Some(size);
@@ -408,6 +411,7 @@ impl UserQuery {
     }
 
     /// Convert to query parameters
+    #[must_use]
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         Vec::from(self) // Delegate to trait
     }
@@ -549,6 +553,7 @@ pub struct IdentityApi<'a> {
 
 impl<'a> IdentityApi<'a> {
     /// Create a new IdentityApi instance
+    #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
     }
@@ -656,8 +661,8 @@ impl<'a> IdentityApi<'a> {
         }
 
         // Team membership validation: ALL users must either have team assignment OR "No Team Restrictions" role
-        let has_teams = fixed_request.team_ids.is_some()
-            && !fixed_request.team_ids.as_ref().unwrap().is_empty();
+        let has_teams = fixed_request.team_ids.as_ref()
+            .is_some_and(|teams| !teams.is_empty());
 
         if !has_teams {
             // Check if user has "No Team Restrictions" role (works for both human and API users)
@@ -692,7 +697,7 @@ impl<'a> IdentityApi<'a> {
         // Validate role assignments for API users
         if is_api_user && fixed_request.role_ids.is_some() {
             let roles = self.list_roles().await?;
-            let provided_role_ids = fixed_request.role_ids.as_ref().unwrap();
+            let provided_role_ids = fixed_request.role_ids.as_ref().expect("role_ids was checked to be Some");
 
             // Define human-only role descriptions (from userrolesbydescription file)
             let human_role_descriptions = [
@@ -738,7 +743,7 @@ impl<'a> IdentityApi<'a> {
         }
 
         // If no roles provided, assign default roles (any scan and submitter)
-        if fixed_request.role_ids.is_none() || fixed_request.role_ids.as_ref().unwrap().is_empty() {
+        if fixed_request.role_ids.as_ref().is_none_or(|roles| roles.is_empty()) {
             // Get available roles to find default ones
             let roles = self.list_roles().await?;
             let mut default_role_ids = Vec::new();
@@ -803,7 +808,7 @@ impl<'a> IdentityApi<'a> {
 
         // If no permissions provided, assign default permissions based on user type
         if fixed_request.permissions.is_none()
-            || fixed_request.permissions.as_ref().unwrap().is_empty()
+            || fixed_request.permissions.as_ref().expect("permissions was checked to be Some").is_empty()
         {
             if is_api_user {
                 // For API users, assign "apiUser" permission (from defaultapiuserperm file)
@@ -1100,9 +1105,8 @@ impl<'a> IdentityApi<'a> {
                         return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
                             "Unable to parse roles response: {response_text}"
                         ))));
-                    } else {
-                        break; // End of pages
                     }
+                    break; // End of pages
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
@@ -1194,10 +1198,9 @@ impl<'a> IdentityApi<'a> {
                         return Err(IdentityError::Api(VeracodeError::InvalidResponse(
                             "Unable to parse teams response".to_string(),
                         )));
-                    } else {
-                        // We've gotten some teams, but this page failed - break
-                        break;
                     }
+                    // We've gotten some teams, but this page failed - break
+                    break;
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();

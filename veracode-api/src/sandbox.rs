@@ -130,6 +130,7 @@ pub struct SandboxListParams {
 
 impl SandboxListParams {
     /// Convert to query parameters for HTTP requests
+    #[must_use]
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         Vec::from(self) // Delegate to trait
     }
@@ -253,6 +254,7 @@ pub struct SandboxApi<'a> {
 
 impl<'a> SandboxApi<'a> {
     /// Create a new SandboxApi instance
+    #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
     }

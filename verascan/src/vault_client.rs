@@ -1,5 +1,5 @@
 use crate::credentials::{
-    CredentialError, CredentialSource, SecureApiCredentials, VaultConfig, validate_api_credential,
+    CredentialSource, CredentialError, SecureApiCredentials, VaultConfig, validate_api_credential,
 };
 use backoff::{ExponentialBackoff, future::retry};
 use log::{debug, error, info, warn};
@@ -35,17 +35,17 @@ pub struct VaultCredentialClient {
 impl VaultCredentialClient {
     /// Create a new vault client from configuration
     pub async fn new(config: &VaultConfig) -> Result<Self, CredentialError> {
-        let mut client = create_vault_client(config).await?;
+        let mut client = create_vault_client(config)?;
         authenticate_vault(&mut client, config).await?;
 
         Ok(Self { client })
     }
 
-    /// Retrieve credentials from vault
-    pub async fn get_credentials(
+    /// Retrieve credentials from vault directly into VeracodeCredentials
+    pub async fn get_veracode_credentials(
         &self,
         secret_path: &str,
-    ) -> Result<SecureApiCredentials, CredentialError> {
+    ) -> Result<veracode_platform::VeracodeCredentials, CredentialError> {
         let (parsed_secret_path, secret_engine) = parse_secret_path(secret_path);
         let secret_data =
             retrieve_vault_secret(&self.client, &parsed_secret_path, &secret_engine).await?;
@@ -54,37 +54,56 @@ impl VaultCredentialClient {
         validate_secret_data(&secret_data)?;
 
         // Extract API credentials from vault secret
-        let api_id = secret_data.get("VERACODE_API_ID").map(|s| s.to_string());
-        let api_key = secret_data.get("VERACODE_API_KEY").map(|s| s.to_string());
+        let api_id = secret_data.get("VERACODE_API_ID").ok_or_else(|| {
+            CredentialError::MissingCredentials {
+                missing: "VERACODE_API_ID not found in vault secret".to_string(),
+            }
+        })?;
+
+        let api_key = secret_data.get("VERACODE_API_KEY").ok_or_else(|| {
+            CredentialError::MissingCredentials {
+                missing: "VERACODE_API_KEY not found in vault secret".to_string(),
+            }
+        })?;
 
         // Validate extracted credentials
-        if let Some(ref id) = api_id {
-            validate_api_credential(id, "VERACODE_API_ID from vault").map_err(|msg| {
-                CredentialError::ValidationError {
-                    field: "VERACODE_API_ID".to_string(),
-                    message: msg,
-                }
-            })?;
-        }
+        validate_api_credential(api_id, "VERACODE_API_ID from vault").map_err(|msg| {
+            CredentialError::ValidationError {
+                field: "VERACODE_API_ID".to_string(),
+                message: msg,
+            }
+        })?;
 
-        if let Some(ref key) = api_key {
-            validate_api_credential(key, "VERACODE_API_KEY from vault").map_err(|msg| {
-                CredentialError::ValidationError {
-                    field: "VERACODE_API_KEY".to_string(),
-                    message: msg,
-                }
-            })?;
-        }
+        validate_api_credential(api_key, "VERACODE_API_KEY from vault").map_err(|msg| {
+            CredentialError::ValidationError {
+                field: "VERACODE_API_KEY".to_string(),
+                message: msg,
+            }
+        })?;
 
+        info!("Successfully loaded and validated credentials from vault");
+
+        // Load directly into VeracodeCredentials - no intermediate copying or exposure!
+        Ok(veracode_platform::VeracodeCredentials::new(
+            api_id.clone(),
+            api_key.clone(),
+        ))
+    }
+
+    /// Retrieve credentials from vault (legacy method for backward compatibility)
+    pub async fn get_credentials(
+        &self,
+        secret_path: &str,
+    ) -> Result<SecureApiCredentials, CredentialError> {
+        let credentials = self.get_veracode_credentials(secret_path).await?;
         let source = CredentialSource::Vault {
             addr: "vault".to_string(), // We don't store the full address for security
             secret_path: secret_path.to_string(),
         };
 
-        info!("Successfully loaded and validated credentials from vault");
-
-        Ok(SecureApiCredentials::new_with_source(
-            api_id, api_key, source,
+        Ok(SecureApiCredentials::from_veracode_credentials(
+            credentials,
+            source,
         ))
     }
 
@@ -131,14 +150,16 @@ pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
     })
 }
 
-/// Load credentials from vault with full error handling
-pub async fn load_credentials_from_vault(
+/// Load credentials from vault directly into VeracodeCredentials
+pub async fn load_veracode_credentials_from_vault(
     config: VaultConfig,
-) -> Result<SecureApiCredentials, CredentialError> {
+) -> Result<veracode_platform::VeracodeCredentials, CredentialError> {
     info!("Loading credentials from vault at: {}", config.addr);
 
     let vault_client = VaultCredentialClient::new(&config).await?;
-    let credentials = vault_client.get_credentials(&config.secret_path).await?;
+    let credentials = vault_client
+        .get_veracode_credentials(&config.secret_path)
+        .await?;
 
     // Revoke the token after successful credential retrieval for security
     if let Err(e) = vault_client.revoke_token().await {
@@ -151,16 +172,14 @@ pub async fn load_credentials_from_vault(
     Ok(credentials)
 }
 
-/// Enhanced secure credential loading with vault support and fallback
-pub async fn load_secure_api_credentials_with_vault()
--> Result<SecureApiCredentials, CredentialError> {
-    debug!("Starting enhanced credential loading with vault support");
-
+/// Load VeracodeCredentials with vault support and environment fallback
+pub async fn load_veracode_credentials_with_vault()
+-> Result<veracode_platform::VeracodeCredentials, CredentialError> {
     // Priority 1: Try vault configuration
     match load_vault_config_from_env() {
         Ok(vault_config) => {
             info!("Vault configuration found, attempting vault credential retrieval");
-            match load_credentials_from_vault(vault_config).await {
+            match load_veracode_credentials_from_vault(vault_config).await {
                 Ok(credentials) => {
                     info!("Successfully loaded credentials from vault");
                     return Ok(credentials);
@@ -172,13 +191,13 @@ pub async fn load_secure_api_credentials_with_vault()
             }
         }
         Err(e) => {
-            debug!("Vault configuration not available: {e}");
+            info!("Vault configuration not available: {e}");
             debug!("Using environment variable fallback");
         }
     }
 
     // Priority 2: Fallback to environment variables
-    crate::credentials::load_secure_api_credentials_from_env()
+    crate::credentials::load_veracode_credentials_from_env()
 }
 
 /// Validate vault configuration with comprehensive input sanitization
@@ -276,7 +295,7 @@ fn validate_secret_path(path: &str) -> Result<(), CredentialError> {
 }
 
 /// Create vault client with retry logic
-async fn create_vault_client(config: &VaultConfig) -> Result<VaultClient, CredentialError> {
+fn create_vault_client(config: &VaultConfig) -> Result<VaultClient, CredentialError> {
     debug!("Creating vault client for addr: {}", config.addr);
 
     // Check for cert validation override (reuse existing verascan pattern)

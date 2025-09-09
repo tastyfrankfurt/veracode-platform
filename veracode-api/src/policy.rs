@@ -447,6 +447,7 @@ pub struct PolicyListParams {
 
 impl PolicyListParams {
     /// Convert to query parameters for HTTP requests
+    #[must_use]
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         Vec::from(self) // Delegate to trait
     }
@@ -533,6 +534,15 @@ pub struct PageInfo {
     pub total_pages: u32,
 }
 
+/// Indicates which API was used to retrieve policy compliance status
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApiSource {
+    /// Policy status retrieved from summary report API (preferred)
+    SummaryReport,
+    /// Policy status retrieved from getbuildinfo.do XML API (fallback)
+    BuildInfo,
+}
+
 /// Policy-specific error types
 #[derive(Debug)]
 pub enum PolicyError {
@@ -603,6 +613,7 @@ pub struct PolicyApi<'a> {
 
 impl<'a> PolicyApi<'a> {
     /// Create a new PolicyApi instance
+    #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
     }
@@ -773,9 +784,15 @@ impl<'a> PolicyApi<'a> {
                 .get_build_info(&build_request)
                 .await
                 .map_err(|e| match e {
-                    BuildError::BuildNotFound
-                    | BuildError::ApplicationNotFound
-                    | BuildError::SandboxNotFound => PolicyError::NotFound,
+                    BuildError::BuildNotFound => PolicyError::Api(crate::VeracodeError::InvalidResponse(
+                        format!("Build not found for application ID {app_id}. This may indicate: no builds exist for this application, the build ID is invalid, or the application has no completed scans. Cannot retrieve policy status without a valid build.")
+                    )),
+                    BuildError::ApplicationNotFound => PolicyError::Api(crate::VeracodeError::InvalidResponse(
+                        format!("Application not found with ID {app_id}. This may indicate: incorrect application ID, insufficient permissions, or the application doesn't exist in your organization. Please verify the application ID and your API credentials.")
+                    )),
+                    BuildError::SandboxNotFound => PolicyError::Api(crate::VeracodeError::InvalidResponse(
+                        format!("Sandbox not found with ID {}. This may indicate: incorrect sandbox ID, insufficient permissions, or the sandbox doesn't exist for this application.", sandbox_id.unwrap_or("unknown"))
+                    )),
                     BuildError::Api(api_err) => PolicyError::Api(api_err),
                     BuildError::InvalidParameter(msg)
                     | BuildError::CreationFailed(msg)
@@ -800,8 +817,8 @@ impl<'a> PolicyApi<'a> {
                 .as_deref()
                 .unwrap_or("Not Assessed");
 
-            // If status is not "Not Assessed", return the result
-            if status != "Not Assessed" {
+            // If status is ready (not in-progress), return the result
+            if status != "Not Assessed" && status != "Calculating..." {
                 return Ok(Cow::Owned(status.to_string()));
             }
 
@@ -833,6 +850,7 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// `true` if build should break, `false` otherwise
+    #[must_use]
     pub fn should_break_build(status: &str) -> bool {
         status == "Did Not Pass"
     }
@@ -846,6 +864,7 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// Exit code: 0 for success, 4 for policy failure (build break)
+    #[must_use]
     pub fn get_exit_code_for_status(status: &str) -> i32 {
         if Self::should_break_build(status) {
             4 // DID_NOT_PASSED_POLICY - matches Java wrapper
@@ -937,7 +956,6 @@ impl<'a> PolicyApi<'a> {
         sandbox_guid: Option<&str>,
         max_retries: u32,
         retry_delay_seconds: u64,
-        debug: bool,
         enable_break_build: bool,
     ) -> Result<(SummaryReport, Option<std::borrow::Cow<'static, str>>), PolicyError> {
         use std::borrow::Cow;
@@ -951,12 +969,10 @@ impl<'a> PolicyApi<'a> {
 
         let mut attempts = 0;
         loop {
-            if debug {
-                if attempts == 0 && enable_break_build {
-                    debug!("Checking policy compliance status with retry logic...");
-                } else if attempts == 0 {
-                    debug!("Getting summary report...");
-                }
+            if attempts == 0 && enable_break_build {
+                debug!("Checking policy compliance status with retry logic...");
+            } else if attempts == 0 {
+                debug!("Getting summary report...");
             }
 
             let summary_report = self
@@ -973,29 +989,23 @@ impl<'a> PolicyApi<'a> {
 
             // If status is ready (not empty and not "Not Assessed"), return both report and status
             if !status.is_empty() && status != "Not Assessed" {
-                if debug {
-                    debug!("Policy compliance status ready: {status}");
-                }
+                debug!("Policy compliance status ready: {status}");
                 return Ok((summary_report, Some(Cow::Owned(status))));
             }
 
             // If we've reached max retries, return current results
             attempts += 1;
             if attempts >= max_retries {
-                if debug {
-                    warn!(
-                        "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
-                    );
-                }
+                warn!(
+                    "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
+                );
                 return Ok((summary_report, Some(Cow::Owned(status))));
             }
 
             // Log retry attempt
-            if debug {
-                info!(
-                    "Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
-                );
-            }
+            info!(
+                "Policy evaluation not yet ready (status: '{status}'), retrying in {retry_delay_seconds} seconds... (attempt {attempts}/{max_retries})"
+            );
 
             // Wait before retrying
             sleep(Duration::from_secs(retry_delay_seconds)).await;
@@ -1177,6 +1187,92 @@ impl<'a> PolicyApi<'a> {
             scan_result.status,
             ScanStatus::Completed | ScanStatus::Failed | ScanStatus::Cancelled
         ))
+    }
+
+    /// Gets policy compliance status with automatic fallback from summary report to buildinfo
+    ///
+    /// This method first tries the summary report API for full functionality. If access is denied
+    /// (401/403), it automatically falls back to the getbuildinfo.do XML API for policy compliance
+    /// status only. This provides the best user experience while maintaining compatibility.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - Application GUID (for REST API)
+    /// * `app_id` - Application numeric ID (for XML API fallback)
+    /// * `build_id` - Optional build ID
+    /// * `sandbox_guid` - Optional sandbox GUID (for REST API)
+    /// * `sandbox_id` - Optional sandbox numeric ID (for XML API fallback)
+    /// * `max_retries` - Maximum number of retry attempts
+    /// * `retry_delay_seconds` - Delay between retries in seconds
+    /// * `enable_break_build` - Whether to enable break build evaluation
+    /// * `force_buildinfo_api` - Skip summary report and use buildinfo directly
+    ///
+    /// # Returns
+    ///
+    /// A tuple containing:
+    /// - Optional SummaryReport (None if fallback was used)
+    /// - Policy compliance status string
+    /// - ApiSource indicating which API was used
+    #[allow(clippy::too_many_arguments)]
+    pub async fn get_policy_status_with_fallback(
+        &self,
+        app_guid: &str,
+        app_id: &str,
+        build_id: Option<&str>,
+        sandbox_guid: Option<&str>,
+        sandbox_id: Option<&str>,
+        max_retries: u32,
+        retry_delay_seconds: u64,
+        enable_break_build: bool,
+        force_buildinfo_api: bool,
+    ) -> Result<(Option<SummaryReport>, String, ApiSource), PolicyError> {
+        if force_buildinfo_api {
+            // DIRECT PATH: Skip summary report, use getbuildinfo.do directly
+            debug!("Using getbuildinfo.do API directly (forced via configuration)");
+            let status = self
+                .evaluate_policy_compliance_via_buildinfo_with_retry(
+                    app_id,
+                    sandbox_id,
+                    max_retries,
+                    retry_delay_seconds,
+                )
+                .await?;
+            return Ok((None, status.to_string(), ApiSource::BuildInfo));
+        }
+
+        // FALLBACK PATH: Try summary report first, fallback to getbuildinfo.do
+        match self
+            .get_summary_report_with_policy_retry(
+                app_guid,
+                build_id,
+                sandbox_guid,
+                max_retries,
+                retry_delay_seconds,
+                enable_break_build,
+            )
+            .await
+        {
+            Ok((summary_report, compliance_status)) => {
+                debug!("Used summary report API successfully");
+                let status = compliance_status
+                    .map(|s| s.to_string())
+                    .unwrap_or_else(|| summary_report.policy_compliance_status.clone());
+                Ok((Some(summary_report), status, ApiSource::SummaryReport))
+            }
+            Err(PolicyError::Unauthorized | PolicyError::PermissionDenied) => {
+                info!("Summary report access denied, falling back to getbuildinfo.do API");
+                let status = self
+                    .evaluate_policy_compliance_via_buildinfo_with_retry(
+                        app_id,
+                        sandbox_id,
+                        max_retries,
+                        retry_delay_seconds,
+                    )
+                    .await?;
+                Ok((None, status.to_string(), ApiSource::BuildInfo))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Get active policies for the organization

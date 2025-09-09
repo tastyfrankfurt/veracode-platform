@@ -1,7 +1,7 @@
 //! Application-specific functionality built on top of the core client.
 //!
 //! This module contains application-specific methods and convenience functions
-//! that use the core VeracodeClient to perform application-related operations.
+//! that use the core `VeracodeClient` to perform application-related operations.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,7 +23,7 @@ pub struct Application {
     pub oid: Option<u64>,
     /// Organization ID
     pub alt_org_id: Option<u64>,
-    /// Unique numeric identifier for organization_id the application
+    /// Unique numeric identifier for `organization_id` the application
     pub organization_id: Option<u64>,
     /// ISO 8601 timestamp of the last completed scan
     pub created: String,
@@ -246,6 +246,7 @@ pub enum BusinessCriticality {
 
 impl BusinessCriticality {
     /// Convert to the string value expected by the API
+    #[must_use]
     pub fn as_str(&self) -> &'static str {
         match self {
             BusinessCriticality::VeryHigh => "VERY_HIGH",
@@ -269,7 +270,7 @@ impl std::fmt::Display for BusinessCriticality {
     }
 }
 
-/// Custom serializer for BusinessCriticality
+/// Custom serializer for `BusinessCriticality`
 fn serialize_business_criticality<S>(
     criticality: &BusinessCriticality,
     serializer: S,
@@ -280,7 +281,7 @@ where
     serializer.serialize_str(criticality.as_str())
 }
 
-/// Parse BusinessCriticality from string
+/// Parse `BusinessCriticality` from string
 impl std::str::FromStr for BusinessCriticality {
     type Err = String;
 
@@ -298,7 +299,7 @@ impl std::str::FromStr for BusinessCriticality {
     }
 }
 
-/// Deserialize BusinessCriticality from string
+/// Deserialize `BusinessCriticality` from string
 impl<'de> serde::Deserialize<'de> for BusinessCriticality {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
@@ -345,7 +346,7 @@ pub struct UpdateApplicationProfile {
 pub struct ApplicationQuery {
     /// Filter by application name (partial match)
     pub name: Option<String>,
-    /// Filter by policy compliance status (PASSED, DID_NOT_PASS, etc.)
+    /// Filter by policy compliance status (PASSED, `DID_NOT_PASS`, etc.)
     pub policy_compliance: Option<String>,
     /// Filter applications modified after this date (ISO 8601 format)
     pub modified_after: Option<String>,
@@ -369,53 +370,61 @@ pub struct ApplicationQuery {
 
 impl ApplicationQuery {
     /// Create a new empty query.
+    #[must_use]
     pub fn new() -> Self {
-        Default::default()
+        ApplicationQuery::default()
     }
 
     /// Filter applications by name (partial match).
+    #[must_use]
     pub fn with_name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
         self
     }
 
     /// Filter applications by policy compliance status.
+    #[must_use]
     pub fn with_policy_compliance(mut self, compliance: &str) -> Self {
         self.policy_compliance = Some(compliance.to_string());
         self
     }
 
     /// Filter applications modified after the specified date.
+    #[must_use]
     pub fn with_modified_after(mut self, date: &str) -> Self {
         self.modified_after = Some(date.to_string());
         self
     }
 
     /// Filter applications modified before the specified date.
+    #[must_use]
     pub fn with_modified_before(mut self, date: &str) -> Self {
         self.modified_before = Some(date.to_string());
         self
     }
 
     /// Set the page number for pagination.
+    #[must_use]
     pub fn with_page(mut self, page: u32) -> Self {
         self.page = Some(page);
         self
     }
 
     /// Set the number of items per page.
+    #[must_use]
     pub fn with_size(mut self, size: u32) -> Self {
         self.size = Some(size);
         self
     }
 
     /// Convert the query to URL query parameters.
+    #[must_use]
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         Vec::from(self)
     }
 }
 
-/// Convert ApplicationQuery to query parameters by borrowing (allows reuse)
+/// Convert `ApplicationQuery` to query parameters by borrowing (allows reuse)
 impl From<&ApplicationQuery> for Vec<(String, String)> {
     fn from(query: &ApplicationQuery) -> Self {
         let mut params = Vec::new();
@@ -458,7 +467,7 @@ impl From<&ApplicationQuery> for Vec<(String, String)> {
     }
 }
 
-/// Convert ApplicationQuery to query parameters by consuming (better performance)
+/// Convert `ApplicationQuery` to query parameters by consuming (better performance)
 impl From<ApplicationQuery> for Vec<(String, String)> {
     fn from(query: ApplicationQuery) -> Self {
         let mut params = Vec::new();
@@ -743,7 +752,7 @@ impl VeracodeClient {
         }
     }
 
-    /// Get numeric app_id from application GUID.
+    /// Get numeric `app_id` from application GUID.
     ///
     /// This is needed for XML API operations that require numeric IDs.
     ///
@@ -753,7 +762,7 @@ impl VeracodeClient {
     ///
     /// # Returns
     ///
-    /// A `Result` containing the numeric app_id as a string.
+    /// A `Result` containing the numeric `app_id` as a string.
     pub async fn get_app_id_from_guid(&self, guid: &str) -> Result<String, VeracodeError> {
         let app = self.get_application(guid).await?;
         Ok(app.id.to_string())

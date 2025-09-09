@@ -5,6 +5,27 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-01-13
+
+### Added
+- **Policy API Fallback System**: Intelligent dual-API approach for policy compliance evaluation
+  - **`get_policy_status_from_buildinfo()`**: New method using getbuildinfo.do XML API with retry logic for policy status retrieval
+  - **`get_policy_status_with_fallback()`**: Primary method that tries summary report API first, automatically falls back to buildinfo API on permission errors (401/403)
+  - **`ApiSource` enum**: New enum indicating which API was used (`SummaryReport` or `BuildInfo`) for transparency and debugging
+  - **Configurable API Selection**: Support for forcing buildinfo API usage via `force_buildinfo_api` parameter
+
+### Changed  
+- **Policy API Method Signatures**: Removed `debug` parameter from policy methods in favor of `log` crate macros
+  - **`get_summary_report_with_policy_retry()`**: Updated signature removes debug parameter, uses `debug!()` macro instead
+  - **Enhanced Error Mapping**: Improved error handling between `BuildError` and `PolicyError` types for buildinfo fallback
+  - **Public Exports**: Added `ApiSource` and `SummaryReport` to public API exports in lib.rs
+
+### Benefits
+- **Enhanced API Compatibility**: Works with any Veracode account permission level (REST + XML, XML-only, or restricted access)
+- **Automatic Fallback**: Seamlessly switches to XML API when REST API permissions are denied without user intervention  
+- **Performance Flexibility**: Users can skip slower REST API when they know permissions only allow XML access
+- **Better Error Context**: Clear indication of which API was attempted and which succeeded for improved troubleshooting
+
 ## [0.4.3] - 2025-09-07
 
 ### Changed

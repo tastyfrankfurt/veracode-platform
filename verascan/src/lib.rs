@@ -28,9 +28,10 @@ pub use baseline::{
 };
 pub use cli::{Args, Commands};
 pub use credentials::{
-    CredentialError, CredentialSource, SecureApiCredentials, SecureApiId, SecureApiKey,
-    VaultConfig, check_pipeline_credentials, check_secure_pipeline_credentials,
-    load_api_credentials, load_secure_api_credentials, validate_api_credential,
+    CredentialError, CredentialSource, SecureApiCredentials, VaultConfig,
+    check_pipeline_credentials, create_veracode_config_from_args,
+    create_veracode_config_from_credentials, load_api_credentials,
+    load_veracode_credentials_from_args, validate_api_credential,
 };
 pub use export::{ExportConfig, ExportError, ExportWorkflow};
 pub use filefinder::FileFinder;
@@ -60,52 +61,36 @@ pub use pipeline::{PipelineError, PipelineScanConfig, PipelineSubmitter};
 pub use policy::execute_policy_download;
 pub use scan::{execute_assessment_scan, execute_pipeline_scan};
 pub use vault_client::{
-    VaultCredentialClient, load_secure_api_credentials_with_vault, load_vault_config_from_env,
+    VaultCredentialClient, load_vault_config_from_env,
+    load_veracode_credentials_with_vault,
 };
 
 use log::error;
+use veracode_platform::VeracodeConfig;
 
 /// Execute findings export workflow from completed scans using existing credentials
-pub async fn execute_findings_export(args: &Args) -> Result<(), i32> {
-    use crate::scan::configure_veracode_with_env_vars;
+pub async fn execute_findings_export(
+    veracode_config: &VeracodeConfig,
+    args: &Args,
+) -> Result<(), i32> {
     use std::borrow::Cow;
     use std::path::PathBuf;
 
     // Extract export parameters from args
-    let (app_profile_name, sandbox_name, export_format, output_path, project_dir, min_severity) =
-        match &args.command {
-            Commands::Export {
-                app_profile_name,
-                sandbox_name,
-                export_format,
-                output_path,
-                project_dir,
-                min_severity,
-            } => (
-                app_profile_name,
-                sandbox_name,
-                export_format,
-                output_path,
-                project_dir,
-                min_severity,
-            ),
-            _ => return Err(1),
-        };
-
-    // Reuse existing credential loading pattern from policy.rs
-    let secure_creds = load_secure_api_credentials().map_err(|_| 1)?;
-    let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
-
-    let region = match args.region.as_str() {
-        s if s.eq_ignore_ascii_case("commercial") => veracode_platform::VeracodeRegion::Commercial,
-        s if s.eq_ignore_ascii_case("european") => veracode_platform::VeracodeRegion::European,
-        s if s.eq_ignore_ascii_case("federal") => veracode_platform::VeracodeRegion::Federal,
-        _ => veracode_platform::VeracodeRegion::Commercial,
+    let Commands::Export {
+        app_profile_name,
+        sandbox_name,
+        export_format,
+        output_path,
+        project_dir,
+        min_severity,
+        ..
+    } = &args.command
+    else {
+        return Err(1);
     };
 
-    let base_config = veracode_platform::VeracodeConfig::new(&api_id, &api_key).with_region(region);
-    let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
-    let client = veracode_platform::VeracodeClient::new(veracode_config).map_err(|_| 1)?;
+    let client = veracode_platform::VeracodeClient::new(veracode_config.clone()).map_err(|_| 1)?;
 
     // Convert severity string to numeric value if provided
     let min_severity_numeric = min_severity
@@ -128,7 +113,6 @@ pub async fn execute_findings_export(args: &Args) -> Result<(), i32> {
         export_format: Cow::Borrowed(export_format),
         output_path: Cow::Borrowed(output_path),
         project_dir: Some(PathBuf::from(project_dir)),
-        debug: args.debug,
         min_severity: min_severity_numeric,
     };
 
@@ -140,7 +124,6 @@ pub async fn execute_findings_export(args: &Args) -> Result<(), i32> {
         export_format: Cow::Owned(config.export_format.into_owned()),
         output_path: Cow::Owned(config.output_path.into_owned()),
         project_dir: config.project_dir,
-        debug: config.debug,
         min_severity: config.min_severity,
     };
 

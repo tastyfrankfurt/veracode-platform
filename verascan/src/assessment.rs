@@ -1,4 +1,4 @@
-use log::{error, info};
+use log::{debug, error, info};
 use std::borrow::Cow;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -39,11 +39,13 @@ impl ApplicationId {
     }
 
     /// Get the appropriate ID for REST API calls (sandbox operations)
+    #[must_use]
     pub fn for_rest_api(&self) -> &str {
         &self.guid
     }
 
     /// Get the appropriate ID for XML API calls (build, scan operations)
+    #[must_use]
     pub fn for_xml_api(&self) -> &str {
         &self.legacy_id
     }
@@ -74,6 +76,7 @@ impl BuildId {
     }
 
     /// Get the build ID as string
+    #[must_use]
     pub fn id(&self) -> &str {
         &self.id
     }
@@ -100,16 +103,19 @@ impl SandboxId {
     }
 
     /// Get the appropriate ID for REST API calls (sandbox management)
+    #[must_use]
     pub fn for_rest_api(&self) -> &str {
         &self.guid
     }
 
     /// Get the appropriate ID for XML API calls (build, scan operations)
+    #[must_use]
     pub fn for_xml_api(&self) -> &str {
         &self.legacy_id
     }
 
     /// Get the sandbox name
+    #[must_use]
     pub fn name(&self) -> &str {
         &self.name
     }
@@ -189,7 +195,6 @@ pub struct AssessmentScanConfig {
     pub region: VeracodeRegion,
     pub timeout: u32,
     pub threads: usize,
-    pub debug: bool,
     pub autoscan: bool,
     pub monitor_completion: bool,
     pub export_results_path: String,
@@ -199,6 +204,10 @@ pub struct AssessmentScanConfig {
     pub policy_wait_max_retries: u32,
     /// Delay between policy evaluation retries in seconds (default: 10)
     pub policy_wait_retry_delay_seconds: u64,
+    /// Force use of getbuildinfo.do API instead of summary report for break build evaluation
+    pub force_buildinfo_api: bool,
+    /// Break build on sandbox scans with Conditional Pass status
+    pub strict_sandbox: bool,
 }
 
 impl Default for AssessmentScanConfig {
@@ -209,9 +218,8 @@ impl Default for AssessmentScanConfig {
             sandbox_name: None,
             selected_modules: None,
             region: VeracodeRegion::Commercial,
-            timeout: 60, // 60 minutes default for assessment scans
-            threads: 4,  // 4 threads default for assessment uploads
-            debug: false,
+            timeout: 60,              // 60 minutes default for assessment scans
+            threads: 4,               // 4 threads default for assessment uploads
             autoscan: true,           // Enable autoscan by default
             monitor_completion: true, // Default to monitoring completion
             export_results_path: DEFAULT_EXPORT_RESULTS_PATH.into(),
@@ -219,6 +227,8 @@ impl Default for AssessmentScanConfig {
             break_build: false,      // Default to not breaking build
             policy_wait_max_retries: 30, // 30 retries (5 minutes at 10s intervals)
             policy_wait_retry_delay_seconds: 10, // 10 seconds between retries
+            force_buildinfo_api: false, // Default to trying summary report first
+            strict_sandbox: false,   // Default to not treating Conditional Pass as failure
         }
     }
 }
@@ -251,9 +261,7 @@ impl AssessmentSubmitter {
         match self.config.scan_type {
             ScanType::Sandbox => {
                 if let Some(ref sandbox_name) = self.config.sandbox_name {
-                    if self.config.debug {
-                        info!("🔍 Ensuring sandbox exists and getting legacy ID: {sandbox_name}");
-                    }
+                    debug!("🔍 Ensuring sandbox exists and getting legacy ID: {sandbox_name}");
 
                     let sandbox_api = self.client.sandbox_api();
 
@@ -261,16 +269,12 @@ impl AssessmentSubmitter {
                     let sandbox = match sandbox_api.get_sandbox_by_name(app_id, sandbox_name).await
                     {
                         Ok(Some(sandbox)) => {
-                            if self.config.debug {
-                                info!("✅ Sandbox already exists: {sandbox_name}");
-                            }
+                            debug!("✅ Sandbox already exists: {sandbox_name}");
                             sandbox
                         }
                         Ok(None) | Err(_) => {
                             // Sandbox doesn't exist, create it
-                            if self.config.debug {
-                                info!("📦 Creating new sandbox: {sandbox_name}");
-                            }
+                            debug!("📦 Creating new sandbox: {sandbox_name}");
 
                             match sandbox_api
                                 .create_simple_sandbox(app_id, sandbox_name)
@@ -300,13 +304,11 @@ impl AssessmentSubmitter {
                         Cow::Owned(sandbox.name),
                     );
 
-                    if self.config.debug {
-                        info!(
-                            "📋 Sandbox ID: {} (Legacy: {})",
-                            sandbox_id.for_rest_api(),
-                            sandbox_id.for_xml_api()
-                        );
-                    }
+                    debug!(
+                        "📋 Sandbox ID: {} (Legacy: {})",
+                        sandbox_id.for_rest_api(),
+                        sandbox_id.for_xml_api()
+                    );
 
                     Ok(Some(sandbox_id))
                 } else {
@@ -325,9 +327,7 @@ impl AssessmentSubmitter {
         app_id: &str,
         sandbox_legacy_id: Option<&str>,
     ) -> Result<BuildId, AssessmentError> {
-        if self.config.debug {
-            info!("🔍 Checking/creating build for uploads...");
-        }
+        debug!("🔍 Checking/creating build for uploads...");
 
         let workflow = VeracodeWorkflow::new(self.client.clone());
 
@@ -347,9 +347,7 @@ impl AssessmentSubmitter {
             .await
         {
             Ok(build) => {
-                if self.config.debug {
-                    info!("✅ Build ready for uploads: {}", build.build_id);
-                }
+                debug!("✅ Build ready for uploads: {}", build.build_id);
                 Ok(BuildId::new(Cow::Owned(build.build_id)))
             }
             Err(e) => {
@@ -379,16 +377,16 @@ impl AssessmentSubmitter {
 
         // Validate cumulative file size (5GB limit for assessment scans)
         let validator = FileValidator::new();
-        let file_paths: Vec<&Path> = files.iter().map(|p| p.as_path()).collect();
-        let total_size_bytes = validator.validate_assessment_cumulative_size(&file_paths)?;
+        let file_paths: Vec<&Path> = files.iter().map(PathBuf::as_path).collect();
+        let total_size_bytes = validator
+            .validate_assessment_cumulative_size(&file_paths)
+            .await?;
 
-        if self.config.debug {
-            let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
-            info!(
-                "✅ Cumulative file size validation passed: {total_size_mb:.2} MB total (within 5120 MB limit)"
-            );
-            info!("📊 Files to process: {}", files.len());
-        }
+        let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
+        debug!(
+            "✅ Cumulative file size validation passed: {total_size_mb:.2} MB total (within 5120 MB limit)"
+        );
+        debug!("📊 Files to process: {}", files.len());
 
         // Get sandbox legacy ID if sandbox scan
         let sandbox_legacy_id = sandbox_id.map(|s| s.for_xml_api());
@@ -411,24 +409,22 @@ impl AssessmentSubmitter {
         app_id: &ApplicationId,
         sandbox_legacy_id: Option<&str>,
     ) -> Result<Vec<String>, AssessmentError> {
-        if self.config.debug {
-            info!("🚀 Starting sequential file upload for assessment scan");
-            info!("📁 Files to upload: {}", files.len());
-            info!("   App Profile: {}", self.config.app_profile_name);
-            info!(
-                "   App ID: {} (GUID: {})",
-                app_id.for_xml_api(),
-                app_id.for_rest_api()
-            );
-            match self.config.scan_type {
-                ScanType::Sandbox => {
-                    if let Some(ref sandbox_name) = self.config.sandbox_name {
-                        info!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
-                    }
+        debug!("🚀 Starting sequential file upload for assessment scan");
+        debug!("📁 Files to upload: {}", files.len());
+        debug!("   App Profile: {}", self.config.app_profile_name);
+        debug!(
+            "   App ID: {} (GUID: {})",
+            app_id.for_xml_api(),
+            app_id.for_rest_api()
+        );
+        match self.config.scan_type {
+            ScanType::Sandbox => {
+                if let Some(ref sandbox_name) = self.config.sandbox_name {
+                    debug!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
                 }
-                ScanType::Policy => {
-                    info!("   Scan Type: Policy Scan");
-                }
+            }
+            ScanType::Policy => {
+                debug!("   Scan Type: Policy Scan");
             }
         }
 
@@ -436,14 +432,12 @@ impl AssessmentSubmitter {
 
         // Upload each file
         for (index, file) in files.iter().enumerate() {
-            if self.config.debug {
-                info!(
-                    "📤 Uploading file {}/{}: {}",
-                    index + 1,
-                    files.len(),
-                    file.display()
-                );
-            }
+            debug!(
+                "📤 Uploading file {}/{}: {}",
+                index + 1,
+                files.len(),
+                file.display()
+            );
 
             // Use smart upload logic for this file with sandbox legacy ID
             match self
@@ -466,12 +460,10 @@ impl AssessmentSubmitter {
             }
         }
 
-        if self.config.debug {
-            info!(
-                "✅ All files uploaded successfully: {} files",
-                uploaded_files.len()
-            );
-        }
+        debug!(
+            "✅ All files uploaded successfully: {} files",
+            uploaded_files.len()
+        );
 
         Ok(uploaded_files)
     }
@@ -485,31 +477,29 @@ impl AssessmentSubmitter {
     ) -> Result<Vec<String>, AssessmentError> {
         let num_threads = std::cmp::min(self.config.threads, files.len());
 
-        if self.config.debug {
-            info!("🚀 Starting concurrent file upload for assessment scan");
-            info!("📁 Files to upload: {}", files.len());
-            info!("   Using {num_threads} threads");
-            info!("   App Profile: {}", self.config.app_profile_name);
-            info!(
-                "   App ID: {} (GUID: {})",
-                app_id.for_xml_api(),
-                app_id.for_rest_api()
-            );
-            match self.config.scan_type {
-                ScanType::Sandbox => {
-                    if let Some(ref sandbox_name) = self.config.sandbox_name {
-                        info!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
-                    }
-                }
-                ScanType::Policy => {
-                    info!("   Scan Type: Policy Scan");
+        debug!("🚀 Starting concurrent file upload for assessment scan");
+        debug!("📁 Files to upload: {}", files.len());
+        debug!("   Using {num_threads} threads");
+        debug!("   App Profile: {}", self.config.app_profile_name);
+        debug!(
+            "   App ID: {} (GUID: {})",
+            app_id.for_xml_api(),
+            app_id.for_rest_api()
+        );
+        match self.config.scan_type {
+            ScanType::Sandbox => {
+                if let Some(ref sandbox_name) = self.config.sandbox_name {
+                    debug!("   Sandbox: {sandbox_name} (Legacy ID: {sandbox_legacy_id:?})");
                 }
             }
-        } else {
-            info!("🚀 Starting {} concurrent file uploads", files.len());
-            if num_threads < files.len() {
-                info!("   Using {} threads for {} files", num_threads, files.len());
+            ScanType::Policy => {
+                debug!("   Scan Type: Policy Scan");
             }
+        }
+
+        info!("🚀 Starting {} concurrent file uploads", files.len());
+        if num_threads < files.len() {
+            info!("   Using {} threads for {} files", num_threads, files.len());
         }
 
         // Create a semaphore to limit concurrent operations
@@ -524,9 +514,9 @@ impl AssessmentSubmitter {
         // Submit each file as a separate task
         for (index, file) in files.iter().enumerate() {
             let file_path = file.clone(); // Only clone the PathBuf
-            let semaphore_ref = semaphore.clone();
-            let submitter_ref = submitter_arc.clone();
-            let app_id_ref = app_id_arc.clone();
+            let semaphore_ref = Arc::clone(&semaphore);
+            let submitter_ref = Arc::clone(&submitter_arc);
+            let app_id_ref = Arc::clone(&app_id_arc);
             let sandbox_id_ref = sandbox_legacy_id_arc.clone();
 
             join_set.spawn(async move {
@@ -538,13 +528,11 @@ impl AssessmentSubmitter {
                     .unwrap_or("unknown")
                     .to_string();
 
-                if submitter_ref.config.debug {
-                    info!(
-                        "📤 Thread {}: Starting upload for {}",
-                        index + 1,
-                        file_path.display()
-                    );
-                }
+                debug!(
+                    "📤 Thread {}: Starting upload for {}",
+                    index + 1,
+                    file_path.display()
+                );
 
                 match submitter_ref
                     .upload_single_file_internal(
@@ -555,15 +543,12 @@ impl AssessmentSubmitter {
                     .await
                 {
                     Ok(_) => {
-                        if submitter_ref.config.debug {
-                            info!(
-                                "✅ Thread {}: Upload completed for {}",
-                                index + 1,
-                                file_name
-                            );
-                        } else {
-                            info!("✅ File uploaded: {file_name}");
-                        }
+                        debug!(
+                            "✅ Thread {}: Upload completed for {}",
+                            index + 1,
+                            file_name
+                        );
+                        info!("✅ File uploaded: {file_name}");
                         Ok((index, file_name))
                     }
                     Err(e) => {
@@ -615,18 +600,15 @@ impl AssessmentSubmitter {
         // Filter out None entries and collect successfully uploaded files
         let successful_uploads: Vec<String> = uploaded_files.into_iter().flatten().collect();
 
-        if self.config.debug {
-            info!(
-                "✅ All {} files uploaded successfully using {} threads",
-                successful_uploads.len(),
-                num_threads
-            );
-        } else {
-            info!(
-                "✅ All {} files uploaded successfully",
-                successful_uploads.len()
-            );
-        }
+        debug!(
+            "✅ All {} files uploaded successfully using {} threads",
+            successful_uploads.len(),
+            num_threads
+        );
+        info!(
+            "✅ All {} files uploaded successfully",
+            successful_uploads.len()
+        );
 
         Ok(successful_uploads)
     }
@@ -648,18 +630,16 @@ impl AssessmentSubmitter {
 
         // Validate file size (2GB limit for assessment scans)
         let validator = FileValidator::new();
-        let file_size = validator.validate_assessment_file_size(file)?;
+        let file_size = validator.validate_assessment_file_size(file).await?;
 
-        if self.config.debug {
-            let size_mb = file_size as f64 / (1024.0 * 1024.0);
-            info!("📁 File: {file_name} ({size_mb:.2} MB)");
-            info!("✅ File size validation passed (within 2048 MB limit)");
+        let size_mb = file_size as f64 / (1024.0 * 1024.0);
+        debug!("📁 File: {file_name} ({size_mb:.2} MB)");
+        debug!("✅ File size validation passed (within 2048 MB limit)");
 
-            if file_size > SIZE_THRESHOLD {
-                info!("   Using large file upload (>100MB)");
-            } else {
-                info!("   Using standard upload (<100MB)");
-            }
+        if file_size > SIZE_THRESHOLD {
+            debug!("   Using large file upload (>100MB)");
+        } else {
+            debug!("   Using standard upload (<100MB)");
         }
 
         let scan_api = self.client.scan_api();
@@ -755,7 +735,7 @@ impl AssessmentSubmitter {
                         app_id: app_id.for_xml_api().to_string(),
                         file_path: file_path_owned,
                         save_as: None,
-                        sandbox_id: sandbox_legacy_id.map(|s| s.to_string()),
+                        sandbox_id: None, // Policy scans should not have sandbox_id
                     };
                     scan_api.upload_file(&request).await.map(|_| ())
                 }
@@ -777,7 +757,7 @@ impl AssessmentSubmitter {
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("🔍 Starting prescan analysis...");
         }
 
@@ -795,14 +775,12 @@ impl AssessmentSubmitter {
                         include_new_modules: Some(true),
                     };
 
-                    if self.config.debug {
-                        info!(
-                            "🔧 Prescan request - App ID: {}, Sandbox ID: {}, Autoscan: {}",
-                            request.app_id,
-                            request.sandbox_id.as_ref().unwrap_or(&"None".to_string()),
-                            request.auto_scan.unwrap_or(false)
-                        );
-                    }
+                    debug!(
+                        "🔧 Prescan request - App ID: {}, Sandbox ID: {}, Autoscan: {}",
+                        request.app_id,
+                        request.sandbox_id.as_ref().unwrap_or(&"None".to_string()),
+                        request.auto_scan.unwrap_or(false)
+                    );
 
                     scan_api.begin_prescan(&request).await
                 } else {
@@ -826,7 +804,7 @@ impl AssessmentSubmitter {
         match prescan_result {
             Ok(()) => {
                 info!("✅ Prescan started");
-                if self.config.debug {
+                {
                     info!("🔍 Prescan started for build ID: {}", build_id.id());
                 }
                 Ok(())
@@ -847,7 +825,7 @@ impl AssessmentSubmitter {
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("🚀 Starting scan analysis...");
             info!("   Build ID: {}", build_id.id());
         }
@@ -920,7 +898,7 @@ impl AssessmentSubmitter {
         match scan_result {
             Ok(_) => {
                 info!("✅ Scan started successfully");
-                if self.config.debug {
+                {
                     info!("🔍 Scan initiated for build: {build_id}");
                 }
                 Ok(())
@@ -971,11 +949,9 @@ impl AssessmentSubmitter {
 
         // Check if we need to manually start scan (only if autoscan is disabled)
         if !self.is_autoscan_enabled() {
-            if self.config.debug {
-                info!("🔄 Autoscan disabled, will manually start scan after prescan completes");
-            }
-        } else if self.config.debug {
-            info!("🤖 Autoscan enabled, scan will start automatically after prescan");
+            debug!("🔄 Autoscan disabled, will manually start scan after prescan completes");
+        } else {
+            debug!("🤖 Autoscan enabled, scan will start automatically after prescan");
         }
 
         // Use two-phase monitoring approach matching Java implementation
@@ -985,9 +961,7 @@ impl AssessmentSubmitter {
             self.monitor_prescan_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
 
-            if self.config.debug {
-                info!("🔄 Prescan complete, manually starting scan...");
-            }
+            debug!("🔄 Prescan complete, manually starting scan...");
             self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
                 .await?;
 
@@ -1000,8 +974,27 @@ impl AssessmentSubmitter {
                 .await?;
         }
 
+        // Phase 3: Policy evaluation monitoring (XML API only)
+        // Check if we will be using the XML API for policy status
+        let force_buildinfo = self.config.force_buildinfo_api
+            || std::env::var("VERASCAN_FORCE_BUILDINFO_API").is_ok();
+
+        if force_buildinfo {
+            // We know we'll use XML API, so wait for policy evaluation to complete
+            {
+                info!("🔄 XML API mode detected - adding policy evaluation phase");
+            }
+            self.monitor_policy_evaluation(app_id.for_xml_api(), sandbox_id.as_ref())
+                .await?;
+        } else {
+            // Summary report API will be tried first with built-in retry logic
+            {
+                info!("📊 Summary report mode - policy evaluation handled during export");
+            }
+        }
+
         // Export results to file
-        self.export_scan_results(&app_id.guid, &build_id, sandbox_id.as_ref())
+        self.export_scan_results(app_id, &build_id, sandbox_id.as_ref())
             .await?;
 
         Ok(build_id)
@@ -1014,7 +1007,7 @@ impl AssessmentSubmitter {
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("⏳ Waiting for prescan to complete...");
         }
 
@@ -1024,9 +1017,7 @@ impl AssessmentSubmitter {
         let max_polls = (timeout_minutes * 60) / poll_interval;
 
         for poll_count in 1..=max_polls {
-            if self.config.debug {
-                info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
-            }
+            info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
 
             let sandbox_legacy_id_str = match self.config.scan_type {
                 ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
@@ -1038,7 +1029,7 @@ impl AssessmentSubmitter {
                 .await
             {
                 Ok(prescan_results) => {
-                    if self.config.debug {
+                    {
                         info!(
                             "🔍 Debug: Prescan status received: {}",
                             prescan_results.status
@@ -1046,7 +1037,7 @@ impl AssessmentSubmitter {
                     }
                     if prescan_results.status == "Pre-Scan Success" {
                         info!("✅ Prescan completed successfully");
-                        if self.config.debug {
+                        {
                             info!("📊 Prescan results ready - modules available for scanning");
                         }
                         return Ok(());
@@ -1057,22 +1048,18 @@ impl AssessmentSubmitter {
                             "Prescan failed with status: {}",
                             prescan_results.status
                         )));
-                    } else {
-                        if self.config.debug {
-                            info!(
-                                "⏳ Prescan status: {}, waiting {} seconds...",
-                                prescan_results.status, poll_interval
-                            );
-                        } else {
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
-                        }
-                        tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
-                            .await;
                     }
+                    debug!(
+                        "⏳ Prescan status: {}, waiting {} seconds...",
+                        prescan_results.status, poll_interval
+                    );
+                    print!(".");
+                    std::io::stdout().flush().unwrap();
+                    tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
+                        .await;
                 }
                 Err(e) => {
-                    if self.config.debug {
+                    {
                         info!("⚠️  Error getting prescan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
@@ -1093,7 +1080,7 @@ impl AssessmentSubmitter {
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("⏳ Waiting for main scan to complete...");
         }
 
@@ -1103,9 +1090,7 @@ impl AssessmentSubmitter {
         let max_polls = (timeout_minutes * 60) / poll_interval;
 
         for poll_count in 1..=max_polls {
-            if self.config.debug {
-                info!("🔄 Scan poll attempt {poll_count}/{max_polls}");
-            }
+            info!("🔄 Scan poll attempt {poll_count}/{max_polls}");
 
             let sandbox_legacy_id_str = match self.config.scan_type {
                 ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
@@ -1120,7 +1105,7 @@ impl AssessmentSubmitter {
                 Ok(build_info) => {
                     let status = &build_info.status;
 
-                    if self.config.debug {
+                    {
                         info!("📊 Scan status: {status}");
                         if let Some(progress) = build_info.scan_progress_percentage {
                             info!("📈 Progress: {progress}%");
@@ -1130,20 +1115,19 @@ impl AssessmentSubmitter {
                     match status.as_str() {
                         "Results Ready" => {
                             info!("✅ Scan completed successfully");
-                            if self.config.debug {
+                            {
                                 info!("📊 Results are ready for download");
                             }
                             return Ok(());
                         }
                         "Scan In Progress" | "Submitted to Engine" | "Pre-Scan Success" => {
-                            if self.config.debug {
+                            {
                                 info!(
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
-                            } else {
-                                print!(".");
-                                std::io::stdout().flush().unwrap();
                             }
+                            print!(".");
+                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1159,14 +1143,13 @@ impl AssessmentSubmitter {
                             )));
                         }
                         _ => {
-                            if self.config.debug {
+                            {
                                 info!(
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
-                            } else {
-                                print!(".");
-                                std::io::stdout().flush().unwrap();
                             }
+                            print!(".");
+                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1175,7 +1158,7 @@ impl AssessmentSubmitter {
                     }
                 }
                 Err(e) => {
-                    if self.config.debug {
+                    {
                         info!("⚠️  Error getting scan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
@@ -1193,16 +1176,21 @@ impl AssessmentSubmitter {
     ///
     /// Phase 1: Monitor prescan status with 30-second intervals
     /// Phase 2: Monitor build status with 60-second intervals
+    ///
+    /// Note: Phase 3 (policy evaluation monitoring) is handled separately in the main
+    /// workflow when XML API mode is detected, as it's only needed for the getbuildinfo.do
+    /// fallback API. The summary report API has built-in retry logic for policy evaluation.
     pub async fn monitor_scan_progress(
         &self,
         app_id: &str,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("🔍 Starting two-phase scan monitoring (Java-compatible approach)");
             info!("   Phase 1: Prescan monitoring (30s intervals)");
             info!("   Phase 2: Build status monitoring (60s intervals)");
+            info!("   Phase 3: Policy evaluation (30s intervals, XML API only)");
         }
 
         // Phase 1: Monitor prescan status until "Pre-Scan Success" or failure
@@ -1211,9 +1199,7 @@ impl AssessmentSubmitter {
             .await
         {
             Ok(()) => {
-                if self.config.debug {
-                    info!("✅ Phase 1 complete - transitioning to main scan monitoring");
-                }
+                info!("✅ Phase 1 complete - transitioning to main scan monitoring");
             }
             Err(e) => return Err(e),
         }
@@ -1221,7 +1207,7 @@ impl AssessmentSubmitter {
         // Phase 2: Monitor build status until "Results Ready" or failure
         match self.monitor_build_phase(app_id, build_id, sandbox_id).await {
             Ok(()) => {
-                if self.config.debug {
+                {
                     info!("✅ Phase 2 complete - scan finished successfully");
                 }
                 Ok(())
@@ -1237,7 +1223,7 @@ impl AssessmentSubmitter {
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("🔄 Phase 1: Monitoring prescan status...");
         }
 
@@ -1247,9 +1233,7 @@ impl AssessmentSubmitter {
         let max_polls = (timeout_minutes * 60) / poll_interval;
 
         for poll_count in 1..=max_polls {
-            if self.config.debug {
-                info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
-            }
+            info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
 
             let sandbox_legacy_id_str = match self.config.scan_type {
                 ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
@@ -1261,7 +1245,7 @@ impl AssessmentSubmitter {
                 .await
             {
                 Ok(prescan_results) => {
-                    if self.config.debug {
+                    {
                         info!("📊 Prescan status: {}", prescan_results.status);
                     }
 
@@ -1279,12 +1263,11 @@ impl AssessmentSubmitter {
                         }
                         _ => {
                             // Continue polling for other statuses (including "Pre-Scan Submitted")
-                            if self.config.debug {
+                            {
                                 info!("⏳ Prescan in progress, waiting {poll_interval} seconds...");
-                            } else {
-                                print!(".");
-                                std::io::stdout().flush().unwrap();
                             }
+                            print!(".");
+                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1293,7 +1276,7 @@ impl AssessmentSubmitter {
                     }
                 }
                 Err(e) => {
-                    if self.config.debug {
+                    {
                         info!("⚠️  Error getting prescan status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
@@ -1314,7 +1297,7 @@ impl AssessmentSubmitter {
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
-        if self.config.debug {
+        {
             info!("🔄 Phase 2: Monitoring build status...");
         }
 
@@ -1324,9 +1307,7 @@ impl AssessmentSubmitter {
         let max_polls = (timeout_minutes * 60) / poll_interval;
 
         for poll_count in 1..=max_polls {
-            if self.config.debug {
-                info!("🔄 Build status poll attempt {poll_count}/{max_polls}");
-            }
+            info!("🔄 Build status poll attempt {poll_count}/{max_polls}");
 
             let sandbox_legacy_id_str = match self.config.scan_type {
                 ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
@@ -1338,7 +1319,7 @@ impl AssessmentSubmitter {
                 .await
             {
                 Ok(build_info) => {
-                    if self.config.debug {
+                    {
                         info!("📊 Build status: {}", build_info.status);
                         if let Some(progress) = build_info.scan_progress_percentage {
                             info!("📈 Progress: {progress}%");
@@ -1355,12 +1336,11 @@ impl AssessmentSubmitter {
                         | "Submitted to Engine"
                         | "Pre-Scan Success" => {
                             // Continue polling for active scan states
-                            if self.config.debug {
+                            {
                                 info!("⏳ Scan in progress, waiting {poll_interval} seconds...");
-                            } else {
-                                print!(".");
-                                std::io::stdout().flush().unwrap();
                             }
+                            print!(".");
+                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1377,15 +1357,14 @@ impl AssessmentSubmitter {
                         }
                         _ => {
                             // Continue polling for unknown statuses (defensive)
-                            if self.config.debug {
+                            {
                                 info!(
                                     "⏳ Unknown status '{}', continuing to wait {} seconds...",
                                     build_info.status, poll_interval
                                 );
-                            } else {
-                                print!(".");
-                                std::io::stdout().flush().unwrap();
                             }
+                            print!(".");
+                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1394,7 +1373,7 @@ impl AssessmentSubmitter {
                     }
                 }
                 Err(e) => {
-                    if self.config.debug {
+                    {
                         info!("⚠️  Error getting build status: {e}, retrying...");
                     }
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
@@ -1408,97 +1387,211 @@ impl AssessmentSubmitter {
         )))
     }
 
+    /// Phase 3: Monitor policy evaluation until ready (XML API only)
+    ///
+    /// This phase waits for policy compliance evaluation to complete when using the XML API.
+    /// It uses the existing retry logic in evaluate_policy_compliance_via_buildinfo_with_retry() to poll until
+    /// the status is no longer "Not Assessed" or "Calculating...".
+    /// This phase is only needed when using the XML API (getbuildinfo.do) since the
+    /// summary report API already has built-in retry logic for policy evaluation.
+    async fn monitor_policy_evaluation(
+        &self,
+        app_id: &str,
+        sandbox_id: Option<&SandboxId>,
+    ) -> Result<(), AssessmentError> {
+        {
+            info!("🔄 Phase 3: Monitoring policy evaluation...");
+        }
+
+        let policy_api = self.client.policy_api();
+        let timeout_minutes = self.config.timeout;
+        let poll_interval = 30; // 30-second intervals for policy evaluation
+        let max_retries = (timeout_minutes * 60) / poll_interval;
+
+        let sandbox_legacy_id = match self.config.scan_type {
+            ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
+            ScanType::Policy => None,
+        };
+
+        match policy_api
+            .evaluate_policy_compliance_via_buildinfo_with_retry(
+                app_id,
+                sandbox_legacy_id,
+                max_retries,
+                poll_interval.into(),
+            )
+            .await
+        {
+            Ok(status) => {
+                {
+                    info!("✅ Phase 3 complete - policy evaluation finished");
+                    info!("📊 Final policy status: {status}");
+                }
+                Ok(())
+            }
+            Err(e) => Err(AssessmentError::ScanError(format!(
+                "Policy evaluation phase failed: {e}"
+            ))),
+        }
+    }
+
     /// Retrieve and export scan results with policy compliance check
     pub async fn export_scan_results(
         &self,
-        app_guid: &str,
+        app_id: &ApplicationId,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
     ) -> Result<(), AssessmentError> {
         let policy_api = self.client.policy_api();
         let sandbox_guid = sandbox_id.map(|s| s.guid.as_ref());
 
-        // Get summary report with policy compliance check (combined single API call)
-        if self.config.debug {
-            info!(
-                "📝 Exporting summary report to: {}",
-                self.config.export_results_path
-            );
-        }
+        // Get policy status with automatic fallback (summary report -> getbuildinfo.do)
+        info!(
+            "📝 Exporting results to: {}",
+            self.config.export_results_path
+        );
 
-        let (summary_report, compliance_status) = match policy_api
-            .get_summary_report_with_policy_retry(
-                app_guid,
+        // Determine if we should force buildinfo API or check environment variable
+        let force_buildinfo = self.config.force_buildinfo_api
+            || std::env::var("VERASCAN_FORCE_BUILDINFO_API").is_ok();
+
+        let (summary_report_opt, compliance_status, api_source) = match policy_api
+            .get_policy_status_with_fallback(
+                &app_id.guid,
+                app_id.for_xml_api(), // Pass the numeric app ID for XML fallback
                 Some(build_id.id()),
                 sandbox_guid,
+                sandbox_id.as_ref().map(|s| s.for_xml_api()), // Pass numeric sandbox ID for XML fallback
                 self.config.policy_wait_max_retries,
                 self.config.policy_wait_retry_delay_seconds,
-                self.config.debug,
                 self.config.break_build,
+                force_buildinfo,
             )
             .await
         {
-            Ok((report, status)) => (report, status.map(|s| s.into_owned())),
+            Ok((report_opt, status, source)) => {
+                // Log which API was used for transparency
+                use veracode_platform::policy::ApiSource;
+                match source {
+                    ApiSource::SummaryReport => {
+                        debug!("✅ Used summary report API successfully");
+                    }
+                    ApiSource::BuildInfo => {
+                        info!("🔄 Used getbuildinfo.do API (fallback or forced)");
+                    }
+                }
+                (report_opt, status, source)
+            }
             Err(e) => {
-                error!("❌ Failed to get summary report: {e}");
+                error!("❌ Failed to get policy status: {e}");
                 if self.config.break_build {
                     error!("   Break build evaluation will be skipped due to error");
                 }
                 return Err(AssessmentError::ScanError(format!(
-                    "Failed to retrieve summary report: {e}"
+                    "Failed to retrieve policy status: {e}"
                 )));
             }
         };
 
         // Determine if build should break based on compliance status (if break_build enabled)
-        let should_break_build = if let Some(ref status) = compliance_status {
+        let should_break_build = if !compliance_status.is_empty() {
             use veracode_platform::policy::PolicyApi;
-            PolicyApi::should_break_build(status)
+            let standard_break = PolicyApi::should_break_build(&compliance_status);
+
+            // Check for strict sandbox mode: treat Conditional Pass as failure for sandbox scans
+            let strict_sandbox_break = self.config.strict_sandbox
+                && matches!(self.config.scan_type, ScanType::Sandbox)
+                && compliance_status == "Conditional Pass";
+
+            standard_break || strict_sandbox_break
         } else {
             false
         };
 
-        // Export summary report with compliance status metadata
-        let results = serde_json::json!({
-            "summary_report": summary_report,
-            "export_metadata": {
-                "exported_at": chrono::Utc::now().to_rfc3339(),
-                "tool": TOOL_NAME,
-                "export_type": "summary_report",
-                "break_build_enabled": self.config.break_build,
-                "will_break_build": should_break_build,
-                "compliance_status_confirmed": compliance_status.is_some(),
-                "scan_configuration": {
-                    "autoscan": self.config.autoscan,
-                    "scan_all_nonfatal_top_level_modules": true,
-                    "include_new_modules": true
-                }
+        // Export results with appropriate metadata based on API source
+        use veracode_platform::policy::ApiSource;
+        let results = match api_source {
+            ApiSource::SummaryReport => {
+                // Full summary report export
+                let summary_report = summary_report_opt.unwrap(); // Safe unwrap - if SummaryReport source, we have the report
+                serde_json::json!({
+                    "summary_report": summary_report,
+                    "export_metadata": {
+                        "exported_at": chrono::Utc::now().to_rfc3339(),
+                        "tool": TOOL_NAME,
+                        "export_type": "summary_report",
+                        "api_source": "summary_report",
+                        "break_build_enabled": self.config.break_build,
+                        "will_break_build": should_break_build,
+                        "policy_compliance_status": compliance_status,
+                        "scan_configuration": {
+                            "autoscan": self.config.autoscan,
+                            "scan_all_nonfatal_top_level_modules": true,
+                            "include_new_modules": true
+                        }
+                    }
+                })
             }
-        });
+            ApiSource::BuildInfo => {
+                // Build info export with policy compliance status only
+                serde_json::json!({
+                    "build_info": {
+                        "app_id": app_id.for_xml_api(),
+                        "app_guid": app_id.guid,
+                        "build_id": build_id.id(),
+                        "sandbox_id": sandbox_id.as_ref().map(|s| s.for_xml_api()),
+                        "policy_compliance_status": compliance_status
+                    },
+                    "export_metadata": {
+                        "exported_at": chrono::Utc::now().to_rfc3339(),
+                        "tool": TOOL_NAME,
+                        "export_type": "build_info_policy_status",
+                        "api_source": "getbuildinfo_xml",
+                        "break_build_enabled": self.config.break_build,
+                        "will_break_build": should_break_build,
+                        "policy_compliance_status": compliance_status,
+                        "note": "Used getbuildinfo.do XML API (fallback or forced). Summary report data not available.",
+                        "scan_configuration": {
+                            "autoscan": self.config.autoscan,
+                            "scan_all_nonfatal_top_level_modules": true,
+                            "include_new_modules": true
+                        }
+                    }
+                })
+            }
+        };
 
         // Write results to file
         match serde_json::to_string_pretty(&results) {
             Ok(json_string) => {
-                match std::fs::write(&self.config.export_results_path, json_string) {
+                match tokio::fs::write(&self.config.export_results_path, json_string).await {
                     Ok(_) => {
-                        info!(
-                            "✅ Summary report exported to: {}",
-                            self.config.export_results_path
-                        );
-                        if self.config.debug {
-                            info!(
-                                "📊 Policy compliance status: {}",
-                                summary_report.policy_compliance_status
-                            );
+                        // Success message based on API source
+                        match api_source {
+                            ApiSource::SummaryReport => {
+                                info!(
+                                    "✅ Summary report exported to: {}",
+                                    self.config.export_results_path
+                                );
+                            }
+                            ApiSource::BuildInfo => {
+                                info!(
+                                    "✅ Build info with policy status exported to: {}",
+                                    self.config.export_results_path
+                                );
+                            }
                         }
+
+                        debug!("📊 Policy compliance status: {compliance_status}");
 
                         // Break build if policy compliance failed (after successful export)
                         if should_break_build {
                             use veracode_platform::policy::PolicyApi;
-                            if let Some(status) = compliance_status {
-                                let exit_code = PolicyApi::get_exit_code_for_status(&status);
+                            if !compliance_status.is_empty() {
+                                let exit_code =
+                                    PolicyApi::get_exit_code_for_status(&compliance_status);
                                 info!("\n❌ Platform policy compliance FAILED - breaking build");
-                                info!("   Status: {status}");
+                                info!("   Status: {compliance_status}");
                                 info!("   Exit code: {exit_code}");
                                 std::process::exit(exit_code);
                             }
@@ -1563,6 +1656,7 @@ impl AssessmentSubmitter {
                 "disabled (--no-wait)"
             }
         );
+        info!("   Strict Sandbox Scan: {}", self.config.strict_sandbox);
         info!("   Export Results: {}", self.config.export_results_path);
         if self.config.break_build {
             info!(
@@ -1597,6 +1691,7 @@ mod tests {
         assert!(!config.break_build);
         assert_eq!(config.policy_wait_max_retries, 30);
         assert_eq!(config.policy_wait_retry_delay_seconds, 10);
+        assert!(!config.strict_sandbox);
     }
 
     #[test]
@@ -1618,7 +1713,6 @@ mod tests {
             region: VeracodeRegion::Commercial,
             timeout: 90,
             threads: 8,
-            debug: true,
             autoscan: false,
             monitor_completion: false,
             export_results_path: "custom-results.json".to_string(),
@@ -1626,6 +1720,8 @@ mod tests {
             break_build: true,
             policy_wait_max_retries: 60,        // Custom: 60 retries
             policy_wait_retry_delay_seconds: 5, // Custom: 5 seconds between retries
+            force_buildinfo_api: false,         // Test default value
+            strict_sandbox: false,              // Test default value
         };
 
         assert_eq!(config.threads, 8);

@@ -17,7 +17,7 @@ use sha2::{Digest, Sha256};
 use std::env;
 use std::path::{Path, PathBuf};
 
-use log::{error, info};
+use log::{debug, error, info};
 
 /// GitLab client configuration
 #[derive(Clone)]
@@ -59,12 +59,11 @@ pub type GitLabClientError = HttpClientError;
 pub struct GitLabClient {
     http_client: RobustHttpClient,
     config: GitLabClientConfig,
-    debug: bool,
 }
 
 impl GitLabClient {
     /// Create a new GitLab client from environment variables
-    pub fn from_env(debug: bool) -> Result<Self, GitLabClientError> {
+    pub fn from_env() -> Result<Self, GitLabClientError> {
         let gitlab_config = GitLabClientConfig::from_env()?;
 
         // Create HTTP client configuration
@@ -77,7 +76,7 @@ impl GitLabClient {
                 name: "PRIVATE-TOKEN".to_string(),
                 value: gitlab_config.api_token.as_str().to_string(),
             })?
-            .with_api_debug_mode("GitLab", debug)
+            .with_api("GitLab")
             .build();
 
         let http_client = RobustHttpClient::new(http_config)?;
@@ -85,23 +84,18 @@ impl GitLabClient {
         Ok(Self {
             http_client,
             config: gitlab_config,
-            debug,
         })
     }
 
     /// Validate GitLab requirements and connectivity
-    pub async fn validate_connection(debug: bool) -> Result<(), GitLabClientError> {
-        if debug {
-            HttpClientError::print_validation("GitLab");
-        }
+    pub async fn validate_connection() -> Result<(), GitLabClientError> {
+        HttpClientError::print_validation("GitLab");
 
-        let client = Self::from_env(debug)?;
+        let client = Self::from_env()?;
 
-        if debug {
-            info!("✅ Environment variables validated:");
-            info!("   Project ID: {}", client.config.project_id);
-            info!("   GitLab URL: {}", client.http_client.base_url());
-        }
+        debug!("✅ Environment variables validated:");
+        debug!("   Project ID: {}", client.config.project_id);
+        debug!("   GitLab URL: {}", client.http_client.base_url());
 
         // Test API connectivity by checking project access
         client
@@ -117,10 +111,8 @@ impl GitLabClient {
             .unwrap_or("unknown/project");
 
         HttpClientError::print_validation_success("GitLab");
-        if debug {
-            info!("   Project: {project_name} ({project_path})");
-            HttpClientError::print_api_access();
-        }
+        debug!("   Project: {project_name} ({project_path})");
+        HttpClientError::print_api_access();
 
         // Check if we can create issues (check permissions)
         let issues_endpoint = format!("{}/issues", client.config.project_id);
@@ -148,12 +140,10 @@ impl GitLabClient {
         &mut self,
         aggregated: &AggregatedFindings,
     ) -> Result<Vec<GitLabIssueResponse>, GitLabClientError> {
-        if self.debug {
-            info!(
-                "📝 Creating GitLab issues from {} findings",
-                aggregated.findings.len()
-            );
-        }
+        debug!(
+            "📝 Creating GitLab issues from {} findings",
+            aggregated.findings.len()
+        );
 
         // Fetch project information for URL construction
         self.fetch_project_info().await?;
@@ -176,14 +166,12 @@ impl GitLabClient {
             // Check if an issue with this title already exists
             match self.issue_already_exists(&issue_payload.title).await {
                 Ok(true) => {
-                    if self.debug {
-                        info!(
-                            "⏭️  Skipping duplicate issue {}/{}: {}",
-                            index + 1,
-                            aggregated.findings.len(),
-                            issue_payload.title
-                        );
-                    }
+                    debug!(
+                        "⏭️  Skipping duplicate issue {}/{}: {}",
+                        index + 1,
+                        aggregated.findings.len(),
+                        issue_payload.title
+                    );
                     duplicate_count += 1;
                     continue;
                 }
@@ -198,22 +186,17 @@ impl GitLabClient {
                 }
             }
 
-            if self.debug {
-                info!(
-                    "📋 Creating issue {}/{}: {}",
-                    index + 1,
-                    aggregated.findings.len(),
-                    issue_payload.title
-                );
-            }
+            debug!(
+                "📋 Creating issue {}/{}: {}",
+                index + 1,
+                aggregated.findings.len(),
+                issue_payload.title
+            );
 
             match self.create_issue(&issue_payload).await {
                 Ok(issue) => {
-                    if self.debug {
-                        info!("✅ Created issue #{}: {}", issue.iid, issue.web_url);
-                    } else {
-                        info!("✅ Created issue #{}: {}", issue.iid, finding.title);
-                    }
+                    debug!("✅ Created issue #{}: {}", issue.iid, issue.web_url);
+                    info!("✅ Created issue #{}: {}", issue.iid, finding.title);
                     created_issues.push(issue);
                 }
                 Err(e) => {
@@ -256,19 +239,17 @@ impl GitLabClient {
             self.config.project_id, encoded_title
         );
 
-        if self.debug {
-            info!("🔍 Searching for existing issue: {title}");
-        }
+        debug!("🔍 Searching for existing issue: {title}");
 
         let issues: Vec<GitLabIssueResponse> = self.http_client.get(&endpoint).await?;
 
         // Check for exact title match (GitLab search is fuzzy, so we need exact match)
         let exact_match = issues.iter().any(|issue| issue.title == title);
 
-        if self.debug && exact_match {
-            info!("✅ Found existing issue with exact title match");
-        } else if self.debug {
-            info!("🆕 No existing issue found with exact title match");
+        if exact_match {
+            debug!("✅ Found existing issue with exact title match");
+        } else {
+            debug!("🆕 No existing issue found with exact title match");
         }
 
         Ok(exact_match)
@@ -289,7 +270,7 @@ impl GitLabClient {
 
         self.config.project_dir = Some(absolute_path.clone());
 
-        let resolver_config = PathResolverConfig::new(&absolute_path, self.debug);
+        let resolver_config = PathResolverConfig::new(&absolute_path);
         self.config.path_resolver = Some(PathResolver::new(resolver_config));
 
         self
@@ -436,7 +417,7 @@ impl GitLabClient {
 
     /// Resolve file path using shared utility
     fn resolve_file_path(&self, file_path: &str) -> String {
-        resolve_file_path(file_path, self.config.path_resolver.as_ref(), self.debug).into_owned()
+        resolve_file_path(file_path, self.config.path_resolver.as_ref()).into_owned()
     }
 
     /// Create detailed issue description with pre-resolved file path

@@ -95,10 +95,13 @@ A powerful command-line application for security scanning and Veracode integrati
 - Combined baseline and policy enforcement
 - **Break Build Functionality**: CI/CD integration with Veracode platform policy compliance
   - `--break` flag enables build breaking on policy failures
-  - Uses reliable XML API (`/api/5.0/getbuildinfo.do`) for policy status checking
+  - **Intelligent API Fallback**: Automatic fallback from summary report API to getbuildinfo.do XML API on permission errors (401/403)
+  - `--force-buildinfo-api` flag or `VERASCAN_FORCE_BUILDINFO_API` env var to skip REST API and use XML API directly
+  - **Enhanced Compatibility**: Works with any Veracode account permission level (REST+XML, XML-only, or restricted access)
   - Standard exit codes: 0 for success, 4 for policy failure (matches Veracode Java wrapper)
   - Works with both regular application scans and sandbox scans
   - Graceful error handling - API failures don't break builds
+  - **Transparent Operation**: Clear logging shows which API path was used (summary report vs buildinfo)
 
 ### 📤 **Multi-format Export**
 - **JSON**: Veracode baseline format for future comparisons
@@ -207,6 +210,13 @@ verascan assessment --filepath ./target \
 verascan assessment --filepath ./target \
   --app-profile-name "MyApplication" \
   --break \
+  --export-results results.json
+
+# Assessment scan with break build using buildinfo API directly (for restricted permissions)
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --break \
+  --force-buildinfo-api \
   --export-results results.json
 ```
 
@@ -350,6 +360,11 @@ Verascan supports comprehensive HTTP client configuration through VERASCAN_ pref
 | `VERACODE_API_ID` | ✅ | Your Veracode API ID credential |
 | `VERACODE_API_KEY` | ✅ | Your Veracode API key credential |
 
+### API Configuration
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERASCAN_FORCE_BUILDINFO_API` | - | Skip summary report API and use getbuildinfo.do XML API directly for break build evaluation (set any value) |
+
 ### Network Configuration
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -384,6 +399,9 @@ Verascan supports comprehensive HTTP client configuration through VERASCAN_ pref
 # Authentication (required)
 export VERACODE_API_ID="your-api-id-here"
 export VERACODE_API_KEY="your-api-key-here"
+
+# API configuration for restricted permissions
+export VERASCAN_FORCE_BUILDINFO_API="1"     # Force XML API usage for break build
 
 # Network optimization for slow connections
 export VERASCAN_CONNECT_TIMEOUT="60"        # 60 second connection timeout

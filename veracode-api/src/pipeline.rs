@@ -74,11 +74,13 @@ pub enum ScanStatus {
 
 impl ScanStatus {
     /// Check if the scan completed successfully
+    #[must_use]
     pub fn is_successful(&self) -> bool {
         matches!(self, ScanStatus::Success)
     }
 
     /// Check if the scan failed or was terminated
+    #[must_use]
     pub fn is_failed(&self) -> bool {
         matches!(
             self,
@@ -90,6 +92,7 @@ impl ScanStatus {
     }
 
     /// Check if the scan is still in progress
+    #[must_use]
     pub fn is_in_progress(&self) -> bool {
         matches!(
             self,
@@ -240,6 +243,7 @@ pub struct LegacyFinding {
 
 impl Finding {
     /// Convert to legacy format for backwards compatibility
+    #[must_use]
     pub fn to_legacy(&self) -> LegacyFinding {
         LegacyFinding {
             file: self.files.source_file.file.clone(),
@@ -481,6 +485,7 @@ pub struct PipelineApi {
 
 impl PipelineApi {
     /// Create a new Pipeline API client
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         let base_url = Self::compute_base_url(&client);
         Self { client, base_url }
@@ -562,12 +567,8 @@ impl PipelineApi {
         if let Some(name) = app_name {
             if request.app_id.is_none() {
                 let app_id = self.lookup_app_id_by_name(name).await?;
-                request.app_id = Some(app_id);
-                info!(
-                    "✅ Found application '{}' with ID: {}",
-                    name,
-                    request.app_id.as_ref().unwrap()
-                );
+                request.app_id = Some(app_id.clone());
+                info!("✅ Found application '{name}' with ID: {app_id}");
             }
         }
 
@@ -1215,35 +1216,6 @@ impl PipelineApi {
                 "Failed to cancel scan: {error_text}"
             )))
         }
-    }
-
-    /// List pipeline scans with optional filtering
-    ///
-    /// **Note**: This method is not supported by the Veracode Pipeline Scan API.
-    /// Veracode does not provide endpoints to enumerate/list all scans.
-    /// Use `get_scan()` with a specific scan ID instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `project_name` - Optional project name filter  
-    /// * `dev_stage` - Optional development stage filter
-    /// * `limit` - Maximum number of scans to return
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing an error indicating this operation is not supported
-    #[deprecated(
-        note = "Veracode Pipeline Scan API does not support listing scans. Use get_scan() with specific scan ID instead."
-    )]
-    pub async fn list_scans(
-        &self,
-        _project_name: Option<&str>,
-        _dev_stage: Option<DevStage>,
-        _limit: Option<u32>,
-    ) -> Result<Vec<Scan>, PipelineError> {
-        Err(PipelineError::InvalidRequest(
-            "Veracode Pipeline Scan API does not support listing/enumerating scans. Use get_scan() with a specific scan ID instead.".to_string()
-        ))
     }
 
     /// Wait for scan to complete with polling

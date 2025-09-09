@@ -342,8 +342,8 @@ async fn create_sample_test_files() -> Result<(), Box<dyn std::error::Error>> {
     // Create simple test files
     let test_content = b"Sample test file content for Veracode upload validation";
 
-    std::fs::write("./test_file1.jar", test_content)?;
-    std::fs::write("./test_file2.zip", test_content)?;
+    tokio::fs::write("./test_file1.jar", test_content).await?;
+    tokio::fs::write("./test_file2.zip", test_content).await?;
 
     println!(
         "   ✅ Created test_file1.jar ({} bytes)",

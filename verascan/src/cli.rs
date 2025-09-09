@@ -266,6 +266,20 @@ pub enum Commands {
             conflicts_with = "no_wait"
         )]
         break_build: bool,
+
+        /// Force use of getbuildinfo.do API for policy compliance (skip summary report)
+        #[arg(
+            long = "force-buildinfo-api",
+            help = "Skip summary report API and use getbuildinfo.do XML API for break build evaluation"
+        )]
+        force_buildinfo_api: bool,
+
+        /// Break build on sandbox Conditional Pass
+        #[arg(
+            long = "strict-sandbox",
+            help = "Exit with code 4 when sandbox scans return 'Conditional Pass'"
+        )]
+        strict_sandbox: bool,
     },
 
     /// Download Veracode security policy by name
@@ -310,6 +324,9 @@ pub enum Commands {
         #[arg(long = "min-severity", help = "Minimum severity to include (informational, very-low, low, medium, high, very-high)", value_parser = validate_severity_filter)]
         min_severity: Option<String>,
     },
+
+    /// Show all supported environment variables
+    HelpEnv,
 }
 
 impl Args {
@@ -343,6 +360,9 @@ impl Args {
             }
             Commands::Export { .. } => {
                 // Export validation happens at the field level with required fields
+            }
+            Commands::HelpEnv => {
+                // No validation needed for help-env subcommand
             }
         }
 
@@ -502,9 +522,8 @@ fn validate_project_url(s: &str) -> Result<String, String> {
             return Err(format!(
                 "Project URL must start with https:// or http:// (http allowed due to VERASCAN_DISABLE_CERT_VALIDATION), got: '{s}'"
             ));
-        } else {
-            return Err(format!("Project URL must start with https://, got: '{s}'"));
         }
+        return Err(format!("Project URL must start with https://, got: '{s}'"));
     }
 
     // Additional basic URI structure validation
@@ -639,7 +658,7 @@ fn validate_fail_on_severity(s: &str) -> Result<String, String> {
     }
 
     // Split by comma and validate each severity
-    let severities: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    let severities: Vec<&str> = s.split(',').map(str::trim).collect();
 
     for severity in &severities {
         let lower_severity = severity.to_lowercase();
@@ -660,7 +679,7 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
     }
 
     // Split by comma and validate each CWE ID
-    let cwes: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    let cwes: Vec<&str> = s.split(',').map(str::trim).collect();
 
     for cwe in &cwes {
         // CWE should be numeric (with or without "CWE-" prefix)
@@ -687,7 +706,7 @@ fn validate_modules_list(s: &str) -> Result<String, String> {
     }
 
     // Split by comma and validate each module name
-    let modules: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    let modules: Vec<&str> = s.split(',').map(str::trim).collect();
 
     for module in &modules {
         if module.is_empty() {
@@ -785,6 +804,7 @@ fn validate_severity_filter(s: &str) -> Result<String, String> {
 }
 
 /// Parse business criticality string to BusinessCriticality enum
+#[must_use]
 pub fn parse_business_criticality(
     criticality_str: &str,
 ) -> veracode_platform::app::BusinessCriticality {
@@ -804,6 +824,88 @@ pub fn parse_business_criticality(
             BusinessCriticality::Medium
         }
     }
+}
+
+/// Print all supported environment variables documentation
+pub fn print_environment_variables() {
+    println!("Environment Variables");
+    println!("====================");
+    println!();
+
+    println!("🔐 AUTHENTICATION");
+    println!("  VERACODE_API_ID       - Veracode API ID for authentication");
+    println!("  VERACODE_API_KEY      - Veracode API Key for authentication");
+    println!();
+
+    println!("🏦 HASHICORP VAULT INTEGRATION");
+    println!("  VAULT_CLI_ADDR        - Vault server URL (HTTPS required)");
+    println!("  VAULT_CLI_JWT         - JWT token for OIDC authentication");
+    println!("  VAULT_CLI_ROLE        - Vault role name for authentication");
+    println!("  VAULT_CLI_SECRET_PATH - Secret path containing Veracode credentials");
+    println!("  VAULT_CLI_NAMESPACE   - Vault namespace (optional)");
+    println!();
+
+    println!("🔧 API CONFIGURATION");
+    println!("  VERASCAN_FORCE_BUILDINFO_API - Force XML buildinfo API for break build evaluation");
+    println!();
+
+    println!("🌐 NETWORK CONFIGURATION");
+    println!("  VERASCAN_DISABLE_CERT_VALIDATION - Disable TLS certificate validation (dev only)");
+    println!(
+        "  VERASCAN_CONNECT_TIMEOUT         - HTTP connection timeout in seconds (default: 10)"
+    );
+    println!("  VERASCAN_REQUEST_TIMEOUT         - HTTP request timeout in seconds (default: 30)");
+    println!();
+
+    println!("🔄 RETRY CONFIGURATION");
+    println!("  VERASCAN_MAX_RETRIES             - Maximum retry attempts (default: 3)");
+    println!(
+        "  VERASCAN_INITIAL_RETRY_DELAY_MS  - Initial retry delay in milliseconds (default: 500)"
+    );
+    println!(
+        "  VERASCAN_MAX_RETRY_DELAY_MS      - Maximum retry delay in milliseconds (default: 10000)"
+    );
+    println!("  VERASCAN_BACKOFF_MULTIPLIER      - Exponential backoff multiplier (default: 2.0)");
+    println!("  VERASCAN_DISABLE_JITTER          - Disable randomized jitter in retry timing");
+    println!();
+
+    println!("🦊 GITLAB INTEGRATION");
+    println!("  PRIVATE_TOKEN         - GitLab API token for issue creation and repository access");
+    println!("  CI_TOKEN              - GitLab CI token (alternative to PRIVATE_TOKEN)");
+    println!("  GITLAB_TOKEN          - GitLab API token (alternative to PRIVATE_TOKEN)");
+    println!("  CI_PROJECT_ID         - GitLab project ID for issue creation");
+    println!("  GITLAB_URL            - GitLab instance URL (default: https://gitlab.com)");
+    println!();
+
+    println!("📖 EXAMPLES");
+    println!();
+    println!("Basic authentication:");
+    println!("  export VERACODE_API_ID=\"your-api-id\"");
+    println!("  export VERACODE_API_KEY=\"your-api-key\"");
+    println!();
+    println!("Network optimization for slow connections:");
+    println!("  export VERASCAN_CONNECT_TIMEOUT=\"60\"");
+    println!("  export VERASCAN_REQUEST_TIMEOUT=\"120\"");
+    println!("  export VERASCAN_MAX_RETRIES=\"5\"");
+    println!();
+    println!("Force XML API for restricted permissions:");
+    println!("  export VERASCAN_FORCE_BUILDINFO_API=\"1\"");
+    println!();
+    println!("GitLab CI integration:");
+    println!("  export PRIVATE_TOKEN=\"your-gitlab-token\"");
+    println!("  export CI_PROJECT_ID=\"123456\"");
+    println!();
+    println!("Vault integration:");
+    println!("  export VAULT_CLI_ADDR=\"https://vault.example.com\"");
+    println!("  export VAULT_CLI_JWT=\"your-jwt-token\"");
+    println!("  export VAULT_CLI_ROLE=\"veracode-role\"");
+    println!("  export VAULT_CLI_SECRET_PATH=\"secret/veracode/api\"");
+    println!();
+    println!("  Vault secret must contain these exact key names:");
+    println!("  {{");
+    println!("    \"VERACODE_API_ID\": \"your-veracode-api-id\",");
+    println!("    \"VERACODE_API_KEY\": \"your-veracode-api-key\"");
+    println!("  }}");
 }
 
 #[cfg(test)]
@@ -837,10 +939,10 @@ mod tests {
                 fail_on_severity: None,
                 fail_on_cwe: None,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = args.validate_conditional_requirements();
@@ -879,10 +981,10 @@ mod tests {
                 fail_on_severity: None,
                 fail_on_cwe: None,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = args.validate_conditional_requirements();
@@ -913,11 +1015,13 @@ mod tests {
                 bus_cri: "very-high".to_string(),
                 deleteincompletescan: 1,
                 break_build: false,
+                force_buildinfo_api: false,
+                strict_sandbox: false,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = args.validate_conditional_requirements();

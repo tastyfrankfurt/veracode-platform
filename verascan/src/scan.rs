@@ -4,10 +4,10 @@ use crate::findings::FindingWithSource;
 use crate::{
     AggregatedFindings, AssessmentScanConfig, AssessmentSubmitter, FindingsAggregator,
     GitLabExportConfig, GitLabExporter, GitLabIssuesClient, PipelineScanConfig, PipelineSubmitter,
-    PolicyAssessment, ScanType, check_secure_pipeline_credentials, execute_baseline_compare,
-    execute_policy_file_assessment, execute_policy_name_assessment, load_secure_api_credentials,
+    PolicyAssessment, ScanType, execute_baseline_compare, execute_policy_file_assessment,
+    execute_policy_name_assessment,
 };
-use log::{error, info};
+use log::{debug, error, info, warn};
 use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
@@ -19,29 +19,26 @@ use veracode_platform::{RetryConfig, VeracodeConfig, VeracodeRegion};
 ///
 /// This function applies the same environment variables used by GitLab HTTP client
 /// to the VeracodeConfig for consistent configuration across the application.
-pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool) -> VeracodeConfig {
+#[must_use]
+pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig) -> VeracodeConfig {
     use std::env;
 
     // Certificate validation
     if env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
         config = config.with_certificate_validation_disabled();
-        if debug {
-            info!(
-                "⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION"
-            );
-            info!("   This should only be used in development environments!");
-        }
+        warn!(
+            "⚠️  WARNING: Certificate validation disabled for Veracode API via VERASCAN_DISABLE_CERT_VALIDATION"
+        );
+        warn!("   This should only be used in development environments!");
     }
 
     // Connection timeout
     if let Ok(timeout_str) = env::var("VERASCAN_CONNECT_TIMEOUT") {
         if let Ok(timeout) = timeout_str.parse::<u64>() {
             config = config.with_connect_timeout(timeout);
-            if debug {
-                info!("🔧 Using VERASCAN_CONNECT_TIMEOUT: {timeout} seconds");
-            }
-        } else if debug {
-            info!("⚠️  Invalid VERASCAN_CONNECT_TIMEOUT value: {timeout_str}");
+            debug!("🔧 Using VERASCAN_CONNECT_TIMEOUT: {timeout} seconds");
+        } else {
+            debug!("⚠️  Invalid VERASCAN_CONNECT_TIMEOUT value: {timeout_str}");
         }
     }
 
@@ -49,11 +46,9 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool)
     if let Ok(timeout_str) = env::var("VERASCAN_REQUEST_TIMEOUT") {
         if let Ok(timeout) = timeout_str.parse::<u64>() {
             config = config.with_request_timeout(timeout);
-            if debug {
-                info!("🔧 Using VERASCAN_REQUEST_TIMEOUT: {timeout} seconds");
-            }
-        } else if debug {
-            info!("⚠️  Invalid VERASCAN_REQUEST_TIMEOUT value: {timeout_str}");
+            debug!("🔧 Using VERASCAN_REQUEST_TIMEOUT: {timeout} seconds");
+        } else {
+            debug!("⚠️  Invalid VERASCAN_REQUEST_TIMEOUT value: {timeout_str}");
         }
     }
 
@@ -65,11 +60,9 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool)
         if let Ok(retries) = retries_str.parse::<u32>() {
             retry_config = retry_config.with_max_attempts(retries);
             retry_modified = true;
-            if debug {
-                info!("🔧 Using VERASCAN_MAX_RETRIES: {retries}");
-            }
-        } else if debug {
-            info!("⚠️  Invalid VERASCAN_MAX_RETRIES value: {retries_str}");
+            debug!("🔧 Using VERASCAN_MAX_RETRIES: {retries}");
+        } else {
+            debug!("⚠️  Invalid VERASCAN_MAX_RETRIES value: {retries_str}");
         }
     }
 
@@ -77,11 +70,9 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool)
         if let Ok(delay) = delay_str.parse::<u64>() {
             retry_config = retry_config.with_initial_delay_millis(delay);
             retry_modified = true;
-            if debug {
-                info!("🔧 Using VERASCAN_INITIAL_RETRY_DELAY_MS: {delay}ms");
-            }
-        } else if debug {
-            info!("⚠️  Invalid VERASCAN_INITIAL_RETRY_DELAY_MS value: {delay_str}");
+            debug!("🔧 Using VERASCAN_INITIAL_RETRY_DELAY_MS: {delay}ms");
+        } else {
+            debug!("⚠️  Invalid VERASCAN_INITIAL_RETRY_DELAY_MS value: {delay_str}");
         }
     }
 
@@ -89,11 +80,9 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool)
         if let Ok(delay) = delay_str.parse::<u64>() {
             retry_config = retry_config.with_max_delay_millis(delay);
             retry_modified = true;
-            if debug {
-                info!("🔧 Using VERASCAN_MAX_RETRY_DELAY_MS: {delay}ms");
-            }
-        } else if debug {
-            info!("⚠️  Invalid VERASCAN_MAX_RETRY_DELAY_MS value: {delay_str}");
+            debug!("🔧 Using VERASCAN_MAX_RETRY_DELAY_MS: {delay}ms");
+        } else {
+            debug!("⚠️  Invalid VERASCAN_MAX_RETRY_DELAY_MS value: {delay_str}");
         }
     }
 
@@ -101,20 +90,16 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool)
         if let Ok(multiplier) = multiplier_str.parse::<f64>() {
             retry_config = retry_config.with_exponential_backoff(multiplier);
             retry_modified = true;
-            if debug {
-                info!("🔧 Using VERASCAN_BACKOFF_MULTIPLIER: {multiplier}");
-            }
-        } else if debug {
-            info!("⚠️  Invalid VERASCAN_BACKOFF_MULTIPLIER value: {multiplier_str}");
+            debug!("🔧 Using VERASCAN_BACKOFF_MULTIPLIER: {multiplier}");
+        } else {
+            debug!("⚠️  Invalid VERASCAN_BACKOFF_MULTIPLIER value: {multiplier_str}");
         }
     }
 
     if env::var("VERASCAN_DISABLE_JITTER").is_ok() {
         retry_config = retry_config.with_jitter_disabled();
         retry_modified = true;
-        if debug {
-            info!("🔧 Jitter disabled via VERASCAN_DISABLE_JITTER");
-        }
+        debug!("🔧 Jitter disabled via VERASCAN_DISABLE_JITTER");
     }
 
     if retry_modified {
@@ -125,10 +110,8 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig, debug: bool)
 }
 
 /// Validate baseline file early before starting the scan
-pub fn validate_baseline_file_early(baseline_path: &str, args: &Args) -> Result<(), i32> {
-    if args.debug {
-        info!("🔍 Validating baseline file: {baseline_path}");
-    }
+pub fn validate_baseline_file_early(baseline_path: &str) -> Result<(), i32> {
+    debug!("🔍 Validating baseline file: {baseline_path}");
 
     let path = Path::new(baseline_path);
 
@@ -210,26 +193,27 @@ pub fn validate_baseline_file_early(baseline_path: &str, args: &Args) -> Result<
         }
     }
 
-    if args.debug {
-        info!("   ✅ Baseline file validation passed");
-        info!("      - Version: {}", baseline.metadata.version);
-        info!("      - Findings count: {}", baseline.findings.len());
-        info!(
-            "      - Source project: {}",
-            baseline.metadata.source_scan.project_name
-        );
-        info!("      - Created at: {}", baseline.metadata.created_at);
-    } else {
-        info!(
-            "✅ Baseline file validated successfully ({} findings)",
-            baseline.findings.len()
-        );
-    }
+    debug!("   ✅ Baseline file validation passed");
+    debug!("      - Version: {}", baseline.metadata.version);
+    debug!("      - Findings count: {}", baseline.findings.len());
+    debug!(
+        "      - Source project: {}",
+        baseline.metadata.source_scan.project_name
+    );
+    debug!("      - Created at: {}", baseline.metadata.created_at);
+    info!(
+        "✅ Baseline file validated successfully ({} findings)",
+        baseline.findings.len()
+    );
 
     Ok(())
 }
 
-pub fn execute_pipeline_scan(matched_files: &[PathBuf], args: &Args) -> Result<(), i32> {
+pub fn execute_pipeline_scan(
+    matched_files: &[PathBuf],
+    veracode_config: &VeracodeConfig,
+    args: &Args,
+) -> Result<(), i32> {
     if let Commands::Pipeline {
         baseline_file,
         export_findings,
@@ -240,7 +224,7 @@ pub fn execute_pipeline_scan(matched_files: &[PathBuf], args: &Args) -> Result<(
 
         // Validate baseline file early, before running scans
         if let Some(baseline_path) = baseline_file {
-            validate_baseline_file_early(baseline_path, args)?;
+            validate_baseline_file_early(baseline_path)?;
         }
 
         // Validate export paths early, before running scans
@@ -248,21 +232,16 @@ pub fn execute_pipeline_scan(matched_files: &[PathBuf], args: &Args) -> Result<(
 
         // Note: GitLab validation moved to async context in execute_scan_with_runtime
 
-        // Use secure API credentials handling
-        let secure_creds = load_secure_api_credentials().map_err(|_| 1)?;
-        let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
-
         let region = parse_region(&args.region)?;
-        let base_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
-        let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
         let pipeline_config = create_pipeline_config(args, region);
 
-        let submitter = PipelineSubmitter::new(veracode_config, pipeline_config).map_err(|e| {
-            error!("❌ Failed to create pipeline submitter: {e}");
-            1
-        })?;
+        let submitter =
+            PipelineSubmitter::new(veracode_config.clone(), pipeline_config).map_err(|e| {
+                error!("❌ Failed to create pipeline submitter: {e}");
+                1
+            })?;
 
-        execute_scan_with_runtime(submitter, matched_files, args)
+        execute_scan_with_runtime(submitter, matched_files, args, veracode_config)
     } else {
         error!("❌ execute_pipeline_scan called with non-pipeline command");
         Err(1)
@@ -300,45 +279,30 @@ fn parse_dev_stage(stage_str: &str) -> veracode_platform::pipeline::DevStage {
 }
 
 /// Attempt to resolve project URL from .git/config file
-fn resolve_git_project_url(debug: bool) -> Option<String> {
-    if debug {
-        info!("🔍 Attempting to resolve project URL from .git/config...");
-    }
+fn resolve_git_project_url() -> Option<String> {
+    debug!("🔍 Attempting to resolve project URL from .git/config...");
 
     // Look for .git/config file in current directory or parent directories
-    let git_config_path = match find_git_config_file() {
-        Some(path) => path,
-        None => {
-            if debug {
-                info!(
-                    "   ⚠️  No .git/config file found in current directory or parent directories"
-                );
-            }
-            return None;
-        }
+    let Some(git_config_path) = find_git_config_file() else {
+        debug!("   ⚠️  No .git/config file found in current directory or parent directories");
+        return None;
     };
 
-    if debug {
-        info!("   📁 Found git config: {}", git_config_path.display());
-    }
+    debug!("   📁 Found git config: {}", git_config_path.display());
 
     // Read and parse the git config file
     let config_content = fs::read_to_string(&git_config_path).ok()?;
     let remote_url = parse_git_config_for_origin_url(&config_content)?;
 
-    if debug {
-        info!(
-            "   📡 Found remote origin URL: {}",
-            redact_url_password(&remote_url)
-        );
-    }
+    debug!(
+        "   📡 Found remote origin URL: {}",
+        redact_url_password(&remote_url)
+    );
 
     // Convert git URL to web URL
     let web_url = convert_git_url_to_web_url(&remote_url)?;
 
-    if debug {
-        info!("   🌐 Converted to web URL: {web_url}");
-    }
+    debug!("   🌐 Converted to web URL: {web_url}");
 
     Some(web_url)
 }
@@ -496,8 +460,8 @@ fn create_pipeline_config(args: &Args, region: VeracodeRegion) -> PipelineScanCo
         // Auto-resolve project URL from git if not provided
         let project_uri = project_url
             .as_deref()
-            .map(|s| s.to_owned())
-            .or_else(|| resolve_git_project_url(args.debug));
+            .map(ToOwned::to_owned)
+            .or_else(resolve_git_project_url);
 
         // Use Cow to avoid allocating default project name unless needed
         let project_name_cow: Cow<str> = project_name
@@ -514,7 +478,6 @@ fn create_pipeline_config(args: &Args, region: VeracodeRegion) -> PipelineScanCo
             include_low_severity: Some(true),
             max_findings: None,
             selected_modules: None, // Pipeline doesn't use modules
-            debug: args.debug,
             app_profile_name: None, // Pipeline doesn't use app profile name
             threads: *threads,
         }
@@ -527,6 +490,7 @@ fn execute_scan_with_runtime(
     submitter: PipelineSubmitter,
     matched_files: &[PathBuf],
     args: &Args,
+    veracode_config: &VeracodeConfig,
 ) -> Result<(), i32> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| {
         error!("❌ Failed to create async runtime: {e}");
@@ -544,14 +508,14 @@ fn execute_scan_with_runtime(
                 info!(
                     "Requires 'Developer' role and 'api' scope Access token for GitLab integration"
                 );
-                validate_gitlab_connectivity_early(args).await?;
+                validate_gitlab_connectivity_early().await?;
             }
         }
 
         if matched_files.len() == 1 {
-            execute_single_scan(&submitter, matched_files, args).await
+            execute_single_scan(&submitter, matched_files, args, veracode_config).await
         } else {
-            execute_concurrent_scans(&submitter, matched_files, args).await
+            execute_concurrent_scans(&submitter, matched_files, args, veracode_config).await
         }
     })
 }
@@ -560,6 +524,7 @@ async fn execute_single_scan(
     submitter: &PipelineSubmitter,
     matched_files: &[PathBuf],
     args: &Args,
+    veracode_config: &VeracodeConfig,
 ) -> Result<(), i32> {
     match submitter.submit_and_wait(matched_files).await {
         Ok(results) => {
@@ -568,7 +533,7 @@ async fn execute_single_scan(
             let results_vec = vec![results];
 
             // Handle findings aggregation and export
-            handle_findings_export(&results_vec, matched_files, args).await;
+            handle_findings_export(&results_vec, matched_files, args, veracode_config).await;
 
             // Handle GitLab issues creation if requested (independent of export)
             if let Commands::Pipeline {
@@ -581,6 +546,7 @@ async fn execute_single_scan(
                         &results_vec,
                         matched_files,
                         args,
+                        veracode_config,
                     )
                     .await;
                 }
@@ -599,6 +565,7 @@ async fn execute_concurrent_scans(
     submitter: &PipelineSubmitter,
     matched_files: &[PathBuf],
     args: &Args,
+    veracode_config: &VeracodeConfig,
 ) -> Result<(), i32> {
     match submitter
         .submit_files_concurrent_and_wait(matched_files)
@@ -608,7 +575,7 @@ async fn execute_concurrent_scans(
             display_concurrent_results(&results_vec, submitter);
 
             // Handle findings aggregation and export
-            handle_findings_export(&results_vec, matched_files, args).await;
+            handle_findings_export(&results_vec, matched_files, args, veracode_config).await;
 
             // Handle GitLab issues creation if requested (independent of export)
             if let Commands::Pipeline {
@@ -621,6 +588,7 @@ async fn execute_concurrent_scans(
                         &results_vec,
                         matched_files,
                         args,
+                        veracode_config,
                     )
                     .await;
                 }
@@ -667,6 +635,7 @@ async fn handle_findings_export(
     results_vec: &[veracode_platform::pipeline::ScanResults],
     matched_files: &[PathBuf],
     args: &Args,
+    veracode_config: &VeracodeConfig,
 ) {
     if let Commands::Pipeline {
         export_findings, ..
@@ -688,7 +657,7 @@ async fn handle_findings_export(
             .collect();
 
         // Create findings aggregator
-        let aggregator = FindingsAggregator::new(args.debug);
+        let aggregator = FindingsAggregator::new();
 
         // Parse severity filter if provided
         let severity_filter = if let Commands::Pipeline { min_severity, .. } = &args.command {
@@ -701,12 +670,10 @@ async fn handle_findings_export(
 
         // Aggregate all findings with optional severity filtering
         let aggregated = if let Some(min_severity) = severity_filter {
-            if args.debug {
-                info!(
-                    "🔽 Applying severity filter: {} and above",
-                    crate::findings::FindingsAggregator::severity_level_to_name(min_severity)
-                );
-            }
+            debug!(
+                "🔽 Applying severity filter: {} and above",
+                crate::findings::FindingsAggregator::severity_level_to_name(min_severity)
+            );
             aggregator.aggregate_findings_with_filter(
                 results_vec,
                 &source_files,
@@ -724,7 +691,7 @@ async fn handle_findings_export(
 
         // Handle policy assessment and get violations (if policy is specified)
         let (policy_assessment, final_filtered) =
-            handle_policy_assessment(&baseline_filtered, args).await;
+            handle_policy_assessment(&baseline_filtered, args, veracode_config).await;
 
         // Export filtered JSON based on pass-fail criteria
         if let Commands::Pipeline {
@@ -761,8 +728,9 @@ async fn handle_findings_export(
             match export_format_lower.as_str() {
                 "json" => match ensure_extension(export_path, "json") {
                     Ok(json_path) => {
-                        if let Err(e) =
-                            aggregator.export_to_baseline_format(&final_filtered, &json_path)
+                        if let Err(e) = aggregator
+                            .export_to_baseline_format(&final_filtered, &json_path)
+                            .await
                         {
                             error!("❌ Failed to export JSON in baseline format: {e}");
                         }
@@ -773,7 +741,7 @@ async fn handle_findings_export(
                 },
                 "csv" => match ensure_extension(export_path, "csv") {
                     Ok(csv_path) => {
-                        if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path) {
+                        if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path).await {
                             error!("❌ Failed to export CSV: {e}");
                         }
                     }
@@ -785,10 +753,11 @@ async fn handle_findings_export(
                     Ok(gitlab_path) => {
                         if let Commands::Pipeline { project_dir, .. } = &args.command {
                             let gitlab_config = GitLabExportConfig::default();
-                            let gitlab_exporter = GitLabExporter::new(gitlab_config, args.debug)
-                                .with_project_dir(project_dir);
-                            if let Err(e) =
-                                gitlab_exporter.export_to_gitlab_sast(&final_filtered, &gitlab_path)
+                            let gitlab_exporter =
+                                GitLabExporter::new(gitlab_config).with_project_dir(project_dir);
+                            if let Err(e) = gitlab_exporter
+                                .export_to_gitlab_sast(&final_filtered, &gitlab_path)
+                                .await
                             {
                                 error!("❌ Failed to export GitLab SAST report: {e}");
                             }
@@ -806,13 +775,16 @@ async fn handle_findings_export(
                     match (json_result, csv_result, gitlab_result) {
                         (Ok(json_path), Ok(csv_path), Ok(gitlab_path)) => {
                             // Export JSON
-                            if let Err(e) =
-                                aggregator.export_to_baseline_format(&final_filtered, &json_path)
+                            if let Err(e) = aggregator
+                                .export_to_baseline_format(&final_filtered, &json_path)
+                                .await
                             {
                                 error!("❌ Failed to export JSON in baseline format: {e}");
                             }
                             // Export CSV
-                            if let Err(e) = aggregator.export_to_csv(&final_filtered, &csv_path) {
+                            if let Err(e) =
+                                aggregator.export_to_csv(&final_filtered, &csv_path).await
+                            {
                                 error!("❌ Failed to export CSV: {e}");
                             }
                             // Export GitLab SAST report (use different filename to avoid conflict)
@@ -829,11 +801,11 @@ async fn handle_findings_export(
                             };
                             if let Commands::Pipeline { project_dir, .. } = &args.command {
                                 let gitlab_config = GitLabExportConfig::default();
-                                let gitlab_exporter =
-                                    GitLabExporter::new(gitlab_config, args.debug)
-                                        .with_project_dir(project_dir);
+                                let gitlab_exporter = GitLabExporter::new(gitlab_config)
+                                    .with_project_dir(project_dir);
                                 if let Err(e) = gitlab_exporter
                                     .export_to_gitlab_sast(&final_filtered, &gitlab_sast_path)
+                                    .await
                                 {
                                     error!("❌ Failed to export GitLab SAST report: {e}");
                                 }
@@ -869,10 +841,10 @@ async fn handle_findings_export(
     }
 }
 
-async fn validate_gitlab_connectivity_early(args: &Args) -> Result<(), i32> {
+async fn validate_gitlab_connectivity_early() -> Result<(), i32> {
     info!("🔍 Validating GitLab integration...");
 
-    match GitLabIssuesClient::validate_gitlab_connection(args.debug).await {
+    match GitLabIssuesClient::validate_gitlab_connection().await {
         Ok(()) => {
             info!("✅ GitLab integration validated successfully");
             Ok(())
@@ -982,6 +954,7 @@ async fn handle_gitlab_issues_creation_from_results_async(
     results_vec: &[veracode_platform::pipeline::ScanResults],
     matched_files: &[PathBuf],
     args: &Args,
+    veracode_config: &VeracodeConfig,
 ) {
     if let Commands::Pipeline { min_severity, .. } = &args.command {
         info!("\n🔗 Creating GitLab issues from scan findings...");
@@ -999,7 +972,7 @@ async fn handle_gitlab_issues_creation_from_results_async(
             .collect();
 
         // Create findings aggregator
-        let aggregator = FindingsAggregator::new(args.debug);
+        let aggregator = FindingsAggregator::new();
 
         // Parse severity filter if provided
         let severity_filter = min_severity
@@ -1022,7 +995,7 @@ async fn handle_gitlab_issues_creation_from_results_async(
 
         // Handle policy assessment and get violations (if policy is specified)
         let (_policy_assessment, final_filtered) =
-            handle_policy_assessment(&baseline_filtered, args).await;
+            handle_policy_assessment(&baseline_filtered, args, veracode_config).await;
 
         // Create GitLab issues asynchronously
         handle_gitlab_issues_creation_async(&final_filtered, args).await;
@@ -1035,20 +1008,16 @@ async fn handle_gitlab_issues_creation_async(
     args: &Args,
 ) {
     if let Commands::Pipeline { project_dir, .. } = &args.command {
-        match GitLabIssuesClient::from_env(args.debug) {
+        match GitLabIssuesClient::from_env() {
             Ok(mut client) => {
                 // Set project directory (always available with default ".")
                 client = client.with_project_dir(project_dir);
-                if args.debug {
-                    info!("📁 Using project directory for file path resolution: {project_dir}");
-                }
+                debug!("📁 Using project directory for file path resolution: {project_dir}");
                 match client.create_issues_from_findings(aggregated).await {
                     Ok(issues) => {
                         info!("✅ Successfully created {} GitLab issues", issues.len());
-                        if args.debug {
-                            for issue in issues {
-                                info!("   Issue #{}: {}", issue.iid, issue.web_url);
-                            }
+                        for issue in issues {
+                            debug!("   Issue #{}: {}", issue.iid, issue.web_url);
                         }
                     }
                     Err(e) => {
@@ -1078,22 +1047,18 @@ fn handle_baseline_operations<'a>(
         ..
     } = &args.command
     {
-        if args.debug {
-            info!("\n🔍 Translating baseline file");
-        }
+        debug!("\n🔍 Translating baseline file");
 
         let baseline_path = Path::new(baseline_path);
 
-        match execute_baseline_compare(aggregated, baseline_path, None, args.debug) {
+        match execute_baseline_compare(aggregated, baseline_path, None) {
             Ok(comparison) => {
-                if args.debug {
-                    info!(
-                        "Total flaws found: {}, New flaws found: {} as compared to baseline ({} baseline flaws ignored)",
-                        aggregated.findings.len(),
-                        comparison.summary.new_count,
-                        comparison.summary.unchanged_count
-                    );
-                }
+                debug!(
+                    "Total flaws found: {}, New flaws found: {} as compared to baseline ({} baseline flaws ignored)",
+                    aggregated.findings.len(),
+                    comparison.summary.new_count,
+                    comparison.summary.unchanged_count
+                );
 
                 // Check if policy assessment is enabled to determine precedence
                 let policy_enabled = if let Commands::Pipeline {
@@ -1116,12 +1081,10 @@ fn handle_baseline_operations<'a>(
                 if baseline_failed {
                     if policy_enabled {
                         // When policy criteria are present, defer the final pass/fail message
-                        if args.debug {
-                            info!(
-                                "\n🔍 {} new findings detected vs baseline - applying policy criteria",
-                                comparison.summary.new_count
-                            );
-                        }
+                        debug!(
+                            "\n🔍 {} new findings detected vs baseline - applying policy criteria",
+                            comparison.summary.new_count
+                        );
                     } else {
                         // Standalone baseline comparison
                         info!(
@@ -1146,7 +1109,7 @@ fn handle_baseline_operations<'a>(
                     filtered_aggregated.findings = comparison.new_findings;
 
                     // Recalculate summary for filtered findings
-                    let aggregator = FindingsAggregator::new(args.debug);
+                    let aggregator = FindingsAggregator::new();
                     let updated_summary =
                         aggregator.calculate_summary_from_findings(&filtered_aggregated.findings);
                     filtered_aggregated.summary = updated_summary;
@@ -1156,10 +1119,9 @@ fn handle_baseline_operations<'a>(
                         filtered_aggregated.findings.len() as u32;
 
                     return Cow::Owned(filtered_aggregated);
-                } else {
-                    // No filtering needed, return borrowed reference
-                    return Cow::Borrowed(aggregated);
                 }
+                // No filtering needed, return borrowed reference
+                return Cow::Borrowed(aggregated);
             }
             Err(_) => {
                 error!(
@@ -1179,6 +1141,7 @@ fn handle_baseline_operations<'a>(
 async fn handle_policy_assessment<'a>(
     aggregated: &'a AggregatedFindings,
     args: &Args,
+    veracode_config: &VeracodeConfig,
 ) -> (Option<PolicyAssessment>, Cow<'a, AggregatedFindings>) {
     // Check if policy assessment is requested
     if let Commands::Pipeline {
@@ -1188,17 +1151,16 @@ async fn handle_policy_assessment<'a>(
     } = &args.command
     {
         if policy_file.is_some() || policy_name.is_some() {
-            if args.debug {
-                info!("\n🔍 Policy assessment requested");
-            }
+            debug!("\n🔍 Policy assessment requested");
 
             let assessment_result = if let Some(policy_file_path) = policy_file {
                 // Use policy file
                 let policy_path = Path::new(policy_file_path);
-                execute_policy_file_assessment(aggregated, policy_path, None, args.debug)
+                execute_policy_file_assessment(aggregated, policy_path, None)
             } else if let Some(policy_name_str) = policy_name {
                 // Use policy name (requires async)
-                execute_policy_name_assessment(aggregated, policy_name_str, None, args).await
+                execute_policy_name_assessment(aggregated, policy_name_str, None, veracode_config)
+                    .await
             } else {
                 return (None, Cow::Borrowed(aggregated));
             };
@@ -1213,7 +1175,7 @@ async fn handle_policy_assessment<'a>(
                         filtered_aggregated.findings = assessment.violations.clone();
 
                         // Recalculate summary for violations only
-                        let aggregator = FindingsAggregator::new(args.debug);
+                        let aggregator = FindingsAggregator::new();
                         let updated_summary = aggregator
                             .calculate_summary_from_findings(&filtered_aggregated.findings);
                         filtered_aggregated.summary = updated_summary;
@@ -1243,10 +1205,8 @@ async fn handle_policy_assessment<'a>(
 }
 
 /// Export policy violations to filtered JSON output file
-fn export_policy_violations(assessment: &PolicyAssessment, output_path: &str, debug: bool) {
-    if debug {
-        info!("💾 Exporting policy violations to: {output_path}");
-    }
+async fn export_policy_violations(assessment: &PolicyAssessment, output_path: &str) {
+    debug!("💾 Exporting policy violations to: {output_path}");
 
     // Create a simplified structure for the filtered JSON output
     let violations_export = serde_json::json!({
@@ -1266,7 +1226,7 @@ fn export_policy_violations(assessment: &PolicyAssessment, output_path: &str, de
 
     match serde_json::to_string_pretty(&violations_export) {
         Ok(json_content) => {
-            if let Err(e) = fs::write(output_path, json_content) {
+            if let Err(e) = tokio::fs::write(output_path, json_content).await {
                 error!("❌ Failed to write filtered JSON output file: {e}");
             } else {
                 info!("✅ Policy violations exported to: {output_path}");
@@ -1291,9 +1251,7 @@ async fn export_pass_fail_violations(
     output_path: &str,
     policy_assessment: &Option<PolicyAssessment>,
 ) {
-    if args.debug {
-        info!("🔍 Evaluating pass-fail criteria for filtered JSON export");
-    }
+    debug!("🔍 Evaluating pass-fail criteria for filtered JSON export");
 
     // Determine which findings violate pass-fail criteria
     let mut violating_findings = Vec::with_capacity(final_filtered.findings.len());
@@ -1308,7 +1266,7 @@ async fn export_pass_fail_violations(
                 assessment.metadata.policy_info.name
             ));
 
-            export_policy_violations(assessment, output_path, args.debug);
+            export_policy_violations(assessment, output_path).await;
             return; // Policy takes precedence, export and return
         }
     }
@@ -1388,12 +1346,8 @@ async fn export_pass_fail_violations(
 
     // Export violations if any criteria were violated
     if !violating_findings.is_empty() {
-        export_pass_fail_filtered_findings(
-            &violating_findings,
-            &criteria_description,
-            output_path,
-            args.debug,
-        );
+        export_pass_fail_filtered_findings(&violating_findings, &criteria_description, output_path)
+            .await;
         // Exit with non-zero code when pass-fail criteria are violated
         info!(
             "\n❌ Pass-fail criteria FAILED - {} violations detected",
@@ -1415,23 +1369,20 @@ async fn export_pass_fail_violations(
                 } else {
                     info!("\n✅ Pass-fail criteria PASSED - no violations detected");
                 }
-            } else if args.debug {
-                info!("ℹ️  No pass-fail criteria violations found - filtered JSON not created");
+            } else {
+                debug!("ℹ️  No pass-fail criteria violations found - filtered JSON not created");
             }
         }
     }
 }
 
 /// Export pass-fail criteria violations to filtered JSON output file
-fn export_pass_fail_filtered_findings(
+async fn export_pass_fail_filtered_findings(
     violating_findings: &[FindingWithSource],
     criteria_description: &[String],
     output_path: &str,
-    debug: bool,
 ) {
-    if debug {
-        info!("💾 Exporting pass-fail violations to: {output_path}");
-    }
+    debug!("💾 Exporting pass-fail violations to: {output_path}");
 
     // Create a structure for the pass-fail filtered JSON output
     let filtered_export = serde_json::json!({
@@ -1451,7 +1402,7 @@ fn export_pass_fail_filtered_findings(
 
     match serde_json::to_string_pretty(&filtered_export) {
         Ok(json_content) => {
-            if let Err(e) = fs::write(output_path, json_content) {
+            if let Err(e) = tokio::fs::write(output_path, json_content).await {
                 error!("❌ Failed to write filtered JSON output file: {e}");
             } else {
                 info!("✅ Pass-fail violations exported to: {output_path}");
@@ -1575,15 +1526,12 @@ fn calculate_cwe_breakdown(findings: &[FindingWithSource]) -> serde_json::Value 
 async fn validate_teams_exist(
     client: &veracode_platform::VeracodeClient,
     team_names: &[String],
-    debug: bool,
 ) -> Result<(), String> {
     if team_names.is_empty() {
         return Ok(());
     }
 
-    if debug {
-        info!("🔍 Validating team existence...");
-    }
+    debug!("🔍 Validating team existence...");
 
     // Get all available teams from Veracode
     let identity_api = IdentityApi::new(client);
@@ -1594,9 +1542,7 @@ async fn validate_teams_exist(
         }
     };
 
-    if debug {
-        info!("   Found {} teams in Veracode", all_teams.len());
-    }
+    debug!("   Found {} teams in Veracode", all_teams.len());
 
     // Create a set of existing team names for fast lookup
     let existing_team_names: std::collections::HashSet<String> = all_teams
@@ -1630,18 +1576,20 @@ async fn validate_teams_exist(
         ));
     }
 
-    if debug {
-        info!("✅ All teams validated successfully");
-        for team_name in team_names {
-            info!("   ✓ {team_name}");
-        }
+    debug!("✅ All teams validated successfully");
+    for team_name in team_names {
+        debug!("   ✓ {team_name}");
     }
 
     Ok(())
 }
 
 /// Execute assessment scan workflow
-pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result<(), i32> {
+pub fn execute_assessment_scan(
+    matched_files: &[PathBuf],
+    veracode_config: &VeracodeConfig,
+    args: &Args,
+) -> Result<(), i32> {
     if let Commands::Assessment {
         app_profile_name,
         sandbox_name,
@@ -1652,14 +1600,12 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         deleteincompletescan,
         no_wait,
         break_build,
+        force_buildinfo_api,
+        strict_sandbox,
         ..
     } = &args.command
     {
-        info!("\n🚀 Assessment Scan requested");
-
-        // Check credentials using secure handling
-        let secure_creds = load_secure_api_credentials().map_err(|_| 1)?;
-        let (api_id, api_key) = check_secure_pipeline_credentials(&secure_creds).map_err(|_| 1)?;
+        info!("🚀 Assessment Scan requested");
 
         // App profile name is required field, no need to check
 
@@ -1679,8 +1625,6 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
         };
 
         let region = parse_region(&args.region)?;
-        let base_config = VeracodeConfig::new(&api_id, &api_key).with_region(region);
-        let veracode_config = configure_veracode_with_env_vars(base_config, args.debug);
 
         // Parse modules if provided
         let selected_modules = modules.as_ref().map(|modules_str| {
@@ -1699,7 +1643,6 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
             region,
             timeout: timeout_value,
             threads: *threads,
-            debug: args.debug,
             autoscan: true, // Always true for now; required when no-wait is specified
             monitor_completion: !no_wait, // Inverse of no_wait
             export_results_path: export_results.clone(),
@@ -1707,10 +1650,12 @@ pub fn execute_assessment_scan(matched_files: &[PathBuf], args: &Args) -> Result
             break_build: *break_build,
             policy_wait_max_retries: 30, // Default: 30 retries (5 minutes)
             policy_wait_retry_delay_seconds: 10, // Default: 10 seconds between retries
+            force_buildinfo_api: *force_buildinfo_api, // CLI flag for forcing buildinfo API
+            strict_sandbox: *strict_sandbox, // CLI flag for treating Conditional Pass as failure for sandbox scans
         };
 
-        let submitter =
-            AssessmentSubmitter::new(veracode_config, assessment_config).map_err(|e| {
+        let submitter = AssessmentSubmitter::new(veracode_config.clone(), assessment_config)
+            .map_err(|e| {
                 error!("❌ Failed to create assessment submitter: {e}");
                 1
             })?;
@@ -1752,9 +1697,7 @@ async fn execute_assessment_scan_async(
         ..
     } = &args.command
     {
-        if args.debug {
-            info!("🔍 Looking up or creating application profile: {app_profile_name}");
-        }
+        debug!("🔍 Looking up or creating application profile: {app_profile_name}");
 
         // Parse team names from CLI if provided
         let team_names = teamname.as_ref().map(|team_str| {
@@ -1766,12 +1709,10 @@ async fn execute_assessment_scan_async(
         });
 
         if let Some(ref teams) = team_names {
-            if args.debug {
-                info!("   Teams to assign: {}", teams.join(", "));
-            }
+            debug!("   Teams to assign: {}", teams.join(", "));
 
             // Validate team existence before creating application
-            if let Err(e) = validate_teams_exist(&submitter.client, teams, args.debug).await {
+            if let Err(e) = validate_teams_exist(&submitter.client, teams).await {
                 error!("❌ Team validation failed: {e}");
                 return Err(1);
             }
@@ -1788,31 +1729,28 @@ async fn execute_assessment_scan_async(
             .await
         {
             Ok(app) => {
-                if args.debug {
-                    info!(
-                        "✅ Application ready: {} (ID: {}, GUID: {})",
-                        app.profile
-                            .as_ref()
-                            .map(|p| p.name.as_str())
-                            .unwrap_or("Unknown"),
-                        app.id,
-                        app.guid
-                    );
-                    if let Some(profile) = &app.profile {
-                        if let Some(teams) = &profile.teams {
-                            if !teams.is_empty() {
-                                let team_names: Vec<String> = teams
-                                    .iter()
-                                    .filter_map(|t| t.team_name.as_ref())
-                                    .cloned()
-                                    .collect();
-                                info!("   Associated teams: {}", team_names.join(", "));
-                            }
+                debug!(
+                    "✅ Application ready: {} (ID: {}, GUID: {})",
+                    app.profile
+                        .as_ref()
+                        .map(|p| p.name.as_str())
+                        .unwrap_or("Unknown"),
+                    app.id,
+                    app.guid
+                );
+                if let Some(profile) = &app.profile {
+                    if let Some(teams) = &profile.teams {
+                        if !teams.is_empty() {
+                            let team_names: Vec<String> = teams
+                                .iter()
+                                .filter_map(|t| t.team_name.as_ref())
+                                .cloned()
+                                .collect();
+                            debug!("   Associated teams: {}", team_names.join(", "));
                         }
                     }
-                } else {
-                    info!("✅ Application ready: {app_profile_name}");
                 }
+                info!("✅ Application ready: {app_profile_name}");
                 crate::assessment::ApplicationId::new(app.guid, app.id.to_string())
             }
             Err(e) => {
@@ -1935,10 +1873,10 @@ mod tests {
                 fail_on_severity: None,
                 fail_on_cwe: None,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = validate_export_paths_early(file_path_str, &args);
@@ -1972,10 +1910,10 @@ mod tests {
                 fail_on_severity: None,
                 fail_on_cwe: None,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = validate_export_paths_early("test.txt", &args);

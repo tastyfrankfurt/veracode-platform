@@ -216,7 +216,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Test auto-paginated collection (get all findings)
             println!("\n🔄 Testing auto-paginated findings collection...");
             match client
-                .findings_api_with_debug(true) // Enable debug to see API calls
+                .findings_api() // Use findings API
                 .get_all_policy_findings(&app_guid)
                 .await
             {

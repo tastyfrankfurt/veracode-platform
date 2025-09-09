@@ -5,6 +5,35 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-01-13
+
+### Added
+- **API Fallback Strategy for Break Build**: Intelligent fallback system for policy compliance evaluation
+  - **Automatic Fallback Logic**: Primary summary report API with automatic fallback to getbuildinfo.do XML API on permission errors (401/403)
+  - **Configuration Control**: New `--force-buildinfo-api` CLI flag and `VERASCAN_FORCE_BUILDINFO_API` environment variable for direct XML API usage
+  - **API Source Tracking**: `ApiSource` enum indicates which API was used (SummaryReport vs BuildInfo) with transparent logging
+  - **Smart Export Format**: Full summary report export when available, policy-status-only export when using fallback API
+  - **Enhanced Compatibility**: Works with any Veracode account permission configuration without failing
+
+- **Policy API Enhancements**: New methods for robust policy compliance checking
+  - **`get_policy_status_from_buildinfo()`**: Direct getbuildinfo.do XML API integration with retry logic
+  - **`get_policy_status_with_fallback()`**: Primary method combining both APIs with intelligent routing
+  - **Removed Debug Parameter**: Eliminated `debug` parameter from policy methods, now uses `log` crate macros exclusively
+
+### Changed
+- **Break Build Evaluation**: Enhanced policy compliance assessment with dual-API support
+  - **Assessment Configuration**: Added `force_buildinfo_api` field to `AssessmentScanConfig` struct
+  - **CLI Integration**: Updated Assessment command to support new `--force-buildinfo-api` flag
+  - **Export Logic**: Adaptive export format based on API source (full vs policy-only data)
+  - **Error Handling**: Improved error messages with API source context for better troubleshooting
+
+### Benefits
+- **Maximum Compatibility**: Works with restricted API permissions that only allow XML API access
+- **Performance Optimization**: Users can skip slower REST API when permissions are known
+- **Graceful Degradation**: Never fails due to API permission issues, automatically finds working endpoint
+- **CI/CD Friendly**: Environment variable support for persistent configuration in automated pipelines
+- **Transparent Operation**: Clear logging shows which API path was used for full visibility
+
 ## [0.4.3] - 2025-09-07
 
 ### Changed

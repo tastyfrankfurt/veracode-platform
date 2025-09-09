@@ -5,9 +5,10 @@ use std::path::Path;
 use veracode_platform::pipeline::{Finding, FindingsSummary, ScanResults, ScanStatus};
 
 use crate::gitlab_common::strip_html_tags;
-use log::info;
+use log::{debug, info};
 
 /// Create a standardized hash for finding comparison across the codebase
+#[must_use]
 pub fn create_finding_hash(finding: &Finding) -> String {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
@@ -26,6 +27,7 @@ pub fn create_finding_hash(finding: &Finding) -> String {
 }
 
 /// Extract hash from finding_id (format: "cwe_id:file:line:hash")
+#[must_use]
 pub fn extract_hash_from_finding_id(finding_id: &str) -> &str {
     finding_id.split(':').next_back().unwrap_or("")
 }
@@ -150,13 +152,18 @@ pub struct CweStatistic {
     pub percentage: f64,
 }
 
-pub struct FindingsAggregator {
-    debug: bool,
+pub struct FindingsAggregator {}
+
+impl Default for FindingsAggregator {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FindingsAggregator {
-    pub fn new(debug: bool) -> Self {
-        Self { debug }
+    #[must_use]
+    pub fn new() -> Self {
+        Self {}
     }
 
     /// Generate a unique finding ID compatible with baseline files
@@ -174,6 +181,7 @@ impl FindingsAggregator {
     }
 
     /// Aggregate findings from multiple scan results
+    #[must_use]
     pub fn aggregate_findings(
         &self,
         scan_results: &[ScanResults],
@@ -183,21 +191,20 @@ impl FindingsAggregator {
     }
 
     /// Aggregate findings from multiple scan results with optional severity filtering
+    #[must_use]
     pub fn aggregate_findings_with_filter(
         &self,
         scan_results: &[ScanResults],
         source_files: &[String],
         min_severity_filter: Option<u32>,
     ) -> AggregatedFindings {
-        if self.debug {
-            info!("🔍 Aggregating findings from {} scans", scan_results.len());
-            if let Some(min_sev) = min_severity_filter {
-                info!(
-                    "🔽 Filtering out findings below severity level: {} ({})",
-                    min_sev,
-                    self.severity_to_name(min_sev)
-                );
-            }
+        debug!("🔍 Aggregating findings from {} scans", scan_results.len());
+        if let Some(min_sev) = min_severity_filter {
+            debug!(
+                "🔽 Filtering out findings below severity level: {} ({})",
+                min_sev,
+                self.severity_to_name(min_sev)
+            );
         }
 
         let mut all_findings = Vec::new();
@@ -209,14 +216,12 @@ impl FindingsAggregator {
             let default_file_name = format!("file_{}", index + 1);
             let source_file = source_files.get(index).unwrap_or(&default_file_name);
 
-            if self.debug {
-                info!(
-                    "📊 Processing scan {} of {}: {} findings",
-                    index + 1,
-                    scan_results.len(),
-                    results.findings.len()
-                );
-            }
+            debug!(
+                "📊 Processing scan {} of {}: {} findings",
+                index + 1,
+                scan_results.len(),
+                results.findings.len()
+            );
 
             // Create scan metadata (minimize clones by referencing scan data)
             let metadata = ScanMetadata {
@@ -234,12 +239,10 @@ impl FindingsAggregator {
                 // Apply severity filter if specified
                 if let Some(min_severity) = min_severity_filter {
                     if finding.severity < min_severity {
-                        if self.debug {
-                            info!(
-                                "🔽 Filtered out finding: {} (severity {} < {})",
-                                finding.title, finding.severity, min_severity
-                            );
-                        }
+                        debug!(
+                            "🔽 Filtered out finding: {} (severity {} < {})",
+                            finding.title, finding.severity, min_severity
+                        );
                         continue;
                     }
                 }
@@ -266,15 +269,13 @@ impl FindingsAggregator {
         // Generate statistics
         let stats = self.calculate_statistics(&all_findings, scan_results.len());
 
-        if self.debug {
-            info!(
-                "✅ Aggregation complete: {} total findings from {} scans",
-                total_summary.total,
-                scan_results.len()
-            );
-            if min_severity_filter.is_some() {
-                info!("   (After severity filtering)");
-            }
+        debug!(
+            "✅ Aggregation complete: {} total findings from {} scans",
+            total_summary.total,
+            scan_results.len()
+        );
+        if min_severity_filter.is_some() {
+            debug!("   (After severity filtering)");
         }
 
         AggregatedFindings {
@@ -287,6 +288,7 @@ impl FindingsAggregator {
     }
 
     /// Calculate summary from filtered findings
+    #[must_use]
     pub fn calculate_summary_from_findings(
         &self,
         findings: &[FindingWithSource],
@@ -377,20 +379,18 @@ impl FindingsAggregator {
     }
 
     /// Export aggregated findings to JSON file
-    pub fn export_to_json(
+    pub async fn export_to_json(
         &self,
         aggregated: &AggregatedFindings,
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.debug {
-            info!(
-                "💾 Exporting aggregated findings to: {}",
-                output_path.display()
-            );
-        }
+        debug!(
+            "💾 Exporting aggregated findings to: {}",
+            output_path.display()
+        );
 
         let json_string = serde_json::to_string_pretty(aggregated)?;
-        std::fs::write(output_path, json_string)?;
+        tokio::fs::write(output_path, json_string).await?;
 
         info!(
             "✅ Aggregated findings exported to: {}",
@@ -400,23 +400,21 @@ impl FindingsAggregator {
     }
 
     /// Export aggregated findings in baseline-compatible format
-    pub fn export_to_baseline_format(
+    pub async fn export_to_baseline_format(
         &self,
         aggregated: &AggregatedFindings,
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.debug {
-            info!(
-                "💾 Exporting findings in baseline format to: {}",
-                output_path.display()
-            );
-        }
+        debug!(
+            "💾 Exporting findings in baseline format to: {}",
+            output_path.display()
+        );
 
         // Convert to baseline format
         let baseline_file = self.convert_to_baseline_format(aggregated)?;
 
         let json_string = serde_json::to_string_pretty(&baseline_file)?;
-        std::fs::write(output_path, json_string)?;
+        tokio::fs::write(output_path, json_string).await?;
 
         info!(
             "✅ Findings exported in baseline format to: {}",
@@ -531,17 +529,15 @@ impl FindingsAggregator {
     }
 
     /// Export aggregated findings to CSV file (simplified format)
-    pub fn export_to_csv(
+    pub async fn export_to_csv(
         &self,
         aggregated: &AggregatedFindings,
         output_path: &Path,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.debug {
-            info!(
-                "💾 Exporting aggregated findings to CSV: {}",
-                output_path.display()
-            );
-        }
+        debug!(
+            "💾 Exporting aggregated findings to CSV: {}",
+            output_path.display()
+        );
 
         let mut csv_content = String::new();
 
@@ -586,7 +582,7 @@ impl FindingsAggregator {
             ));
         }
 
-        std::fs::write(output_path, csv_content)?;
+        tokio::fs::write(output_path, csv_content).await?;
         info!(
             "✅ Aggregated findings exported to CSV: {}",
             output_path.display()
@@ -713,6 +709,7 @@ impl FindingsAggregator {
     }
 
     /// Parse severity string to numeric value
+    #[must_use]
     pub fn parse_severity_level(severity_str: &str) -> u32 {
         match severity_str.to_lowercase().as_str() {
             "informational" | "info" => 0,
@@ -726,6 +723,7 @@ impl FindingsAggregator {
     }
 
     /// Convert severity level to name (public method)
+    #[must_use]
     pub fn severity_level_to_name(severity: u32) -> &'static str {
         match severity {
             0 => "Informational",
@@ -797,14 +795,12 @@ impl FindingsAggregator {
                 metadata.source_file,
                 metadata.finding_count
             );
-            if self.debug {
-                info!(
-                    "      ID: {}, Status: {}",
-                    metadata.scan_id, metadata.scan_status
-                );
-                if let Some(ref uri) = metadata.project_uri {
-                    info!("      URI: {uri}");
-                }
+            debug!(
+                "      ID: {}, Status: {}",
+                metadata.scan_id, metadata.scan_status
+            );
+            if let Some(ref uri) = metadata.project_uri {
+                debug!("      URI: {uri}");
             }
         }
     }
@@ -830,12 +826,6 @@ mod tests {
     }
 
     #[test]
-    fn test_findings_aggregator_new() {
-        let aggregator = FindingsAggregator::new(true);
-        assert!(aggregator.debug);
-    }
-
-    #[test]
     fn test_parse_severity_level() {
         assert_eq!(FindingsAggregator::parse_severity_level("informational"), 0);
         assert_eq!(FindingsAggregator::parse_severity_level("low"), 2);
@@ -848,7 +838,7 @@ mod tests {
 
     #[test]
     fn test_strip_html_tags() {
-        let _aggregator = FindingsAggregator::new(false);
+        let _aggregator = FindingsAggregator::new();
 
         let html = "<p>This is a <strong>test</strong> with &amp; entities</p>";
         let expected = "This is a test with & entities";
@@ -860,7 +850,7 @@ mod tests {
 
     #[test]
     fn test_severity_to_name() {
-        let aggregator = FindingsAggregator::new(false);
+        let aggregator = FindingsAggregator::new();
 
         assert_eq!(aggregator.severity_to_name(0), "Informational");
         assert_eq!(aggregator.severity_to_name(1), "Very Low");

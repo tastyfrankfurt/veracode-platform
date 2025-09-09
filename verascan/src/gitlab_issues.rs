@@ -19,7 +19,7 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use log::{error, info};
+use log::{debug, error, info};
 use tokio::time::sleep;
 
 /// GitLab environment configuration
@@ -81,15 +81,11 @@ pub enum GitLabError {
 /// Wrapper for retry-able HTTP requests
 struct RetryableRequest {
     retry_config: RetryConfig,
-    debug: bool,
 }
 
 impl RetryableRequest {
-    fn new(_client: Client, retry_config: RetryConfig, debug: bool) -> Self {
-        Self {
-            retry_config,
-            debug,
-        }
+    fn new(retry_config: RetryConfig) -> Self {
+        Self { retry_config }
     }
 
     /// Execute a request with retry logic and exponential backoff
@@ -102,8 +98,8 @@ impl RetryableRequest {
         let mut current_delay = self.retry_config.initial_delay;
 
         for attempt in 0..=self.retry_config.max_retries {
-            if self.debug && attempt > 0 {
-                info!(
+            if attempt > 0 {
+                debug!(
                     "🔄 Retry attempt {}/{} after {}ms delay",
                     attempt,
                     self.retry_config.max_retries,
@@ -118,9 +114,7 @@ impl RetryableRequest {
 
                     // Check if error is retryable
                     if !self.is_retryable_error(&error) {
-                        if self.debug {
-                            info!("❌ Non-retryable error encountered: {error}");
-                        }
+                        debug!("❌ Non-retryable error encountered: {error}");
                         return Err(GitLabError::HttpError(error));
                     }
 
@@ -132,10 +126,7 @@ impl RetryableRequest {
                         } else {
                             current_delay
                         };
-
-                        if self.debug {
-                            info!("⏳ Waiting {}ms before retry...", delay.as_millis());
-                        }
+                        debug!("⏳ Waiting {}ms before retry...", delay.as_millis());
 
                         sleep(delay).await;
 
@@ -207,25 +198,20 @@ impl RetryableRequest {
 pub struct GitLabIssuesClient {
     client: Client,
     config: GitLabConfig,
-    debug: bool,
     retryable_client: RetryableRequest,
 }
 
 impl GitLabIssuesClient {
     /// Validate GitLab requirements and connectivity
-    pub async fn validate_gitlab_connection(debug: bool) -> Result<(), GitLabError> {
-        if debug {
-            info!("🔍 Validating GitLab integration requirements...");
-        }
+    pub async fn validate_gitlab_connection() -> Result<(), GitLabError> {
+        debug!("🔍 Validating GitLab integration requirements...");
 
         // Check environment variables
         let config = GitLabConfig::from_env()?;
 
-        if debug {
-            info!("✅ Environment variables validated:");
-            info!("   Project ID: {}", config.project_id);
-            info!("   GitLab URL: {}", config.gitlab_url);
-        }
+        debug!("✅ Environment variables validated:");
+        debug!("   Project ID: {}", config.project_id);
+        debug!("   GitLab URL: {}", config.gitlab_url);
 
         // Test API connectivity by checking project access
         let mut headers = HeaderMap::new();
@@ -244,27 +230,22 @@ impl GitLabIssuesClient {
 
         // Check for environment variable to disable certificate validation
         if env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
-            if debug {
-                info!(
-                    "⚠️  WARNING: Certificate validation disabled via VERASCAN_DISABLE_CERT_VALIDATION"
-                );
-            }
+            debug!(
+                "⚠️  WARNING: Certificate validation disabled via VERASCAN_DISABLE_CERT_VALIDATION"
+            );
             client_builder = client_builder
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
         }
 
         let client = client_builder.build()?;
-        let retryable_client =
-            RetryableRequest::new(client.clone(), config.retry_config.clone(), debug);
+        let retryable_client = RetryableRequest::new(config.retry_config.clone());
 
         // Test connectivity by getting project info
         let test_url = format!("{}{}", config.gitlab_url, config.project_id);
 
-        if debug {
-            info!("🌐 Testing GitLab API connectivity with retry logic...");
-            info!("   GET {test_url}");
-        }
+        debug!("🌐 Testing GitLab API connectivity with retry logic...");
+        debug!("   GET {test_url}");
 
         let response = retryable_client
             .execute_with_retry(|| client.get(&test_url).send())
@@ -280,10 +261,8 @@ impl GitLabIssuesClient {
                 .unwrap_or("unknown/project");
 
             info!("✅ GitLab connectivity validated successfully!");
-            if debug {
-                info!("   Project: {project_name} ({project_path})");
-                info!("   API access: ✅ Authenticated");
-            }
+            debug!("   Project: {project_name} ({project_path})");
+            debug!("   API access: ✅ Authenticated");
 
             // Check if we can create issues (check permissions)
             let issues_url = format!("{}{}/issues", config.gitlab_url, config.project_id);
@@ -311,7 +290,7 @@ impl GitLabIssuesClient {
     }
 
     /// Create a new GitLab Issues client from environment variables
-    pub fn from_env(debug: bool) -> Result<Self, GitLabError> {
+    pub fn from_env() -> Result<Self, GitLabError> {
         let config = GitLabConfig::from_env()?;
 
         let mut headers = HeaderMap::new();
@@ -331,47 +310,41 @@ impl GitLabIssuesClient {
         // Check for environment variable to disable certificate validation
         // WARNING: Only use this for development with self-signed certificates
         if env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok() {
-            if debug {
-                info!(
-                    "⚠️  WARNING: Certificate validation disabled via VERASCAN_DISABLE_CERT_VALIDATION"
-                );
-                info!("   This should only be used in development environments!");
-            }
+            debug!(
+                "⚠️  WARNING: Certificate validation disabled via VERASCAN_DISABLE_CERT_VALIDATION"
+            );
+            debug!("   This should only be used in development environments!");
             client_builder = client_builder
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
         }
 
         let client = client_builder.build()?;
-        let retryable_client =
-            RetryableRequest::new(client.clone(), config.retry_config.clone(), debug);
+        let retryable_client = RetryableRequest::new(config.retry_config.clone());
 
-        if debug {
-            info!("🔧 GitLab Issues Client initialized with robust networking");
-            info!("   Project ID: {}", config.project_id);
-            info!("   GitLab URL: {}", config.gitlab_url);
-            info!(
-                "   Connect timeout: {:?}",
-                config.http_timeouts.connect_timeout
-            );
-            info!(
-                "   Request timeout: {:?}",
-                config.http_timeouts.request_timeout
-            );
-            info!("   Max retries: {}", config.retry_config.max_retries);
-            info!(
-                "   Initial retry delay: {:?}",
-                config.retry_config.initial_delay
-            );
-            if let Some(ref pipeline_id) = config.pipeline_id {
-                info!("   Pipeline ID: {pipeline_id}");
-            }
+        debug!("🔧 GitLab Issues Client initialized with robust networking");
+        debug!("   Project ID: {}", config.project_id);
+        debug!("   GitLab URL: {}", config.gitlab_url);
+        debug!(
+            "   Connect timeout: {:?}",
+            config.http_timeouts.connect_timeout
+        );
+        debug!(
+            "   Request timeout: {:?}",
+            config.http_timeouts.request_timeout
+        );
+        debug!("   Max retries: {}", config.retry_config.max_retries);
+        debug!(
+            "   Initial retry delay: {:?}",
+            config.retry_config.initial_delay
+        );
+        if let Some(ref pipeline_id) = config.pipeline_id {
+            debug!("   Pipeline ID: {pipeline_id}");
         }
 
         Ok(Self {
             client,
             config,
-            debug,
             retryable_client,
         })
     }
@@ -381,12 +354,10 @@ impl GitLabIssuesClient {
         &mut self,
         aggregated: &AggregatedFindings,
     ) -> Result<Vec<GitLabIssueResponse>, GitLabError> {
-        if self.debug {
-            info!(
-                "📝 Creating GitLab issues from {} findings",
-                aggregated.findings.len()
-            );
-        }
+        debug!(
+            "📝 Creating GitLab issues from {} findings",
+            aggregated.findings.len()
+        );
 
         // Fetch project information for URL construction
         self.fetch_project_info().await?;
@@ -397,7 +368,6 @@ impl GitLabIssuesClient {
 
         for (index, finding_with_source) in aggregated.findings.iter().enumerate() {
             let finding = &finding_with_source.finding;
-            let _source = &finding_with_source.source_scan;
 
             // Skip informational findings to reduce noise
             if finding.severity == 0 {
@@ -410,14 +380,12 @@ impl GitLabIssuesClient {
             // Check if an issue with this title already exists using GitLab search API
             match self.issue_already_exists(&issue_payload.title).await {
                 Ok(true) => {
-                    if self.debug {
-                        info!(
-                            "⏭️  Skipping duplicate issue {}/{}: {}",
-                            index + 1,
-                            aggregated.findings.len(),
-                            issue_payload.title
-                        );
-                    }
+                    debug!(
+                        "⏭️  Skipping duplicate issue {}/{}: {}",
+                        index + 1,
+                        aggregated.findings.len(),
+                        issue_payload.title
+                    );
                     duplicate_count += 1;
                     continue;
                 }
@@ -433,22 +401,18 @@ impl GitLabIssuesClient {
                 }
             }
 
-            if self.debug {
-                info!(
-                    "📋 Creating issue {}/{}: {}",
-                    index + 1,
-                    aggregated.findings.len(),
-                    issue_payload.title
-                );
-            }
+            debug!(
+                "📋 Creating issue {}/{}: {}",
+                index + 1,
+                aggregated.findings.len(),
+                issue_payload.title
+            );
 
             match self.create_issue(&issue_payload).await {
                 Ok(issue) => {
-                    if self.debug {
-                        info!("✅ Created issue #{}: {}", issue.iid, issue.web_url);
-                    } else {
-                        info!("✅ Created issue #{}: {}", issue.iid, finding.title);
-                    }
+                    debug!("✅ Created issue #{}: {}", issue.iid, issue.web_url);
+                    info!("✅ Created issue #{}: {}", issue.iid, finding.title);
+
                     created_issues.push(issue);
                 }
                 Err(e) => {
@@ -483,21 +447,18 @@ impl GitLabIssuesClient {
             self.config.gitlab_url, self.config.project_id
         );
 
-        if self.debug {
-            info!("🌐 POST {url} (with retry logic)");
-            info!("📤 Issue payload:");
-            info!("   Title: {}", payload.title);
-            if let Some(ref labels) = payload.labels {
-                info!("   Labels: '{labels}'");
-            } else {
-                info!("   Labels: None");
-            }
-
-            // Print full JSON payload
-            match serde_json::to_string_pretty(payload) {
-                Ok(json) => info!("   Full JSON payload:\n{json}"),
-                Err(e) => info!("   Failed to serialize payload: {e}"),
-            }
+        debug!("🌐 POST {url} (with retry logic)");
+        debug!("📤 Issue payload:");
+        debug!("   Title: {}", payload.title);
+        if let Some(ref labels) = payload.labels {
+            debug!("   Labels: '{labels}'");
+        } else {
+            debug!("   Labels: None");
+        }
+        // Print full JSON payload
+        match serde_json::to_string_pretty(payload) {
+            Ok(json) => debug!("   Full JSON payload:\n{json}"),
+            Err(e) => debug!("   Failed to serialize payload: {e}"),
         }
 
         let client = &self.client;
@@ -513,29 +474,24 @@ impl GitLabIssuesClient {
         if status.is_success() {
             let issue: GitLabIssueResponse = response.json().await?;
 
-            if self.debug {
-                info!("📥 GitLab API Response:");
-                info!("   Status: {status}");
-                info!("   Issue ID: {}", issue.id);
-                info!("   Issue IID: {}", issue.iid);
-                info!("   Title: {}", issue.title);
-                info!("   Web URL: {}", issue.web_url);
-
-                // Print full JSON response
-                match serde_json::to_string_pretty(&issue) {
-                    Ok(json) => info!("   Full JSON response:\n{json}"),
-                    Err(e) => info!("   Failed to serialize response: {e}"),
-                }
+            debug!("📥 GitLab API Response:");
+            debug!("   Status: {status}");
+            debug!("   Issue ID: {}", issue.id);
+            debug!("   Issue IID: {}", issue.iid);
+            debug!("   Title: {}", issue.title);
+            debug!("   Web URL: {}", issue.web_url);
+            // Print full JSON response
+            match serde_json::to_string_pretty(&issue) {
+                Ok(json) => debug!("   Full JSON response:\n{json}"),
+                Err(e) => debug!("   Failed to serialize response: {e}"),
             }
 
             Ok(issue)
         } else {
             let error_text = response.text().await.unwrap_or("Unknown error".to_string());
-            if self.debug {
-                info!("❌ GitLab API Error:");
-                info!("   Status: {status}");
-                info!("   Error: {error_text}");
-            }
+            debug!("❌ GitLab API Error:");
+            debug!("   Status: {status}");
+            debug!("   Error: {error_text}");
             Err(GitLabError::ApiError {
                 status: status.as_u16(),
                 message: error_text,
@@ -552,10 +508,8 @@ impl GitLabIssuesClient {
             self.config.gitlab_url, self.config.project_id, encoded_title
         );
 
-        if self.debug {
-            info!("🔍 Searching for existing issue: {title}");
-            info!("🌐 GET {url} (with retry logic)");
-        }
+        debug!("🔍 Searching for existing issue: {title}");
+        debug!("🌐 GET {url} (with retry logic)");
 
         let client = &self.client;
         let response = self
@@ -571,9 +525,8 @@ impl GitLabIssuesClient {
             // Check for exact title match (GitLab search is fuzzy, so we need exact match)
             let exact_match = issues.iter().any(|issue| issue.title == title);
 
-            if self.debug && exact_match {
-                info!("✅ Found existing issue with exact title match");
-            } else if self.debug {
+            if exact_match {
+                debug!("✅ Found existing issue with exact title match");
                 info!("🆕 No existing issue found with exact title match");
             }
 
@@ -595,47 +548,43 @@ impl GitLabIssuesClient {
         let finding = &finding_with_source.finding;
         let source = &finding_with_source.source_scan;
 
-        if self.debug {
-            info!("🔍 DEBUG: Creating issue payload for finding:");
-            info!(
-                "   Raw file path from Veracode: '{}'",
-                finding.files.source_file.file
-            );
-            info!("   Issue type: '{}'", finding.issue_type);
-            info!(
-                "   Severity: {} ({})",
-                finding.severity,
-                get_severity_name(finding.severity)
-            );
-            if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
-                info!("   CWE ID: '{}'", finding.cwe_id);
+        debug!("🔍 DEBUG: Creating issue payload for finding:");
+        debug!(
+            "   Raw file path from Veracode: '{}'",
+            finding.files.source_file.file
+        );
+        debug!("   Issue type: '{}'", finding.issue_type);
+        debug!(
+            "   Severity: {} ({})",
+            finding.severity,
+            get_severity_name(finding.severity)
+        );
+        if !finding.cwe_id.is_empty() && finding.cwe_id != "0" {
+            debug!("   CWE ID: '{}'", finding.cwe_id);
+        }
+        debug!("   Line number: {}", finding.files.source_file.line);
+        if let Some(ref function_name) = finding.files.source_file.function_name {
+            if !function_name.is_empty() && function_name != "UNKNOWN" {
+                debug!("   Function: '{function_name}'");
             }
-            info!("   Line number: {}", finding.files.source_file.line);
-            if let Some(ref function_name) = finding.files.source_file.function_name {
-                if !function_name.is_empty() && function_name != "UNKNOWN" {
-                    info!("   Function: '{function_name}'");
-                }
+        }
+        // Debug flaw details link
+        match &finding.flaw_details_link {
+            Some(link) if !link.is_empty() => {
+                debug!("   Flaw Details Link: '{link}'");
             }
-            // Debug flaw details link
-            match &finding.flaw_details_link {
-                Some(link) if !link.is_empty() => {
-                    info!("   Flaw Details Link: '{link}'");
-                }
-                Some(_) => {
-                    info!("   Flaw Details Link: (empty)");
-                }
-                None => {
-                    info!("   Flaw Details Link: (not provided)");
-                }
+            Some(_) => {
+                debug!("   Flaw Details Link: (empty)");
+            }
+            None => {
+                debug!("   Flaw Details Link: (not provided)");
             }
         }
 
         // Resolve the file path once for consistent issue titles and descriptions
         let resolved_file_path = self.resolve_file_path(&finding.files.source_file.file);
 
-        if self.debug {
-            info!("   Resolved file path: '{resolved_file_path}'");
-        }
+        debug!("   Resolved file path: '{resolved_file_path}'");
 
         // Create concise title with CWE, function (or issue type), filename, line number and path hash
         let severity_name = get_severity_name(finding.severity);
@@ -764,28 +713,26 @@ impl GitLabIssuesClient {
         // Create final title with hash
         let title = format!("{base_title} ({short_hash})");
 
-        if self.debug {
-            info!("   Title components:");
-            info!("     Severity: '{severity_name}'");
-            info!("     CWE ID: '{cwe_id}'");
-            info!("     Function/Issue: '{function_or_issue}'");
-            info!("     Filename: '{filename}'");
-            info!("     Line: {}", finding.files.source_file.line);
-            info!("   Hash input fields:");
-            info!("     Project_Name: '{project_name}'");
-            info!("     Source_File: '{}'", finding.files.source_file.file);
-            info!("     CWE_ID: '{cwe_id}'");
-            info!("     Issue_Type: '{}'", finding.issue_type);
-            info!("     Title: '{}'", finding.title);
-            info!("     Severity: '{}'", finding.severity);
-            info!("     File_Path: '{resolved_file_path}'");
-            info!("     Line_Number: '{}'", finding.files.source_file.line);
-            info!("     Function_Name: '{function_name}'");
-            info!("     Generated hash: '{short_hash}' (first 8 chars)");
-            info!("   Final issue title: '{title}'");
-            if let Some(ref labels_str) = labels_string {
-                info!("   Labels string for API: '{labels_str}'");
-            }
+        debug!("   Title components:");
+        debug!("     Severity: '{severity_name}'");
+        debug!("     CWE ID: '{cwe_id}'");
+        debug!("     Function/Issue: '{function_or_issue}'");
+        debug!("     Filename: '{filename}'");
+        debug!("     Line: {}", finding.files.source_file.line);
+        debug!("   Hash input fields:");
+        debug!("     Project_Name: '{project_name}'");
+        debug!("     Source_File: '{}'", finding.files.source_file.file);
+        debug!("     CWE_ID: '{cwe_id}'");
+        debug!("     Issue_Type: '{}'", finding.issue_type);
+        debug!("     Title: '{}'", finding.title);
+        debug!("     Severity: '{}'", finding.severity);
+        debug!("     File_Path: '{resolved_file_path}'");
+        debug!("     Line_Number: '{}'", finding.files.source_file.line);
+        debug!("     Function_Name: '{function_name}'");
+        debug!("     Generated hash: '{short_hash}' (first 8 chars)");
+        debug!("   Final issue title: '{title}'");
+        if let Some(ref labels_str) = labels_string {
+            debug!("   Labels string for API: '{labels_str}'");
         }
 
         Ok(GitLabIssuePayload {
@@ -815,7 +762,7 @@ impl GitLabIssuesClient {
         self.config.project_dir = Some(absolute_path.clone());
 
         // Create path resolver when project dir is set
-        let resolver_config = PathResolverConfig::new(&absolute_path, self.debug);
+        let resolver_config = PathResolverConfig::new(&absolute_path);
         self.config.path_resolver = Some(PathResolver::new(resolver_config));
 
         self
@@ -823,7 +770,7 @@ impl GitLabIssuesClient {
 
     /// Resolve file path relative to project directory using shared utility
     fn resolve_file_path(&self, file_path: &str) -> String {
-        resolve_file_path(file_path, self.config.path_resolver.as_ref(), self.debug).into_owned()
+        resolve_file_path(file_path, self.config.path_resolver.as_ref()).into_owned()
     }
 
     /// Create detailed issue description with pre-resolved file path
@@ -899,14 +846,12 @@ impl GitLabIssuesClient {
                 description.push_str(&format!(
                     "| **Flaw Details** | [View in Veracode]({flaw_details_link}) |\n"
                 ));
-                if self.debug {
-                    info!("   Added flaw details link to GitLab issue: {flaw_details_link}");
-                }
-            } else if self.debug {
-                info!("   Flaw details link is empty, not adding to GitLab issue");
+                debug!("   Added flaw details link to GitLab issue: {flaw_details_link}");
+            } else {
+                debug!("   Flaw details link is empty, not adding to GitLab issue");
             }
-        } else if self.debug {
-            info!("   No flaw details link available for this finding");
+        } else {
+            debug!("   No flaw details link available for this finding");
         }
 
         description.push('\n');
@@ -950,16 +895,12 @@ impl GitLabIssuesClient {
                     "- [Detailed Vulnerability Information (Veracode)]({flaw_details_link})\n"
                 ));
                 has_links = true;
-                if self.debug {
-                    info!(
-                        "   Added flaw details link to Related Links section: {flaw_details_link}"
-                    );
-                }
-            } else if self.debug {
-                info!("   Flaw details link is empty, not adding to Related Links");
+                debug!("   Added flaw details link to Related Links section: {flaw_details_link}");
+            } else {
+                debug!("   Flaw details link is empty, not adding to Related Links");
             }
-        } else if self.debug {
-            info!("   No flaw details link available for Related Links section");
+        } else {
+            debug!("   No flaw details link available for Related Links section");
         }
 
         // Add the links section if we have any links
@@ -1187,8 +1128,7 @@ mod tests {
                 http_timeouts: HttpTimeouts::default(),
                 retry_config: RetryConfig::default(),
             },
-            debug: false,
-            retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
+            retryable_client: RetryableRequest::new(RetryConfig::default()),
         };
 
         // Test with no project dir set - should return original path
@@ -1238,8 +1178,7 @@ mod tests {
                 http_timeouts: HttpTimeouts::default(),
                 retry_config: RetryConfig::default(),
             },
-            debug: false,
-            retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
+            retryable_client: RetryableRequest::new(RetryConfig::default()),
         };
 
         assert_eq!(get_severity_name(5), "Very High");
@@ -1532,9 +1471,9 @@ mod tests {
 
     #[test]
     fn test_is_retryable_error() {
-        let client = Client::new();
+        let _client = Client::new();
         let retry_config = RetryConfig::default();
-        let retryable_client = RetryableRequest::new(client, retry_config, false);
+        let retryable_client = RetryableRequest::new(retry_config);
 
         // Create mock errors to test retryability
         // Note: These are conceptual tests since we can't easily create specific reqwest::Error instances
@@ -1550,9 +1489,9 @@ mod tests {
 
     #[test]
     fn test_jitter_calculation() {
-        let client = Client::new();
+        let _client = Client::new();
         let retry_config = RetryConfig::default();
-        let retryable_client = RetryableRequest::new(client, retry_config, false);
+        let retryable_client = RetryableRequest::new(retry_config);
 
         let original_delay = Duration::from_millis(1000);
         let jittered_delay = retryable_client.add_jitter(original_delay);
@@ -1621,8 +1560,7 @@ mod tests {
                 http_timeouts: HttpTimeouts::default(),
                 retry_config: RetryConfig::default(),
             },
-            debug: false,
-            retryable_client: RetryableRequest::new(Client::new(), RetryConfig::default(), false),
+            retryable_client: RetryableRequest::new(RetryConfig::default()),
         };
 
         let pipeline_url = client.create_pipeline_url("456");

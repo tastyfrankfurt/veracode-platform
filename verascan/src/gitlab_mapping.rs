@@ -30,6 +30,7 @@ pub struct ScanTypeDetector;
 
 impl ScanTypeDetector {
     /// Detect scan type from raw JSON data
+    #[must_use]
     pub fn detect(data: &serde_json::Value) -> ScanType {
         // Check for pipeline scan structure
         if data.get("findings").is_some() && data.get("scan_id").is_some() {
@@ -61,6 +62,7 @@ impl ScanTypeDetector {
     }
 
     /// Validate that the detected scan type has the expected data structure
+    #[must_use]
     pub fn validate_structure(data: &serde_json::Value, scan_type: &ScanType) -> bool {
         match scan_type {
             ScanType::Pipeline => {
@@ -119,11 +121,13 @@ pub struct UrlFilter {
 }
 
 impl UrlFilter {
+    #[must_use]
     pub fn new(config: MappingConfig) -> Self {
         Self { config }
     }
 
     /// Check if a URL is valid for external access (no network calls)
+    #[must_use]
     pub fn is_valid_external_url(&self, url: &str) -> bool {
         // Pattern-based filtering - no network calls
         for blocked_pattern in &self.config.blocked_url_patterns {
@@ -146,6 +150,7 @@ impl UrlFilter {
     }
 
     /// Filter and replace URLs according to configuration
+    #[must_use]
     pub fn filter_and_replace_url(&self, source_url: &str, cwe_id: Option<&str>) -> Option<String> {
         // Check for URL replacements
         for (pattern, replacement) in &self.config.url_replacements {
@@ -169,6 +174,7 @@ impl UrlFilter {
     }
 
     /// Generate a CWE URL from CWE ID
+    #[must_use]
     pub fn generate_cwe_url(cwe_id: &str) -> Option<String> {
         if !cwe_id.is_empty() && cwe_id != "0" {
             Some(format!(
@@ -181,6 +187,7 @@ impl UrlFilter {
 }
 
 /// Extract CWE ID from various URL formats
+#[must_use]
 pub fn extract_cwe_id_from_url(url: &str) -> Option<String> {
     if let Some(start) = url.find("/cwes/") {
         let after_cwes = &url[start + 6..];
@@ -203,7 +210,7 @@ pub trait GitLabFieldMapper {
     fn map_description(&self, data: &dyn ScanResultData) -> String;
 
     /// Map file location information
-    fn map_location(&self, data: &dyn ScanResultData, url_filter: &UrlFilter) -> GitLabLocation;
+    fn map_location(&self, data: &dyn ScanResultData) -> GitLabLocation;
 
     /// Map identifiers (CWE, Veracode, etc.)
     fn map_identifiers(
@@ -417,6 +424,7 @@ pub struct PipelineScanMapper {
 }
 
 impl PipelineScanMapper {
+    #[must_use]
     pub fn new(config: MappingConfig) -> Self {
         Self { config }
     }
@@ -450,7 +458,7 @@ impl GitLabFieldMapper for PipelineScanMapper {
         )
     }
 
-    fn map_location(&self, data: &dyn ScanResultData, _url_filter: &UrlFilter) -> GitLabLocation {
+    fn map_location(&self, data: &dyn ScanResultData) -> GitLabLocation {
         GitLabLocation {
             file: Some(data.get_file_path()),
             start_line: Some(data.get_file_line()),
@@ -621,6 +629,7 @@ pub struct PolicyScanMapper {
 }
 
 impl PolicyScanMapper {
+    #[must_use]
     pub fn new(config: MappingConfig) -> Self {
         Self { config }
     }
@@ -657,7 +666,7 @@ impl GitLabFieldMapper for PolicyScanMapper {
         )
     }
 
-    fn map_location(&self, data: &dyn ScanResultData, _url_filter: &UrlFilter) -> GitLabLocation {
+    fn map_location(&self, data: &dyn ScanResultData) -> GitLabLocation {
         GitLabLocation {
             file: Some(data.get_file_path()),
             start_line: Some(data.get_file_line()),
@@ -897,6 +906,7 @@ pub struct UnifiedGitLabMapper {
 
 impl UnifiedGitLabMapper {
     /// Create a new unified mapper with the provided configuration
+    #[must_use]
     pub fn new(config: MappingConfig) -> Self {
         let pipeline_mapper = PipelineScanMapper::new(config.clone());
         let policy_mapper = PolicyScanMapper::new(config.clone());
@@ -1008,7 +1018,7 @@ impl UnifiedGitLabMapper {
         Ok(GitLabVulnerability {
             id: vulnerability_id,
             identifiers: mapper.map_identifiers(data, &self.url_filter),
-            location: mapper.map_location(data, &self.url_filter),
+            location: mapper.map_location(data),
             name: Some(mapper.map_vulnerability_name(data)),
             description: Some(mapper.map_description(data)),
             severity: Some(mapper.map_severity(data)),
@@ -1023,11 +1033,13 @@ impl UnifiedGitLabMapper {
     }
 
     /// Get the configuration being used
+    #[must_use]
     pub fn get_config(&self) -> &MappingConfig {
         &self.config
     }
 
     /// Update configuration (creates a new mapper)
+    #[must_use]
     pub fn with_config(config: MappingConfig) -> Self {
         Self::new(config)
     }
@@ -1044,6 +1056,7 @@ pub struct GitLabMapperFactory;
 
 impl GitLabMapperFactory {
     /// Create mapper optimized for CI/CD pipelines
+    #[must_use]
     pub fn for_cicd() -> UnifiedGitLabMapper {
         let config = MappingConfig {
             include_tracking: true,
@@ -1055,6 +1068,7 @@ impl GitLabMapperFactory {
     }
 
     /// Create mapper optimized for security dashboards
+    #[must_use]
     pub fn for_security_dashboard() -> UnifiedGitLabMapper {
         let config = MappingConfig {
             include_tracking: false, // Reduce noise in dashboard
@@ -1066,6 +1080,7 @@ impl GitLabMapperFactory {
     }
 
     /// Create mapper with minimal output
+    #[must_use]
     pub fn minimal() -> UnifiedGitLabMapper {
         let config = MappingConfig {
             include_tracking: false,
@@ -1077,6 +1092,7 @@ impl GitLabMapperFactory {
     }
 
     /// Create mapper with custom identifier types
+    #[must_use]
     pub fn with_identifiers(identifier_types: Vec<String>) -> UnifiedGitLabMapper {
         let config = MappingConfig {
             identifier_types,
@@ -1298,7 +1314,7 @@ mod tests {
         ));
 
         // Test location mapping
-        let location = mapper.map_location(&finding, &url_filter);
+        let location = mapper.map_location(&finding);
         assert_eq!(location.file, Some("src/main.js".to_string()));
         assert_eq!(location.start_line, Some(42));
         assert_eq!(location.method, Some("processInput".to_string()));
@@ -1353,7 +1369,7 @@ mod tests {
         ));
 
         // Test location mapping
-        let location = mapper.map_location(&wrapper, &url_filter);
+        let location = mapper.map_location(&wrapper);
         assert_eq!(
             location.file,
             Some("com/example/VulnerableApp.java".to_string())

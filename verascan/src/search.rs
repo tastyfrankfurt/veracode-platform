@@ -1,6 +1,6 @@
 use crate::FileFinder;
 use crate::cli::{Args, Commands};
-use log::{error, info};
+use log::{debug, error, info};
 use std::path::PathBuf;
 
 pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
@@ -25,11 +25,14 @@ pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
         Commands::Export { .. } => {
             return Err(1); // Export command doesn't need file search
         }
+        Commands::HelpEnv => {
+            return Err(1); // HelpEnv command doesn't need file search
+        }
     };
 
     let finder = FileFinder::new();
-    let config = FileFinder::parse_config(filepath, filefilter, recursive, validate, args.debug)
-        .map_err(|e| {
+    let config =
+        FileFinder::parse_config(filepath, filefilter, recursive, validate).map_err(|e| {
             error!("Error: {e}");
             1
         })?;
@@ -80,15 +83,17 @@ fn display_search_results(
                 // Export command doesn't use file search, this shouldn't be reached
                 return Ok(());
             }
+            Commands::HelpEnv => {
+                // HelpEnv command doesn't use file search, this shouldn't be reached
+                return Ok(());
+            }
         }
     }
 
     if validate {
-        if args.debug {
-            info!("\n📊 Search completed with validation.");
-            info!("   Total valid files returned: {}", matched_files.len());
-            info!("   (Invalid files were filtered out and shown above)");
-        }
+        debug!("\n📊 Search completed with validation.");
+        debug!("   Total valid files returned: {}", matched_files.len());
+        debug!("   (Invalid files were filtered out and shown above)");
     } else {
         info!(
             "Found {} file(s) {} matching patterns '{}':",
