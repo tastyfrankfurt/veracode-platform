@@ -564,12 +564,12 @@ impl PipelineApi {
         app_name: Option<&str>,
     ) -> Result<ScanCreationResult, PipelineError> {
         // Look up app_id if app_name is provided
-        if let Some(name) = app_name {
-            if request.app_id.is_none() {
-                let app_id = self.lookup_app_id_by_name(name).await?;
-                request.app_id = Some(app_id.clone());
-                info!("✅ Found application '{name}' with ID: {app_id}");
-            }
+        if let Some(name) = app_name
+            && request.app_id.is_none()
+        {
+            let app_id = self.lookup_app_id_by_name(name).await?;
+            request.app_id = Some(app_id.clone());
+            info!("✅ Found application '{name}' with ID: {app_id}");
         }
 
         self.create_scan(request).await
@@ -829,12 +829,11 @@ impl PipelineApi {
         // Parse JSON response to find the next upload URI
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(response_text) {
             // Look for _links.upload.href (HAL format)
-            if let Some(links) = json_value.get("_links") {
-                if let Some(upload) = links.get("upload") {
-                    if let Some(href) = upload.get("href") {
-                        return href.as_str().map(str::to_owned);
-                    }
-                }
+            if let Some(links) = json_value.get("_links")
+                && let Some(upload) = links.get("upload")
+                && let Some(href) = upload.get("href")
+            {
+                return href.as_str().map(str::to_owned);
             }
 
             // Alternative: look for upload_url field
@@ -1116,21 +1115,19 @@ impl PipelineApi {
                         // Fallback: try to parse as generic JSON and extract findings array
                         if let Ok(json_value) =
                             serde_json::from_str::<serde_json::Value>(&response_text)
-                        {
-                            if let Some(findings_array) =
+                            && let Some(findings_array) =
                                 json_value.get("findings").and_then(|f| f.as_array())
-                            {
-                                debug!("🔍 Debug - Trying fallback parsing of findings array...");
-                                let findings: Result<Vec<Finding>, _> = findings_array
-                                    .iter()
-                                    .map(|f| serde_json::from_value(f.clone()))
-                                    .collect();
-                                return findings.map_err(|e| {
-                                    PipelineError::InvalidRequest(format!(
-                                        "Failed to parse findings array: {e}"
-                                    ))
-                                });
-                            }
+                        {
+                            debug!("🔍 Debug - Trying fallback parsing of findings array...");
+                            let findings: Result<Vec<Finding>, _> = findings_array
+                                .iter()
+                                .map(|f| serde_json::from_value(f.clone()))
+                                .collect();
+                            return findings.map_err(|e| {
+                                PipelineError::InvalidRequest(format!(
+                                    "Failed to parse findings array: {e}"
+                                ))
+                            });
                         }
                         Err(PipelineError::InvalidRequest(format!(
                             "Failed to parse findings response: {e}"

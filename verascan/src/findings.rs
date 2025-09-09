@@ -237,14 +237,14 @@ impl FindingsAggregator {
             // Add findings with source information, applying severity filter if specified
             for finding in &results.findings {
                 // Apply severity filter if specified
-                if let Some(min_severity) = min_severity_filter {
-                    if finding.severity < min_severity {
-                        debug!(
-                            "🔽 Filtered out finding: {} (severity {} < {})",
-                            finding.title, finding.severity, min_severity
-                        );
-                        continue;
-                    }
+                if let Some(min_severity) = min_severity_filter
+                    && finding.severity < min_severity
+                {
+                    debug!(
+                        "🔽 Filtered out finding: {} (severity {} < {})",
+                        finding.title, finding.severity, min_severity
+                    );
+                    continue;
                 }
 
                 let finding_with_source = FindingWithSource {
@@ -427,7 +427,7 @@ impl FindingsAggregator {
     fn convert_to_baseline_format(
         &self,
         aggregated: &AggregatedFindings,
-    ) -> Result<crate::baseline::BaselineFile, Box<dyn std::error::Error>> {
+    ) -> Result<crate::baseline::BaselineFile<'_>, Box<dyn std::error::Error>> {
         use crate::baseline::*;
         use chrono::Utc;
 
@@ -623,10 +623,10 @@ impl FindingsAggregator {
             info!("   ├─ File: {}", finding.files.source_file.file);
             info!("   ├─ Line: {}", finding.files.source_file.line);
 
-            if let Some(ref function_name) = finding.files.source_file.function_name {
-                if !function_name.is_empty() {
-                    info!("   ├─ Function: {function_name}");
-                }
+            if let Some(ref function_name) = finding.files.source_file.function_name
+                && !function_name.is_empty()
+            {
+                info!("   ├─ Function: {function_name}");
             }
 
             info!(

@@ -563,10 +563,11 @@ impl GitLabIssuesClient {
             debug!("   CWE ID: '{}'", finding.cwe_id);
         }
         debug!("   Line number: {}", finding.files.source_file.line);
-        if let Some(ref function_name) = finding.files.source_file.function_name {
-            if !function_name.is_empty() && function_name != "UNKNOWN" {
-                debug!("   Function: '{function_name}'");
-            }
+        if let Some(ref function_name) = finding.files.source_file.function_name
+            && !function_name.is_empty()
+            && function_name != "UNKNOWN"
+        {
+            debug!("   Function: '{function_name}'");
         }
         // Debug flaw details link
         match &finding.flaw_details_link {
@@ -831,10 +832,11 @@ impl GitLabIssuesClient {
             finding.files.source_file.line
         ));
 
-        if let Some(ref function_name) = finding.files.source_file.function_name {
-            if !function_name.is_empty() && function_name != "UNKNOWN" {
-                description.push_str(&format!("| **Function** | `{function_name}` |\n"));
-            }
+        if let Some(ref function_name) = finding.files.source_file.function_name
+            && !function_name.is_empty()
+            && function_name != "UNKNOWN"
+        {
+            description.push_str(&format!("| **Function** | `{function_name}` |\n"));
         }
 
         description.push_str(&format!("| **Scan ID** | `{}` |\n", source.scan_id));

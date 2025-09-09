@@ -141,11 +141,11 @@ pub fn get_project_web_url(
     }
 
     // If we have project path with namespace, construct URL
-    if let Some(project_path) = project_path_with_namespace {
-        if gitlab_url.contains("/api/v4/projects/") {
-            let web_base = gitlab_url.replace("/api/v4/projects/", "/");
-            return Some(format!("{web_base}{project_path}"));
-        }
+    if let Some(project_path) = project_path_with_namespace
+        && gitlab_url.contains("/api/v4/projects/")
+    {
+        let web_base = gitlab_url.replace("/api/v4/projects/", "/");
+        return Some(format!("{web_base}{project_path}"));
     }
 
     None

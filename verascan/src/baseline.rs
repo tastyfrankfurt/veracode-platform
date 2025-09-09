@@ -1020,11 +1020,11 @@ impl BaselineManager {
         let mut violations = Vec::new();
 
         // Check max total findings - use iterator to avoid copying
-        if let Some(max_total) = criteria.max_total_findings {
-            if findings.len() as u32 > max_total {
-                violations.extend(findings.iter().cloned());
-                return violations;
-            }
+        if let Some(max_total) = criteria.max_total_findings
+            && findings.len() as u32 > max_total
+        {
+            violations.extend(findings.iter().cloned());
+            return violations;
         }
 
         // Check fail on high severity - use iterator filter
@@ -1243,10 +1243,10 @@ pub fn execute_baseline_compare(
     manager.display_comparison_summary(&comparison);
 
     // Export if requested
-    if let Some(output) = output_path {
-        if let Err(e) = manager.export_comparison(&comparison, output) {
-            error!("⚠️  Warning: Failed to export comparison results: {e}");
-        }
+    if let Some(output) = output_path
+        && let Err(e) = manager.export_comparison(&comparison, output)
+    {
+        error!("⚠️  Warning: Failed to export comparison results: {e}");
     }
 
     Ok(comparison)
@@ -1280,10 +1280,10 @@ pub fn execute_policy_file_assessment(
     manager.display_policy_summary(&assessment);
 
     // Export if requested
-    if let Some(output) = output_path {
-        if let Err(e) = manager.export_policy_assessment(&assessment, output) {
-            error!("⚠️  Warning: Failed to export policy assessment: {e}");
-        }
+    if let Some(output) = output_path
+        && let Err(e) = manager.export_policy_assessment(&assessment, output)
+    {
+        error!("⚠️  Warning: Failed to export policy assessment: {e}");
     }
 
     Ok(assessment)
@@ -1351,10 +1351,10 @@ pub async fn execute_policy_name_assessment(
     manager.display_policy_summary(&assessment);
 
     // Export if requested
-    if let Some(output) = output_path {
-        if let Err(e) = manager.export_policy_assessment(&assessment, output) {
-            error!("⚠️  Warning: Failed to export policy assessment: {e}");
-        }
+    if let Some(output) = output_path
+        && let Err(e) = manager.export_policy_assessment(&assessment, output)
+    {
+        error!("⚠️  Warning: Failed to export policy assessment: {e}");
     }
 
     Ok(assessment)
