@@ -407,7 +407,11 @@ impl FindingsApi {
                 VeracodeError::NotFound { .. } if query.context.is_some() => {
                     FindingsError::SandboxNotFound {
                         app_guid: query.app_guid.to_string(),
-                        sandbox_guid: query.context.as_ref().expect("context is_some() was checked").to_string(),
+                        sandbox_guid: query
+                            .context
+                            .as_ref()
+                            .expect("context is_some() was checked")
+                            .to_string(),
                     }
                 }
                 VeracodeError::NotFound { .. } => FindingsError::ApplicationNotFound {

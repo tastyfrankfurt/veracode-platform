@@ -1,5 +1,5 @@
 use crate::credentials::{
-    CredentialSource, CredentialError, SecureApiCredentials, VaultConfig, validate_api_credential,
+    CredentialError, CredentialSource, SecureApiCredentials, VaultConfig, validate_api_credential,
 };
 use backoff::{ExponentialBackoff, future::retry};
 use log::{debug, error, info, warn};

@@ -661,7 +661,9 @@ impl<'a> IdentityApi<'a> {
         }
 
         // Team membership validation: ALL users must either have team assignment OR "No Team Restrictions" role
-        let has_teams = fixed_request.team_ids.as_ref()
+        let has_teams = fixed_request
+            .team_ids
+            .as_ref()
             .is_some_and(|teams| !teams.is_empty());
 
         if !has_teams {
@@ -697,7 +699,10 @@ impl<'a> IdentityApi<'a> {
         // Validate role assignments for API users
         if is_api_user && fixed_request.role_ids.is_some() {
             let roles = self.list_roles().await?;
-            let provided_role_ids = fixed_request.role_ids.as_ref().expect("role_ids was checked to be Some");
+            let provided_role_ids = fixed_request
+                .role_ids
+                .as_ref()
+                .expect("role_ids was checked to be Some");
 
             // Define human-only role descriptions (from userrolesbydescription file)
             let human_role_descriptions = [
@@ -743,7 +748,11 @@ impl<'a> IdentityApi<'a> {
         }
 
         // If no roles provided, assign default roles (any scan and submitter)
-        if fixed_request.role_ids.as_ref().is_none_or(|roles| roles.is_empty()) {
+        if fixed_request
+            .role_ids
+            .as_ref()
+            .is_none_or(|roles| roles.is_empty())
+        {
             // Get available roles to find default ones
             let roles = self.list_roles().await?;
             let mut default_role_ids = Vec::new();
@@ -808,7 +817,11 @@ impl<'a> IdentityApi<'a> {
 
         // If no permissions provided, assign default permissions based on user type
         if fixed_request.permissions.is_none()
-            || fixed_request.permissions.as_ref().expect("permissions was checked to be Some").is_empty()
+            || fixed_request
+                .permissions
+                .as_ref()
+                .expect("permissions was checked to be Some")
+                .is_empty()
         {
             if is_api_user {
                 // For API users, assign "apiUser" permission (from defaultapiuserperm file)
