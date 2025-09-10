@@ -91,7 +91,7 @@ fn display_search_results(
     }
 
     if validate {
-        debug!("\n📊 Search completed with validation.");
+        debug!("📊 Search completed with validation.");
         debug!("   Total valid files returned: {}", matched_files.len());
         debug!("   (Invalid files were filtered out and shown above)");
     } else {

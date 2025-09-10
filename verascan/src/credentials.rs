@@ -291,7 +291,7 @@ pub fn create_veracode_config_from_credentials(
     let region = parse_region_from_str(region_str)?;
 
     // Use ARC-based credentials for optimal memory sharing
-    debug!("🔗 Creating VeracodeConfig with ARC-based credentials");
+    debug!("🔗 Creating VeracodeConfig with credentials");
     let base_config =
         VeracodeConfig::from_arc_credentials(credentials.api_id_ptr(), credentials.api_key_ptr())
             .with_region(region);

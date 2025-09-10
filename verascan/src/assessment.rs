@@ -1245,9 +1245,7 @@ impl AssessmentSubmitter {
                 .await
             {
                 Ok(prescan_results) => {
-                    {
-                        info!("📊 Prescan status: {}", prescan_results.status);
-                    }
+                    info!("📊 Prescan status: {}", prescan_results.status);
 
                     match prescan_results.status.as_str() {
                         "Pre-Scan Success" => {
@@ -1263,11 +1261,7 @@ impl AssessmentSubmitter {
                         }
                         _ => {
                             // Continue polling for other statuses (including "Pre-Scan Submitted")
-                            {
-                                info!("⏳ Prescan in progress, waiting {poll_interval} seconds...");
-                            }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
+                            info!("⏳ Prescan in progress, waiting {poll_interval} seconds...");
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1582,7 +1576,7 @@ impl AssessmentSubmitter {
                             }
                         }
 
-                        debug!("📊 Policy compliance status: {compliance_status}");
+                        info!("📊 Policy compliance status: {compliance_status}");
 
                         // Break build if policy compliance failed (after successful export)
                         if should_break_build {
