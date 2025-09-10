@@ -53,7 +53,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     // Read the actual sample file
-    let binary_data = match std::fs::read(sample_file_path) {
+    let binary_data = match tokio::fs::read(sample_file_path).await {
         Ok(data) => {
             println!("📁 File size: {} bytes", data.len());
             data
@@ -333,7 +333,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             // Save results to JSON file
             let results_filename = format!("pipeline_scan_results_{timestamp}.json");
             match serde_json::to_string_pretty(&results) {
-                Ok(json_data) => match std::fs::write(&results_filename, json_data) {
+                Ok(json_data) => match tokio::fs::write(&results_filename, json_data).await {
                     Ok(_) => {
                         println!("💾 Results saved to: {results_filename}");
                     }

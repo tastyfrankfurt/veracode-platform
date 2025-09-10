@@ -10,6 +10,7 @@ use crate::{
     sandbox::{Sandbox, SandboxError},
     scan::ScanError,
 };
+use log::{debug, info};
 
 /// High-level workflow operations for Veracode platform
 pub struct VeracodeWorkflow {
@@ -101,6 +102,7 @@ pub struct WorkflowConfig {
 
 impl WorkflowConfig {
     /// Create a new workflow configuration
+    #[must_use]
     pub fn new(app_name: String, sandbox_name: String) -> Self {
         Self {
             app_name,
@@ -115,42 +117,49 @@ impl WorkflowConfig {
     }
 
     /// Set business criticality
+    #[must_use]
     pub fn with_business_criticality(mut self, criticality: BusinessCriticality) -> Self {
         self.business_criticality = criticality;
         self
     }
 
     /// Set application description
+    #[must_use]
     pub fn with_app_description(mut self, description: String) -> Self {
         self.app_description = Some(description);
         self
     }
 
     /// Set sandbox description
+    #[must_use]
     pub fn with_sandbox_description(mut self, description: String) -> Self {
         self.sandbox_description = Some(description);
         self
     }
 
     /// Add file to upload
+    #[must_use]
     pub fn with_file(mut self, file_path: String) -> Self {
         self.file_paths.push(file_path);
         self
     }
 
     /// Add multiple files to upload
+    #[must_use]
     pub fn with_files(mut self, file_paths: Vec<String>) -> Self {
         self.file_paths.extend(file_paths);
         self
     }
 
     /// Set auto-scan behavior
+    #[must_use]
     pub fn with_auto_scan(mut self, auto_scan: bool) -> Self {
         self.auto_scan = auto_scan;
         self
     }
 
     /// Set scan all modules behavior
+    #[must_use]
     pub fn with_scan_all_modules(mut self, scan_all: bool) -> Self {
         self.scan_all_modules = scan_all;
         self
@@ -180,6 +189,7 @@ pub struct WorkflowResultData {
 
 impl VeracodeWorkflow {
     /// Create a new workflow instance
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         Self { client }
     }
@@ -205,24 +215,24 @@ impl VeracodeWorkflow {
         &self,
         config: WorkflowConfig,
     ) -> WorkflowResult<WorkflowResultData> {
-        println!("🚀 Starting complete Veracode XML API workflow");
-        println!("   Application: {}", config.app_name);
-        println!("   Sandbox: {}", config.sandbox_name);
-        println!("   Files to upload: {}", config.file_paths.len());
+        info!("🚀 Starting complete Veracode XML API workflow");
+        info!("   Application: {}", config.app_name);
+        info!("   Sandbox: {}", config.sandbox_name);
+        info!("   Files to upload: {}", config.file_paths.len());
 
         // Step 1: Check for Application existence, create if not exist
-        println!("\n📱 Step 1: Checking application existence...");
+        info!("\n📱 Step 1: Checking application existence...");
         let (application, app_created) =
             match self.client.get_application_by_name(&config.app_name).await {
                 Ok(Some(app)) => {
-                    println!(
+                    info!(
                         "   ✅ Application '{}' found (GUID: {})",
                         config.app_name, app.guid
                     );
                     (app, false)
                 }
                 Ok(None) => {
-                    println!(
+                    info!(
                         "   ➕ Application '{}' not found, creating...",
                         config.app_name
                     );
@@ -237,7 +247,7 @@ impl VeracodeWorkflow {
                         .await
                     {
                         Ok(app) => {
-                            println!(
+                            info!(
                                 "   ✅ Application '{}' created successfully (GUID: {})",
                                 config.app_name, app.guid
                             );
@@ -267,24 +277,24 @@ impl VeracodeWorkflow {
 
         // Get numeric app_id for XML API
         let app_id = self.client.get_app_id_from_guid(&application.guid).await?;
-        println!("   📊 Application ID for XML API: {app_id}");
+        info!("   📊 Application ID for XML API: {app_id}");
 
         // Step 2: Check sandbox exists, if not create
-        println!("\n🧪 Step 2: Checking sandbox existence...");
+        info!("\n🧪 Step 2: Checking sandbox existence...");
         let sandbox_api = self.client.sandbox_api();
         let (sandbox, sandbox_created) = match sandbox_api
             .get_sandbox_by_name(&application.guid, &config.sandbox_name)
             .await
         {
             Ok(Some(sandbox)) => {
-                println!(
+                info!(
                     "   ✅ Sandbox '{}' found (GUID: {})",
                     config.sandbox_name, sandbox.guid
                 );
                 (sandbox, false)
             }
             Ok(None) => {
-                println!(
+                info!(
                     "   ➕ Sandbox '{}' not found, creating...",
                     config.sandbox_name
                 );
@@ -297,7 +307,7 @@ impl VeracodeWorkflow {
                     .await
                 {
                     Ok(sandbox) => {
-                        println!(
+                        info!(
                             "   ✅ Sandbox '{}' created successfully (GUID: {})",
                             config.sandbox_name, sandbox.guid
                         );
@@ -329,21 +339,21 @@ impl VeracodeWorkflow {
         let sandbox_id = sandbox_api
             .get_sandbox_id_from_guid(&application.guid, &sandbox.guid)
             .await?;
-        println!("   📊 Sandbox ID for XML API: {sandbox_id}");
+        info!("   📊 Sandbox ID for XML API: {sandbox_id}");
 
         // Step 3: Upload multiple files to sandbox
-        println!("\n📤 Step 3: Uploading files to sandbox...");
+        info!("\n📤 Step 3: Uploading files to sandbox...");
         let scan_api = self.client.scan_api();
         let mut files_uploaded = 0;
 
         for file_path in &config.file_paths {
-            println!("   📁 Uploading file: {file_path}");
+            info!("   📁 Uploading file: {file_path}");
             match scan_api
                 .upload_file_to_sandbox(&app_id, file_path, &sandbox_id)
                 .await
             {
                 Ok(uploaded_file) => {
-                    println!(
+                    info!(
                         "   ✅ File uploaded successfully: {} (ID: {})",
                         uploaded_file.file_name, uploaded_file.file_id
                     );
@@ -368,17 +378,17 @@ impl VeracodeWorkflow {
             }
         }
 
-        println!("   📊 Total files uploaded: {files_uploaded}");
+        info!("   📊 Total files uploaded: {files_uploaded}");
 
         // Step 4: Start prescan with available options
         let build_id = if config.auto_scan {
-            println!("\n🔍 Step 4: Starting prescan and scan...");
+            info!("\n🔍 Step 4: Starting prescan and scan...");
             match scan_api
                 .upload_and_scan_sandbox(&app_id, &sandbox_id, &config.file_paths[0])
                 .await
             {
                 Ok(build_id) => {
-                    println!("   ✅ Scan started successfully with build ID: {build_id}");
+                    info!("   ✅ Scan started successfully with build ID: {build_id}");
                     Some(build_id)
                 }
                 Err(ScanError::Unauthorized) => {
@@ -392,36 +402,36 @@ impl VeracodeWorkflow {
                     ));
                 }
                 Err(e) => {
-                    println!("   ⚠️  Warning: Could not start scan automatically: {e}");
-                    println!(
+                    info!("   ⚠️  Warning: Could not start scan automatically: {e}");
+                    info!(
                         "   💡 You may need to start the scan manually from the Veracode platform"
                     );
                     None
                 }
             }
         } else {
-            println!("\n⏭️  Step 4: Skipping automatic scan (auto_scan = false)");
+            info!("\n⏭️  Step 4: Skipping automatic scan (auto_scan = false)");
             None
         };
 
-        println!("\n✅ Workflow completed successfully!");
-        println!("   📊 Summary:");
-        println!(
+        info!("\n✅ Workflow completed successfully!");
+        info!("   📊 Summary:");
+        info!(
             "   - Application: {} (created: {})",
             config.app_name, app_created
         );
-        println!(
+        info!(
             "   - Sandbox: {} (created: {})",
             config.sandbox_name, sandbox_created
         );
-        println!("   - Files uploaded: {files_uploaded}");
+        info!("   - Files uploaded: {files_uploaded}");
         if let Some(ref build_id_ref) = build_id {
-            println!(
+            info!(
                 "   - Scan started: {} (build ID: {})",
                 config.auto_scan, build_id_ref
             );
         } else {
-            println!("   - Scan started: {}", config.auto_scan);
+            info!("   - Scan started: {}", config.auto_scan);
         }
 
         let result = WorkflowResultData {
@@ -533,7 +543,7 @@ impl VeracodeWorkflow {
         app_name: &str,
         sandbox_name: &str,
     ) -> WorkflowResult<()> {
-        println!("🗑️  Deleting builds from sandbox '{sandbox_name}'...");
+        info!("🗑️  Deleting builds from sandbox '{sandbox_name}'...");
 
         // Get application and sandbox
         let app = self.get_application_by_name(app_name).await?;
@@ -553,7 +563,7 @@ impl VeracodeWorkflow {
             .await
         {
             Ok(_) => {
-                println!("   ✅ Successfully deleted all builds from sandbox '{sandbox_name}'");
+                info!("   ✅ Successfully deleted all builds from sandbox '{sandbox_name}'");
                 Ok(())
             }
             Err(ScanError::Unauthorized) => Err(WorkflowError::AccessDenied(
@@ -563,7 +573,7 @@ impl VeracodeWorkflow {
                 "Permission denied deleting sandbox builds".to_string(),
             )),
             Err(ScanError::BuildNotFound) => {
-                println!("   ℹ️  No builds found to delete in sandbox '{sandbox_name}'");
+                info!("   ℹ️  No builds found to delete in sandbox '{sandbox_name}'");
                 Ok(())
             }
             Err(e) => Err(WorkflowError::Scan(e)),
@@ -583,7 +593,7 @@ impl VeracodeWorkflow {
     ///
     /// A `Result` indicating success or an error.
     pub async fn delete_sandbox(&self, app_name: &str, sandbox_name: &str) -> WorkflowResult<()> {
-        println!("🗑️  Deleting sandbox '{sandbox_name}'...");
+        info!("🗑️  Deleting sandbox '{sandbox_name}'...");
 
         // Get application and sandbox
         let app = self.get_application_by_name(app_name).await?;
@@ -596,7 +606,7 @@ impl VeracodeWorkflow {
         let sandbox_api = self.client.sandbox_api();
         match sandbox_api.delete_sandbox(&app.guid, &sandbox.guid).await {
             Ok(_) => {
-                println!("   ✅ Successfully deleted sandbox '{sandbox_name}'");
+                info!("   ✅ Successfully deleted sandbox '{sandbox_name}'");
                 Ok(())
             }
             Err(SandboxError::Api(VeracodeError::InvalidResponse(msg)))
@@ -607,9 +617,7 @@ impl VeracodeWorkflow {
                 )))
             }
             Err(SandboxError::NotFound) => {
-                println!(
-                    "   ℹ️  Sandbox '{sandbox_name}' not found (may have been already deleted)"
-                );
+                info!("   ℹ️  Sandbox '{sandbox_name}' not found (may have been already deleted)");
                 Ok(())
             }
             Err(e) => Err(WorkflowError::Sandbox(e)),
@@ -629,7 +637,7 @@ impl VeracodeWorkflow {
     ///
     /// A `Result` indicating success or an error.
     pub async fn delete_application(&self, app_name: &str) -> WorkflowResult<()> {
-        println!("🗑️  Deleting application '{app_name}'...");
+        info!("🗑️  Deleting application '{app_name}'...");
 
         // Get application
         let app = self.get_application_by_name(app_name).await?;
@@ -639,12 +647,12 @@ impl VeracodeWorkflow {
         match sandbox_api.list_sandboxes(&app.guid, None).await {
             Ok(sandboxes) => {
                 for sandbox in sandboxes {
-                    println!("   🗑️  Deleting sandbox: {}", sandbox.name);
+                    info!("   🗑️  Deleting sandbox: {}", sandbox.name);
                     let _ = self.delete_sandbox(app_name, &sandbox.name).await;
                 }
             }
             Err(e) => {
-                println!("   ⚠️  Warning: Could not list sandboxes for cleanup: {e}");
+                info!("   ⚠️  Warning: Could not list sandboxes for cleanup: {e}");
             }
         }
 
@@ -652,14 +660,14 @@ impl VeracodeWorkflow {
         let app_id = self.client.get_app_id_from_guid(&app.guid).await?;
         let scan_api = self.client.scan_api();
         match scan_api.delete_all_app_builds(&app_id).await {
-            Ok(_) => println!("   ✅ Deleted all application builds"),
-            Err(e) => println!("   ⚠️  Warning: Could not delete application builds: {e}"),
+            Ok(_) => info!("   ✅ Deleted all application builds"),
+            Err(e) => info!("   ⚠️  Warning: Could not delete application builds: {e}"),
         }
 
         // Delete the application using REST API
         match self.client.delete_application(&app.guid).await {
             Ok(_) => {
-                println!("   ✅ Successfully deleted application '{app_name}'");
+                info!("   ✅ Successfully deleted application '{app_name}'");
                 Ok(())
             }
             Err(VeracodeError::InvalidResponse(msg))
@@ -670,9 +678,7 @@ impl VeracodeWorkflow {
                 )))
             }
             Err(VeracodeError::NotFound(_)) => {
-                println!(
-                    "   ℹ️  Application '{app_name}' not found (may have been already deleted)"
-                );
+                info!("   ℹ️  Application '{app_name}' not found (may have been already deleted)");
                 Ok(())
             }
             Err(e) => Err(WorkflowError::Api(e)),
@@ -695,21 +701,21 @@ impl VeracodeWorkflow {
     ///
     /// A `Result` indicating success or an error.
     pub async fn complete_cleanup(&self, app_name: &str) -> WorkflowResult<()> {
-        println!("🧹 Starting complete cleanup for application '{app_name}'");
-        println!("   ⚠️  WARNING: This will delete ALL data associated with this application");
-        println!("   This includes all sandboxes, builds, and scan results");
+        info!("🧹 Starting complete cleanup for application '{app_name}'");
+        info!("   ⚠️  WARNING: This will delete ALL data associated with this application");
+        info!("   This includes all sandboxes, builds, and scan results");
 
         match self.delete_application(app_name).await {
             Ok(_) => {
-                println!("✅ Complete cleanup finished successfully");
+                info!("✅ Complete cleanup finished successfully");
                 Ok(())
             }
             Err(WorkflowError::NotFound(_)) => {
-                println!("ℹ️  Application '{app_name}' not found - nothing to clean up");
+                info!("ℹ️  Application '{app_name}' not found - nothing to clean up");
                 Ok(())
             }
             Err(e) => {
-                println!("❌ Cleanup encountered errors: {e}");
+                info!("❌ Cleanup encountered errors: {e}");
                 Err(e)
             }
         }
@@ -763,7 +769,7 @@ impl VeracodeWorkflow {
         version: Option<&str>,
         deletion_policy: u8,
     ) -> WorkflowResult<Build> {
-        println!("🔍 Checking if build exists (deletion policy: {deletion_policy})...");
+        info!("🔍 Checking if build exists (deletion policy: {deletion_policy})...");
 
         let build_api = self.client.build_api();
 
@@ -777,9 +783,9 @@ impl VeracodeWorkflow {
             .await
         {
             Ok(build) => {
-                println!("   📋 Build already exists: {}", build.build_id);
+                debug!("   📋 Build already exists: {}", build.build_id);
                 if let Some(build_version) = &build.version {
-                    println!("      Existing Version: {build_version}");
+                    debug!("      Existing Version: {build_version}");
                 }
 
                 // Parse build status from attributes
@@ -792,7 +798,7 @@ impl VeracodeWorkflow {
                     .unwrap_or("Unknown");
 
                 let build_status = crate::build::BuildStatus::from_string(build_status_str);
-                println!("      Build Status: {build_status}");
+                debug!("      Build Status: {build_status}");
 
                 // Check deletion policy
                 if deletion_policy == 0 {
@@ -804,7 +810,7 @@ impl VeracodeWorkflow {
 
                 // Special handling for "Results Ready" builds - create new build to preserve results
                 if build_status == crate::build::BuildStatus::ResultsReady {
-                    println!(
+                    debug!(
                         "   📋 Build has 'Results Ready' status - creating new build to preserve existing results"
                     );
                     self.create_build_for_upload(app_id, sandbox_id, version)
@@ -812,7 +818,7 @@ impl VeracodeWorkflow {
                 }
                 // Check if build is safe to delete according to policy
                 else if build_status.is_safe_to_delete(deletion_policy) {
-                    println!(
+                    info!(
                         "   🗑️  Build is safe to delete according to policy {deletion_policy}. Deleting..."
                     );
 
@@ -825,7 +831,7 @@ impl VeracodeWorkflow {
                         .await
                     {
                         Ok(_) => {
-                            println!("   ✅ Existing build deleted successfully");
+                            info!("   ✅ Existing build deleted successfully");
                         }
                         Err(e) => {
                             return Err(WorkflowError::Build(e));
@@ -833,29 +839,29 @@ impl VeracodeWorkflow {
                     }
 
                     // Wait for build deletion to be fully processed by Veracode API
-                    println!("   ⏳ Waiting for build deletion to be fully processed...");
+                    info!("   ⏳ Waiting for build deletion to be fully processed...");
                     self.wait_for_build_deletion(app_id, sandbox_id).await?;
 
                     // Create new build
-                    println!("   ➕ Creating new build...");
+                    info!("   ➕ Creating new build...");
                     self.create_build_for_upload(app_id, sandbox_id, version)
                         .await
                 } else {
-                    return Err(WorkflowError::Workflow(format!(
+                    Err(WorkflowError::Workflow(format!(
                         "Build {} has status '{}' which is not safe to delete with policy {} (0=Never, 1=Safe only, 2=Except Results Ready). Cannot proceed with upload.",
                         build.build_id, build_status, deletion_policy
-                    )));
+                    )))
                 }
             }
             Err(crate::build::BuildError::BuildNotFound) => {
-                println!("   ➕ No build found, creating new build...");
+                info!("   ➕ No build found, creating new build...");
                 self.create_build_for_upload(app_id, sandbox_id, version)
                     .await
             }
             Err(e) => {
-                println!("   ⚠️  Error checking build existence: {e}");
+                info!("   ⚠️  Error checking build existence: {e}");
                 // Try to create a build anyway
-                println!("   ➕ Attempting to create new build...");
+                info!("   ➕ Attempting to create new build...");
                 self.create_build_for_upload(app_id, sandbox_id, version)
                     .await
             }
@@ -881,14 +887,16 @@ impl VeracodeWorkflow {
     ) -> WorkflowResult<Build> {
         let build_api = self.client.build_api();
 
-        let build_version = version.map(|v| v.to_string()).unwrap_or_else(|| {
+        let build_version = if let Some(v) = version {
+            v.to_string()
+        } else {
             // Generate a version based on timestamp if none provided
             let timestamp = std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
+                .map_err(|e| WorkflowError::Workflow(format!("System time error: {e}")))?
                 .as_secs();
             format!("build-{timestamp}")
-        });
+        };
 
         match build_api
             .create_build(&crate::build::CreateBuildRequest {
@@ -901,17 +909,17 @@ impl VeracodeWorkflow {
             .await
         {
             Ok(build) => {
-                println!("   ✅ Build created successfully: {}", build.build_id);
-                println!("      Version: {build_version}");
+                info!("   ✅ Build created successfully: {}", build.build_id);
+                info!("      Version: {build_version}");
                 if sandbox_id.is_some() {
-                    println!("      Type: Sandbox build");
+                    info!("      Type: Sandbox build");
                 } else {
-                    println!("      Type: Application build");
+                    info!("      Type: Application build");
                 }
                 Ok(build)
             }
             Err(e) => {
-                println!("   ❌ Build creation failed: {e}");
+                info!("   ❌ Build creation failed: {e}");
                 Err(WorkflowError::Build(e))
             }
         }
@@ -958,25 +966,23 @@ impl VeracodeWorkflow {
                 Ok(_build) => {
                     // Build still exists, continue waiting
                     if attempt < max_attempts {
-                        println!(
+                        info!(
                             "      ⏳ Build still exists, waiting {delay_seconds} more seconds... (attempt {attempt}/{max_attempts})"
                         );
                     } else {
-                        println!(
+                        info!(
                             "      ⚠️  Build still exists after {max_attempts} attempts, proceeding anyway"
                         );
                     }
                 }
                 Err(crate::build::BuildError::BuildNotFound) => {
                     // Build is gone, we can proceed
-                    println!(
-                        "      ✅ Build deletion confirmed (attempt {attempt}/{max_attempts})"
-                    );
+                    info!("      ✅ Build deletion confirmed (attempt {attempt}/{max_attempts})");
                     return Ok(());
                 }
                 Err(e) => {
                     // Other error, might be temporary API issue, continue waiting
-                    println!("      ⚠️  Error checking build status: {e} (attempt {attempt})");
+                    info!("      ⚠️  Error checking build status: {e} (attempt {attempt})");
                 }
             }
         }
@@ -1010,12 +1016,12 @@ impl VeracodeWorkflow {
         filename: Option<&str>,
         version: Option<&str>,
     ) -> WorkflowResult<crate::scan::UploadedFile> {
-        println!("🚀 Starting large file upload with build management");
-        println!("   File: {file_path}");
+        info!("🚀 Starting large file upload with build management");
+        info!("   File: {file_path}");
         if let Some(sandbox_id) = sandbox_id {
-            println!("   Target: Sandbox {sandbox_id}");
+            info!("   Target: Sandbox {sandbox_id}");
         } else {
-            println!("   Target: Application {app_id}");
+            info!("   Target: Application {app_id}");
         }
 
         // Step 1: Ensure build exists
@@ -1024,7 +1030,7 @@ impl VeracodeWorkflow {
             .await?;
 
         // Step 2: Upload file using large file API
-        println!("\n📤 Uploading file using uploadlargefile.do...");
+        info!("\n📤 Uploading file using uploadlargefile.do...");
         let scan_api = self.client.scan_api();
 
         match scan_api
@@ -1037,14 +1043,14 @@ impl VeracodeWorkflow {
             .await
         {
             Ok(uploaded_file) => {
-                println!("   ✅ Large file uploaded successfully:");
-                println!("      File ID: {}", uploaded_file.file_id);
-                println!("      File Name: {}", uploaded_file.file_name);
-                println!("      Size: {} bytes", uploaded_file.file_size);
+                info!("   ✅ Large file uploaded successfully:");
+                info!("      File ID: {}", uploaded_file.file_id);
+                info!("      File Name: {}", uploaded_file.file_name);
+                info!("      Size: {} bytes", uploaded_file.file_size);
                 Ok(uploaded_file)
             }
             Err(e) => {
-                println!("   ❌ Large file upload failed: {e}");
+                info!("   ❌ Large file upload failed: {e}");
                 Err(WorkflowError::Scan(e))
             }
         }
@@ -1079,8 +1085,8 @@ impl VeracodeWorkflow {
     where
         F: Fn(u64, u64, f64) + Send + Sync,
     {
-        println!("🚀 Starting large file upload with progress tracking and build management");
-        println!("   File: {file_path}");
+        info!("🚀 Starting large file upload with progress tracking and build management");
+        info!("   File: {file_path}");
 
         // Step 1: Ensure build exists
         let _build = self
@@ -1088,7 +1094,7 @@ impl VeracodeWorkflow {
             .await?;
 
         // Step 2: Upload file with progress tracking
-        println!("\n📤 Uploading file with progress tracking...");
+        info!("\n📤 Uploading file with progress tracking...");
         let scan_api = self.client.scan_api();
 
         match scan_api
@@ -1104,11 +1110,11 @@ impl VeracodeWorkflow {
             .await
         {
             Ok(uploaded_file) => {
-                println!("   ✅ Large file uploaded successfully with progress tracking");
+                info!("   ✅ Large file uploaded successfully with progress tracking");
                 Ok(uploaded_file)
             }
             Err(e) => {
-                println!("   ❌ Large file upload with progress failed: {e}");
+                info!("   ❌ Large file upload with progress failed: {e}");
                 Err(WorkflowError::Scan(e))
             }
         }
@@ -1139,22 +1145,23 @@ impl VeracodeWorkflow {
         version: Option<&str>,
     ) -> WorkflowResult<crate::scan::UploadedFile> {
         // Check file size to determine upload strategy
-        let file_metadata = std::fs::metadata(file_path)
+        let file_metadata = tokio::fs::metadata(file_path)
+            .await
             .map_err(|e| WorkflowError::Workflow(format!("Cannot access file {file_path}: {e}")))?;
 
         let file_size = file_metadata.len();
         const LARGE_FILE_THRESHOLD: u64 = 100 * 1024 * 1024; // 100MB
 
-        println!("🔍 File size: {file_size} bytes");
+        info!("🔍 File size: {file_size} bytes");
 
         if file_size > LARGE_FILE_THRESHOLD {
-            println!("📦 Using large file upload (uploadlargefile.do) with build management");
+            info!("📦 Using large file upload (uploadlargefile.do) with build management");
             self.upload_large_file_with_build_management(
                 app_id, sandbox_id, file_path, filename, version,
             )
             .await
         } else {
-            println!("📦 Using standard file upload (uploadfile.do)");
+            info!("📦 Using standard file upload (uploadfile.do)");
             let scan_api = self.client.scan_api();
 
             match scan_api
@@ -1167,11 +1174,11 @@ impl VeracodeWorkflow {
                 .await
             {
                 Ok(uploaded_file) => {
-                    println!("   ✅ File uploaded successfully via uploadfile.do");
+                    info!("   ✅ File uploaded successfully via uploadfile.do");
                     Ok(uploaded_file)
                 }
                 Err(e) => {
-                    println!("   ❌ Standard upload failed: {e}");
+                    info!("   ❌ Standard upload failed: {e}");
                     Err(WorkflowError::Scan(e))
                 }
             }

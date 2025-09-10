@@ -1,6 +1,6 @@
 [package]
 name = "verascan"
-version = "0.3.1"
+version = "0.5.1"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
@@ -45,8 +45,22 @@ reqwest = { version = "0.12", features = ["json", "rustls-tls-native-roots"], de
 # URL encoding for GitLab search queries
 urlencoding = "2.1"
 
+# URL parsing for GitLab host extraction
+url = "2.5"
+
 # Error handling
 thiserror = "2.0"
+
+# Logging
+log = "0.4"
+env_logger = "0.11"
+
+# Security - for secure credential handling
+secrecy = { version = "0.10", features = ["serde"] }
+
+# Vault client for secure credential management
+vaultrs = "0.7"
+backoff = { version = "0.4", features = ["futures", "tokio"] }
 
 [dev-dependencies]
 tempfile = "3.20"

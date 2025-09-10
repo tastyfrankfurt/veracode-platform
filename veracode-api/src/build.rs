@@ -5,6 +5,7 @@
 //! These operations use the XML API endpoints (analysiscenter.veracode.com).
 
 use chrono::{DateTime, NaiveDate, Utc};
+use log::debug;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
@@ -24,11 +25,13 @@ pub const LIFECYCLE_STAGES: &[&str] = &[
 ];
 
 /// Validate if a lifecycle stage value is valid
+#[must_use]
 pub fn is_valid_lifecycle_stage(stage: &str) -> bool {
     LIFECYCLE_STAGES.contains(&stage)
 }
 
 /// Get the default lifecycle stage for development builds
+#[must_use]
 pub fn default_lifecycle_stage() -> &'static str {
     "In Development (pre-Alpha)"
 }
@@ -56,6 +59,7 @@ pub enum BuildStatus {
 
 impl BuildStatus {
     /// Parse a build status string from the Veracode API
+    #[must_use]
     pub fn from_string(status: &str) -> Self {
         match status {
             "Incomplete" => BuildStatus::Incomplete,
@@ -77,6 +81,7 @@ impl BuildStatus {
     }
 
     /// Convert build status to string representation
+    #[must_use]
     pub fn to_str(&self) -> &str {
         match self {
             BuildStatus::Incomplete => "Incomplete",
@@ -103,9 +108,9 @@ impl BuildStatus {
     /// - 0: Never delete builds
     /// - 1: Delete only "safe" builds (incomplete, failed, cancelled states)
     /// - 2: Delete any build except "Results Ready"
+    #[must_use]
     pub fn is_safe_to_delete(&self, deletion_policy: u8) -> bool {
         match deletion_policy {
-            0 => false, // Never delete
             1 => {
                 // Delete only safe builds (incomplete, failed, cancelled states)
                 matches!(
@@ -125,7 +130,7 @@ impl BuildStatus {
                 // Delete any build except Results Ready
                 !matches!(self, BuildStatus::ResultsReady)
             }
-            _ => false, // Invalid policy, default to never delete
+            _ => false, // Never delete (0) or invalid policy, default to never delete
         }
     }
 }
@@ -336,7 +341,8 @@ pub struct BuildApi {
 }
 
 impl BuildApi {
-    /// Create a new BuildApi instance
+    /// Create a new `BuildApi` instance
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         Self { client }
     }
@@ -558,6 +564,7 @@ impl BuildApi {
         match status {
             200 => {
                 let response_text = response.text().await?;
+                debug!("🌐 Raw XML response from getbuildinfo.do:\n{response_text}");
                 self.parse_build_info(&response_text)
             }
             400 => {
@@ -653,11 +660,10 @@ impl BuildApi {
                             let error_msg = String::from_utf8_lossy(&text);
                             if error_msg.contains("Could not find a build") {
                                 return Err(BuildError::BuildNotFound);
-                            } else {
-                                return Err(BuildError::Api(VeracodeError::InvalidResponse(
-                                    error_msg.to_string(),
-                                )));
                             }
+                            return Err(BuildError::Api(VeracodeError::InvalidResponse(
+                                error_msg.to_string(),
+                            )));
                         }
                     }
                     Ok(Event::Eof) => break,

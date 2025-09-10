@@ -3,8 +3,9 @@
 //! This module demonstrates how to use the centralized RobustHttpClient
 //! for GraphQL API integrations, maintaining all robust networking features.
 
-use crate::http_client::{HttpClientConfigBuilder, HttpClientError, RobustHttpClient};
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderValue};
+use crate::http_client::{
+    AuthStrategy, HttpClientConfigBuilder, HttpClientError, RobustHttpClient,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::HashMap;
@@ -49,18 +50,8 @@ pub struct GraphQLLocation {
     pub column: u32,
 }
 
-/// Error types for GraphQL client
-#[derive(Debug, thiserror::Error)]
-pub enum GraphQLClientError {
-    #[error("HTTP client error: {0}")]
-    HttpError(#[from] HttpClientError),
-    #[error("GraphQL error: {0}")]
-    GraphQLError(String),
-    #[error("Configuration error: {0}")]
-    ConfigError(String),
-    #[error("Serialization error: {0}")]
-    SerializationError(#[from] serde_json::Error),
-}
+/// Type alias for GraphQL client errors (using consolidated HTTP client error)
+pub type GraphQLClientError = HttpClientError;
 
 /// GraphQL client configuration
 #[derive(Clone, Debug)]
@@ -68,31 +59,35 @@ pub struct GraphQLClientConfig {
     pub endpoint: String,
     pub auth_token: Option<String>,
     pub custom_headers: HashMap<String, String>,
-    pub debug: bool,
+    pub env_prefix: String,
 }
 
 impl GraphQLClientConfig {
+    #[must_use]
     pub fn new(endpoint: String) -> Self {
         Self {
             endpoint,
             auth_token: None,
             custom_headers: HashMap::new(),
-            debug: false,
+            env_prefix: "VERASCAN".to_string(),
         }
     }
 
+    #[must_use]
     pub fn with_auth_token(mut self, token: String) -> Self {
         self.auth_token = Some(token);
         self
     }
 
+    #[must_use]
     pub fn with_header(mut self, key: String, value: String) -> Self {
         self.custom_headers.insert(key, value);
         self
     }
 
-    pub fn with_debug(mut self, debug: bool) -> Self {
-        self.debug = debug;
+    #[must_use]
+    pub fn with_env_prefix(mut self, prefix: String) -> Self {
+        self.env_prefix = prefix;
         self
     }
 }
@@ -106,36 +101,38 @@ pub struct GraphQLClient {
 impl GraphQLClient {
     /// Create a new GraphQL client
     pub fn new(config: GraphQLClientConfig) -> Result<Self, GraphQLClientError> {
-        let mut headers = HeaderMap::new();
-        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+        let mut builder =
+            HttpClientConfigBuilder::for_api_client(config.endpoint.clone(), &config.env_prefix)
+                .with_api("GraphQL");
 
-        // Add authorization header if token is provided
+        // Apply authentication if provided
         if let Some(ref token) = config.auth_token {
-            let auth_value = HeaderValue::from_str(&format!("Bearer {token}"))
-                .map_err(|e| GraphQLClientError::ConfigError(format!("Invalid auth token: {e}")))?;
-            headers.insert(AUTHORIZATION, auth_value);
+            builder = builder.with_auth_strategy(AuthStrategy::Bearer(token.clone()))?;
         }
 
-        // Add custom headers
-        for (key, value) in &config.custom_headers {
-            let header_name: reqwest::header::HeaderName = key.parse().map_err(|e| {
-                GraphQLClientError::ConfigError(format!("Invalid header name '{key}': {e}"))
-            })?;
-            let header_value = HeaderValue::from_str(value).map_err(|e| {
-                GraphQLClientError::ConfigError(format!("Invalid header value for '{key}': {e}"))
-            })?;
-            headers.insert(header_name, header_value);
+        // Apply custom headers if any
+        if !config.custom_headers.is_empty() {
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::CONTENT_TYPE,
+                reqwest::header::HeaderValue::from_static("application/json"),
+            );
+
+            for (key, value) in &config.custom_headers {
+                let header_name: reqwest::header::HeaderName = key.parse().map_err(|e| {
+                    HttpClientError::ConfigurationError(format!("Invalid header name '{key}': {e}"))
+                })?;
+                let header_value = reqwest::header::HeaderValue::from_str(value).map_err(|e| {
+                    HttpClientError::ConfigurationError(format!(
+                        "Invalid header value for '{key}': {e}"
+                    ))
+                })?;
+                headers.insert(header_name, header_value);
+            }
+            builder = builder.with_headers(headers);
         }
 
-        // Use the centralized HTTP client with environment-based configuration
-        let http_config = HttpClientConfigBuilder::new(config.endpoint.clone())
-            .with_headers(headers)
-            .with_env_timeouts("VERASCAN") // Reuse same timeout env vars
-            .with_env_retry_config("VERASCAN") // Reuse same retry env vars
-            .with_env_cert_validation("VERASCAN") // Reuse same cert validation env vars
-            .with_debug(config.debug)
-            .build();
-
+        let http_config = builder.build();
         let http_client = RobustHttpClient::new(http_config)?;
 
         Ok(Self {
@@ -164,7 +161,7 @@ impl GraphQLClient {
         // Check for GraphQL errors
         if let Some(errors) = response.errors {
             let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
-            return Err(GraphQLClientError::GraphQLError(error_messages.join("; ")));
+            return Err(HttpClientError::GraphQLError(error_messages.join("; ")));
         }
 
         // Extract and deserialize data
@@ -173,7 +170,7 @@ impl GraphQLClient {
                 let result: T = serde_json::from_value(data)?;
                 Ok(result)
             }
-            None => Err(GraphQLClientError::GraphQLError(
+            None => Err(HttpClientError::GraphQLError(
                 "No data returned".to_string(),
             )),
         }
@@ -204,7 +201,7 @@ impl GraphQLClient {
     /// Test connectivity to the GraphQL endpoint
     pub async fn test_connectivity(&self) -> Result<(), GraphQLClientError> {
         // Use a simple introspection query to test connectivity
-        let introspection_query = r#"
+        let introspection_query = r"
             query IntrospectionQuery {
                 __schema {
                     queryType {
@@ -212,7 +209,7 @@ impl GraphQLClient {
                     }
                 }
             }
-        "#;
+        ";
 
         let request = GraphQLRequest {
             query: introspection_query.to_string(),
@@ -220,36 +217,28 @@ impl GraphQLClient {
             operation_name: Some("IntrospectionQuery".to_string()),
         };
 
-        if self.config.debug {
-            println!("🔍 Testing GraphQL connectivity...");
-        }
+        HttpClientError::print_connectivity_test("GraphQL");
 
         let response: GraphQLResponse = self.http_client.post("", &request).await?;
 
         if response.errors.is_some() {
             let errors = response.errors.unwrap();
             let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
-            return Err(GraphQLClientError::GraphQLError(format!(
+            return Err(HttpClientError::GraphQLError(format!(
                 "Connectivity test failed: {}",
                 error_messages.join("; ")
             )));
         }
 
-        if self.config.debug {
-            println!("✅ GraphQL connectivity test successful");
-        }
+        HttpClientError::print_connectivity_success("GraphQL");
 
         Ok(())
     }
 
     /// Get the endpoint URL
+    #[must_use]
     pub fn endpoint(&self) -> &str {
         &self.config.endpoint
-    }
-
-    /// Check if debug mode is enabled
-    pub fn is_debug(&self) -> bool {
-        self.config.debug
     }
 }
 
@@ -260,10 +249,9 @@ pub struct GitHubGraphQLClient {
 
 impl GitHubGraphQLClient {
     /// Create a new GitHub GraphQL client
-    pub fn new(token: String, debug: bool) -> Result<Self, GraphQLClientError> {
+    pub fn new(token: String) -> Result<Self, GraphQLClientError> {
         let config = GraphQLClientConfig::new("https://api.github.com/graphql".to_string())
-            .with_auth_token(token)
-            .with_debug(debug);
+            .with_auth_token(token);
 
         let client = GraphQLClient::new(config)?;
 
@@ -276,7 +264,7 @@ impl GitHubGraphQLClient {
         owner: &str,
         name: &str,
     ) -> Result<Value, GraphQLClientError> {
-        let query = r#"
+        let query = r"
             query GetRepository($owner: String!, $name: String!) {
                 repository(owner: $owner, name: $name) {
                     id
@@ -310,7 +298,7 @@ impl GitHubGraphQLClient {
                     }
                 }
             }
-        "#;
+        ";
 
         let variables = json!({
             "owner": owner,
@@ -328,7 +316,7 @@ impl GitHubGraphQLClient {
         body: &str,
         labels: Vec<String>,
     ) -> Result<Value, GraphQLClientError> {
-        let mutation = r#"
+        let mutation = r"
             mutation CreateIssue($repositoryId: ID!, $title: String!, $body: String!, $labelIds: [ID!]) {
                 createIssue(input: {
                     repositoryId: $repositoryId,
@@ -345,7 +333,7 @@ impl GitHubGraphQLClient {
                     }
                 }
             }
-        "#;
+        ";
 
         let variables = json!({
             "repositoryId": repository_id,
@@ -428,28 +416,25 @@ mod tests {
     fn test_graphql_client_config() {
         let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string())
             .with_auth_token("test-token".to_string())
-            .with_header("X-Custom-Header".to_string(), "custom-value".to_string())
-            .with_debug(true);
+            .with_header("X-Custom-Header".to_string(), "custom-value".to_string());
 
         assert_eq!(config.endpoint, "https://api.example.com/graphql");
-        assert_eq!(config.auth_token, Some("test-token".to_string()));
         assert_eq!(
             config.custom_headers.get("X-Custom-Header"),
             Some(&"custom-value".to_string())
         );
-        assert!(config.debug);
+        // Debug functionality removed from config
+        assert_eq!(config.auth_token, Some("test-token".to_string()));
     }
 
     #[tokio::test]
     async fn test_graphql_client_creation() {
-        let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string())
-            .with_debug(false);
+        let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string());
 
         let client = GraphQLClient::new(config);
         assert!(client.is_ok());
 
         let client = client.unwrap();
         assert_eq!(client.endpoint(), "https://api.example.com/graphql");
-        assert!(!client.is_debug());
     }
 }

@@ -130,6 +130,7 @@ pub struct SandboxListParams {
 
 impl SandboxListParams {
     /// Convert to query parameters for HTTP requests
+    #[must_use]
     pub fn to_query_params(&self) -> Vec<(String, String)> {
         Vec::from(self) // Delegate to trait
     }
@@ -253,6 +254,7 @@ pub struct SandboxApi<'a> {
 
 impl<'a> SandboxApi<'a> {
     /// Create a new SandboxApi instance
+    #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
     }
@@ -365,25 +367,24 @@ impl<'a> SandboxApi<'a> {
                 let error_text = response.text().await.unwrap_or_default();
 
                 // Try to parse the structured error response
-                if let Ok(error_response) = serde_json::from_str::<ApiErrorResponse>(&error_text) {
-                    if let Some(embedded) = error_response.embedded {
-                        for api_error in embedded.api_errors {
-                            if api_error.title.contains("already exists") {
-                                return Err(SandboxError::AlreadyExists(api_error.title));
-                            }
-                            if api_error.title.contains("limit")
-                                || api_error.title.contains("maximum")
-                            {
-                                return Err(SandboxError::LimitExceeded);
-                            }
-                            if api_error.title.contains("Json Parse Error")
-                                || api_error.title.contains("Cannot deserialize")
-                            {
-                                return Err(SandboxError::InvalidInput(format!(
-                                    "JSON parsing error: {}",
-                                    api_error.title
-                                )));
-                            }
+                if let Ok(error_response) = serde_json::from_str::<ApiErrorResponse>(&error_text)
+                    && let Some(embedded) = error_response.embedded
+                {
+                    for api_error in embedded.api_errors {
+                        if api_error.title.contains("already exists") {
+                            return Err(SandboxError::AlreadyExists(api_error.title));
+                        }
+                        if api_error.title.contains("limit") || api_error.title.contains("maximum")
+                        {
+                            return Err(SandboxError::LimitExceeded);
+                        }
+                        if api_error.title.contains("Json Parse Error")
+                            || api_error.title.contains("Cannot deserialize")
+                        {
+                            return Err(SandboxError::InvalidInput(format!(
+                                "JSON parsing error: {}",
+                                api_error.title
+                            )));
                         }
                     }
                 }

@@ -5,6 +5,217 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-01-13
+
+### Added
+- **Policy API Fallback System**: Intelligent dual-API approach for policy compliance evaluation
+  - **`get_policy_status_from_buildinfo()`**: New method using getbuildinfo.do XML API with retry logic for policy status retrieval
+  - **`get_policy_status_with_fallback()`**: Primary method that tries summary report API first, automatically falls back to buildinfo API on permission errors (401/403)
+  - **`ApiSource` enum**: New enum indicating which API was used (`SummaryReport` or `BuildInfo`) for transparency and debugging
+  - **Configurable API Selection**: Support for forcing buildinfo API usage via `force_buildinfo_api` parameter
+
+### Changed  
+- **Policy API Method Signatures**: Removed `debug` parameter from policy methods in favor of `log` crate macros
+  - **`get_summary_report_with_policy_retry()`**: Updated signature removes debug parameter, uses `debug!()` macro instead
+  - **Enhanced Error Mapping**: Improved error handling between `BuildError` and `PolicyError` types for buildinfo fallback
+  - **Public Exports**: Added `ApiSource` and `SummaryReport` to public API exports in lib.rs
+
+### Benefits
+- **Enhanced API Compatibility**: Works with any Veracode account permission level (REST + XML, XML-only, or restricted access)
+- **Automatic Fallback**: Seamlessly switches to XML API when REST API permissions are denied without user intervention  
+- **Performance Flexibility**: Users can skip slower REST API when they know permissions only allow XML access
+- **Better Error Context**: Clear indication of which API was attempted and which succeeded for improved troubleshooting
+
+## [0.4.3] - 2025-09-07
+
+### Changed
+- **Structured Logging Implementation**: Migrated from `println!` and `eprintln!` macros to structured logging with `log` crate
+  - **Dependency Addition**: Added `log = "0.4"` to veracode-api library for standardized logging
+  - **CLI Integration**: Updated main.rs with `env_logger` initialization tied to debug flag for proper log level control
+  - **Systematic Conversion**: Replaced logging patterns across ~50+ Rust files:
+    - `println!(...)` → `info!(...)`
+    - `eprintln!(...)` → `error!(...)`
+    - Conditional debug prints → `debug!(...)`
+  - **Import Management**: Added appropriate `use log::{debug, error, info, warn};` imports to all files using log macros
+  - **Code Cleanup**: Removed unused debug fields from `PipelineApi` and `FindingsApi` structs and updated constructor calls
+  - **Clippy Compliance**: All code passes strict clippy checks with `-D warnings -D clippy::all`
+
+### Benefits
+- **Consistent Logging**: Unified logging approach across the entire codebase with proper log levels
+- **CLI Debug Control**: Debug flag now properly controls log verbosity using standard Rust logging infrastructure
+- **Production Ready**: Structured logging enables better observability and debugging in production deployments
+- **Framework Compatibility**: Standard `log` crate integration allows easy switching of logging backends (env_logger, tracing, etc.)
+- **Performance**: Efficient logging with compile-time log level filtering when using release builds
+
+## [0.4.2] - 2025-08-15
+
+### Added
+- **Combined Policy API Method**: New `get_summary_report_with_policy_retry()` method that combines summary report retrieval with policy compliance checking
+  - **Single API Call**: Reduces API calls by combining summary report retrieval and policy compliance evaluation
+  - **Configurable Retry Logic**: Same retry parameters as existing policy compliance methods
+  - **Dual Return Values**: Returns both the summary report and optional compliance status for break build evaluation
+  - **Conditional Policy Evaluation**: Only evaluates policy compliance when `enable_break_build` is true
+
+### Fixed
+- **API Call Optimization**: Eliminated redundant API calls in break build workflow by using combined method approach
+- **Memory Efficiency**: Improved data flow by avoiding duplicate API responses for same build information
+
+### Technical Details
+- **New Method Signature**: `get_summary_report_with_policy_retry(app_guid, build_id, sandbox_guid, max_retries, retry_delay_seconds, debug, enable_break_build)`
+- **Return Type**: `Result<(SummaryReport, Option<Cow<'static, str>>), PolicyError>`
+- **Usage Pattern**: When `enable_break_build=false`, returns `(summary_report, None)`. When `enable_break_build=true`, returns `(summary_report, Some(compliance_status))`
+
+## [0.4.0] - 2025-08-08
+
+### Breaking Changes
+- **Policy API**: `get_summary_report()` method signature changed from `build_id: &str` to `build_id: Option<&str>`
+- **Findings API**: Enhanced FindingsQuery builder pattern with improved method chaining and filtering capabilities
+- **API Parameter Handling**: Several methods now use Option<> types for better optional parameter handling
+
+### Added
+- **Enhanced FindingsQuery**: Improved builder pattern with `for_sandbox()`, `with_severity()`, `with_pagination()`, and other filtering methods
+- **Auto-pagination Support**: New `get_all_findings()` method automatically handles pagination across large result sets
+- **Server-Side Filtering**: Native API-level filtering support for severity, CWE, scan type, and policy violations
+- **Flexible Query Construction**: Context-aware query building for both policy and sandbox scan scenarios
+
+### Fixed
+- **Policy API**: Fixed `get_summary_report()` method to prevent "Invalid request" errors when retrieving latest build summaries
+- **API Parameter Validation**: Summary report endpoint now correctly omits build_id parameter when None is provided
+- **Query Parameter Construction**: Fixed conditional parameter building to only include parameters when explicitly provided
+- **FindingsQuery Memory Optimization**: Improved Cow<> usage patterns to reduce unnecessary string allocations
+
+### Improved
+- **Performance**: API-level filtering reduces network traffic and client-side processing overhead
+- **Memory Efficiency**: Enhanced borrowing patterns in query construction and parameter handling
+- **Error Handling**: Better context-aware error messages for different failure scenarios
+- **API Compatibility**: Better alignment with Veracode REST API expectations for optional parameters
+
+### Changed
+- **Query Interface**: FindingsQuery now uses method chaining for more ergonomic query construction
+- **Parameter Patterns**: Consistent use of Option<> types across API methods for optional parameters
+- **Response Handling**: Improved pagination and auto-collection mechanisms for large datasets
+- **Debug Logging**: Enhanced debug output shows API-level filtering and pagination progress
+
+### Technical Details
+- **Policy API**: `get_summary_report()` method signature updated to accept `build_id: Option<&str>`
+- **Findings API**: Complete refactor of query building with `FindingsQuery::new()` for policy scans and `FindingsQuery::for_sandbox()` for sandbox scans
+- **Auto-pagination**: New `get_all_findings()` method with safety limits (1000-page maximum) and performance optimization (500 items per page)
+- **Query Parameters**: Enhanced conditional parameter building across all API endpoints
+- **Memory Optimization**: Reduced allocations through improved Cow<> usage and move semantics
+
+### Internal API Changes
+- Enhanced query parameter handling across all API endpoints
+- Improved error context and debugging information
+- Better memory management with reduced cloning and improved borrowing patterns
+- Consistent Optional parameter patterns across the entire API surface
+
+## [0.3.4] - 2025-08-07
+
+### Added
+- **Findings API with Pagination Support**: Complete structured API for retrieving security findings from both policy and sandbox scans
+  - **HAL Format Support**: Full support for HAL (Hypertext Application Language) responses with `_embedded.findings` and `_links` navigation
+  - **Complex Data Structures**: Added comprehensive structs including `RestFinding`, `FindingDetails`, `FindingStatus`, `CweInfo`, `FindingCategory`, `FindingsResponse`, and `FindingsQuery`
+  - **Sandbox & Policy Support**: Uses `context` parameter to differentiate between policy scan findings (no context) and sandbox scan findings (context=sandbox_guid)
+  - **Pagination Handling**: Both manual pagination control and automatic collection across all pages
+  - **Memory Efficient**: Uses `Cow<>` for borrowed strings following codeflow.md memory optimization guidelines
+  - **Rich Filtering**: Supports filtering by severity levels, CWE IDs, scan types, and policy violations
+  - **Debug Support**: Follows existing debug pattern with `self.debug` flag for detailed API call logging
+
+- **Auto-Pagination Collection**: Intelligent automatic pagination that handles large result sets
+  - **Seamless Collection**: `get_all_findings()` method automatically retrieves all findings across pages
+  - **Progress Tracking**: Debug output shows pagination progress and page boundaries
+  - **Safety Limits**: Built-in protection against infinite loops with 1000-page maximum
+  - **Performance Optimized**: Uses large page sizes (500 items) for efficiency
+
+- **Builder Pattern Query Interface**: Ergonomic query construction for complex filtering scenarios
+  - **FindingsQuery Builder**: Fluent interface for building complex queries with method chaining
+  - **Context-Aware Construction**: `FindingsQuery::new()` for policy scans, `FindingsQuery::for_sandbox()` for sandbox scans
+  - **Filter Methods**: `with_severity()`, `with_cwe()`, `with_scan_type()`, `policy_violations_only()`
+  - **Pagination Control**: `with_pagination()` for manual page control
+
+- **API Integration Points**: Seamless integration with existing VeracodeClient architecture
+  - **Standard Access**: `client.findings_api()` for default functionality
+  - **Debug Access**: `client.findings_api_with_debug(true)` for detailed logging
+  - **Convenience Methods**: Direct methods like `get_sandbox_findings()`, `get_policy_findings()`, `get_all_sandbox_findings()`
+
+- **Robust Error Handling**: Context-aware error types with detailed error messages
+  - **Custom Error Types**: `FindingsError` enum with specific error variants for different failure modes
+  - **Context Preservation**: Errors include application GUIDs and sandbox GUIDs for debugging
+  - **API Error Mapping**: Automatic mapping of HTTP 404 to specific `ApplicationNotFound` or `SandboxNotFound` errors
+
+### Fixed
+- **HAL Links Compatibility**: Fixed parsing issues with single-page API responses
+  - **Optional Pagination Links**: Made `first` and `last` HAL links optional to handle single-page responses where these links are omitted
+  - **Flexible Response Parsing**: Now correctly handles both single-page and multi-page API responses
+  - **Backwards Compatibility**: Maintains full compatibility with multi-page responses that include all pagination links
+
+## [0.3.3] - 2025-08-05
+
+### Added
+- **Summary Report API Support**: Complete implementation of summary report functionality for modern policy compliance
+  - **Comprehensive Data Structures**: Added `SummaryReport`, `StaticAnalysisSummary`, `FlawStatusSummary`, `ScaSummary`, `SeverityLevel`, and `CategorySummary` structs
+  - **REST API Methods**: Implemented `get_summary_report()` for `/appsec/v2/applications/{app_guid}/summary_report` endpoint
+  - **Policy Compliance with Retry**: Added `evaluate_policy_compliance_via_summary_report_with_retry()` with configurable retry logic
+  - **Convenience Methods**: Added `evaluate_policy_compliance_via_summary_report()` with default retry parameters (30 retries, 10-second intervals)
+
+- **Advanced Retry Logic**: Intelligent policy compliance status checking with retry mechanism
+  - **Status Validation**: Waits for `policy_compliance_status` to be populated and not "Not Assessed"
+  - **Configurable Retry**: Customizable `max_retries` and `retry_delay_seconds` parameters
+  - **Progress Logging**: Detailed logging of retry attempts and status updates during policy evaluation
+  - **Timeout Handling**: Graceful handling when policy evaluation takes longer than expected
+
+- **Enhanced API Integration**: Modern REST API support for both policy and sandbox scans
+  - **Policy Scans**: Direct summary report access via `build_id` parameter
+  - **Sandbox Scans**: Context-aware summary reports via `context={sandbox_guid}` parameter
+  - **Unified Interface**: Consistent API for both scan types through optional `sandbox_guid` parameter
+
+### Changed
+- **Policy Compliance Architecture**: Migrated from XML API to REST API for better data richness
+  - **Modern Endpoint Usage**: Primary implementation now uses `/appsec/v2/applications/{app_guid}/summary_report` instead of `/api/5.0/getbuildinfo.do`
+  - **Enhanced Data Model**: Summary reports provide comprehensive policy, security, and flaw information
+  - **Backward Compatibility**: Original XML API methods preserved for legacy support
+
+- **API Response Handling**: Improved error handling and data processing
+  - **Structured Error Mapping**: Enhanced error handling for 400, 401, 403, 404, and 500 HTTP responses
+  - **JSON Deserialization**: Robust handling of complex summary report JSON structures
+  - **Type Safety**: Full Rust type safety with comprehensive serde serialization support
+
+### Fixed
+- **Format String Compliance**: Updated all format strings to use inline arguments per Rust 2021 edition standards
+  - Fixed clippy warning: `clippy::uninlined-format-args` in retry logging
+  - Enhanced code quality and compiler optimization compatibility
+
+- **Test Coverage**: Added comprehensive test suite for summary report functionality
+  - **Serialization Tests**: Validation of summary report JSON parsing and structure
+  - **Export Format Tests**: Testing of complete export JSON structure with metadata
+  - **Integration Testing**: Validation of summary report integration with existing policy compliance logic
+
+## [0.3.2] - 2025-08-05
+
+### Changed
+- **Policy API Improvements**: Enhanced policy compliance handling with more accurate XML API integration
+  - Updated `PolicyComplianceStatus` enum serialization from `UPPERCASE` to `PascalCase` to match XML API responses exactly
+  - Enhanced enum variants: `Passed`, `ConditionalPass` (for `"Conditional Pass"`), `DidNotPass` (for `"Did Not Pass"`), `NotAssessed` (for `"Not Assessed"`)  
+  - Improved documentation for `evaluate_policy_compliance_via_buildinfo()` method with clearer parameter descriptions
+  - Added memory-efficient `Cow<'static, str>` return type to avoid unnecessary string cloning
+  - Enhanced error handling by mapping `BuildError` variants to appropriate `PolicyError` variants
+
+### Added
+- **Policy Compliance Utilities**: New helper methods for CI/CD integration
+  - `PolicyApi::should_break_build(status)` - determines if build should break based on policy status string
+  - `PolicyApi::get_exit_code_for_status(status)` - returns standardized exit codes (0 for success, 4 for policy failure)
+
+### Removed
+- **Deprecated Policy Methods**: Removed non-functional REST API methods that were returning 404 errors
+  - Removed `evaluate_policy_compliance()` method that used broken REST endpoints
+  - Removed `get_policy_violations()`, `is_application_compliant()`, and `get_compliance_score()` convenience methods
+  - Removed unused `PolicyViolation` and `PolicyComplianceResult` structs
+
+### Fixed
+- **Test Coverage**: Updated policy compliance status serialization tests to match new enum values
+  - Added comprehensive tests for special case statuses with spaces (`"Conditional Pass"`, `"Did Not Pass"`)
+  - Added tests for build break logic and exit code determination
+
 ## [0.3.1] - 2025-08-04
 
 ### Changed

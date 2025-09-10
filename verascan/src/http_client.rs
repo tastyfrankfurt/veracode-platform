@@ -1,12 +1,61 @@
 //! Centralized HTTP client with robust networking capabilities
 //!
 //! This module provides a centralized HTTP client with built-in retry logic,
-//! configurable timeouts, and exponential backoff for reliable API integrations.
+//! configurable timeouts, exponential backoff, and authentication strategies
+//! for reliable API integrations across GraphQL, REST, and other protocols.
 
-use reqwest::{Client, header::HeaderMap};
+use reqwest::{
+    Client,
+    header::{AUTHORIZATION, CONTENT_TYPE, HeaderMap, HeaderName, HeaderValue},
+};
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time::sleep;
+
+use log::{debug, info};
+
+/// Authentication strategy for API clients
+#[derive(Debug, Clone)]
+pub enum AuthStrategy {
+    /// Bearer token in Authorization header
+    Bearer(String),
+    /// Custom header with token
+    CustomHeader { name: String, value: String },
+    /// No authentication
+    None,
+}
+
+impl AuthStrategy {
+    /// Apply authentication to headers
+    pub fn apply_to_headers(&self, headers: &mut HeaderMap) -> Result<(), HttpClientError> {
+        match self {
+            AuthStrategy::Bearer(token) => {
+                let auth_value =
+                    HeaderValue::from_str(&format!("Bearer {token}")).map_err(|e| {
+                        HttpClientError::AuthenticationError(format!("Invalid bearer token: {e}"))
+                    })?;
+                headers.insert(AUTHORIZATION, auth_value);
+            }
+            AuthStrategy::CustomHeader { name, value } => {
+                let header_name: HeaderName = name.parse().map_err(|e| {
+                    HttpClientError::ConfigurationError(format!(
+                        "Invalid header name '{name}': {e}"
+                    ))
+                })?;
+                let header_value = HeaderValue::from_str(value).map_err(|e| {
+                    HttpClientError::ConfigurationError(format!(
+                        "Invalid header value for '{name}': {e}"
+                    ))
+                })?;
+                headers.insert(header_name, header_value);
+            }
+            AuthStrategy::None => {
+                // No authentication to apply
+            }
+        }
+        Ok(())
+    }
+}
 
 /// HTTP timeout configuration
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -56,10 +105,10 @@ pub struct HttpClientConfig {
     pub timeouts: HttpTimeouts,
     pub retry_config: RetryConfig,
     pub disable_cert_validation: bool,
-    pub debug: bool,
 }
 
 impl HttpClientConfig {
+    #[must_use]
     pub fn new(base_url: String) -> Self {
         Self {
             base_url,
@@ -67,32 +116,30 @@ impl HttpClientConfig {
             timeouts: HttpTimeouts::default(),
             retry_config: RetryConfig::default(),
             disable_cert_validation: false,
-            debug: false,
         }
     }
 
+    #[must_use]
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.default_headers = headers;
         self
     }
 
+    #[must_use]
     pub fn with_timeouts(mut self, timeouts: HttpTimeouts) -> Self {
         self.timeouts = timeouts;
         self
     }
 
+    #[must_use]
     pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
         self
     }
 
+    #[must_use]
     pub fn with_cert_validation(mut self, validate: bool) -> Self {
         self.disable_cert_validation = !validate;
-        self
-    }
-
-    pub fn with_debug(mut self, debug: bool) -> Self {
-        self.debug = debug;
         self
     }
 }
@@ -111,7 +158,62 @@ pub enum HttpClientError {
     #[error("Request timeout after {duration:?}")]
     Timeout { duration: Duration },
     #[error("Client configuration error: {0}")]
-    ConfigError(String),
+    ConfigurationError(String),
+    #[error("Missing required environment variable: {0}")]
+    MissingEnvVar(String),
+    #[error("Authentication error: {0}")]
+    AuthenticationError(String),
+    #[error("GraphQL error: {0}")]
+    GraphQLError(String),
+    #[error("GitLab specific error: {0}")]
+    GitLabError(String),
+}
+
+// Type aliases for backward compatibility and clarity
+pub type ApiClientError = HttpClientError;
+pub type GraphQLClientError = HttpClientError;
+pub type GitLabClientError = HttpClientError;
+
+/// Debug output utilities for API clients
+impl HttpClientError {
+    /// Print connectivity test message
+    pub fn print_connectivity_test(api_name: &str) {
+        info!("🔍 Testing {api_name} connectivity...");
+    }
+
+    /// Print successful connectivity message
+    pub fn print_connectivity_success(api_name: &str) {
+        info!("✅ {api_name} connectivity test successful");
+    }
+
+    /// Print validation message
+    pub fn print_validation(api_name: &str) {
+        info!("🔍 Validating {api_name} integration requirements...");
+    }
+
+    /// Print validation success
+    pub fn print_validation_success(api_name: &str) {
+        info!("✅ {api_name} connectivity validated successfully!");
+    }
+
+    /// Print API access confirmation
+    pub fn print_api_access() {
+        info!("   API access: ✅ Authenticated");
+    }
+
+    /// Print permission check result
+    pub fn print_permission_result(operation: &str, allowed: bool) {
+        if allowed {
+            info!("   {operation}: ✅ Permitted");
+        } else {
+            info!("   {operation}: ⚠️  May be restricted");
+        }
+    }
+
+    /// Print permission error
+    pub fn print_permission_error(operation: &str, error: &str) {
+        info!("   {operation}: ⚠️  Error checking permissions: {error}");
+    }
 }
 
 /// Centralized HTTP client with robust networking
@@ -129,10 +231,8 @@ impl RobustHttpClient {
             .timeout(config.timeouts.request_timeout);
 
         if config.disable_cert_validation {
-            if config.debug {
-                println!("⚠️  WARNING: Certificate validation disabled");
-                println!("   This should only be used in development environments!");
-            }
+            debug!("⚠️  WARNING: Certificate validation disabled");
+            debug!("   This should only be used in development environments!");
             client_builder = client_builder
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
@@ -142,17 +242,15 @@ impl RobustHttpClient {
             .build()
             .map_err(HttpClientError::RequestError)?;
 
-        if config.debug {
-            println!("🔧 Robust HTTP Client initialized");
-            println!("   Base URL: {}", config.base_url);
-            println!("   Connect timeout: {:?}", config.timeouts.connect_timeout);
-            println!("   Request timeout: {:?}", config.timeouts.request_timeout);
-            println!("   Max retries: {}", config.retry_config.max_retries);
-            println!(
-                "   Initial retry delay: {:?}",
-                config.retry_config.initial_delay
-            );
-        }
+        debug!("🔧 HTTP Client initialized");
+        debug!("   Base URL: {}", config.base_url);
+        debug!("   Connect timeout: {:?}", config.timeouts.connect_timeout);
+        debug!("   Request timeout: {:?}", config.timeouts.request_timeout);
+        debug!("   Max retries: {}", config.retry_config.max_retries);
+        debug!(
+            "   Initial retry delay: {:?}",
+            config.retry_config.initial_delay
+        );
 
         Ok(Self { client, config })
     }
@@ -164,9 +262,7 @@ impl RobustHttpClient {
     {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
-        if self.config.debug {
-            println!("🌐 GET {url} (with retry logic)");
-        }
+        debug!("🌐 GET {url} (with retry logic)");
 
         let response = self
             .execute_with_retry(|| self.client.get(&url).send())
@@ -184,11 +280,9 @@ impl RobustHttpClient {
         let url = format!("{}{}", self.config.base_url, endpoint);
         let payload_json = serde_json::to_value(payload)?;
 
-        if self.config.debug {
-            println!("🌐 POST {url} (with retry logic)");
-            if let Ok(json) = serde_json::to_string_pretty(&payload_json) {
-                println!("📤 Request payload:\n{json}");
-            }
+        debug!("🌐 POST {url} (with retry logic)");
+        if let Ok(json) = serde_json::to_string_pretty(&payload_json) {
+            debug!("📤 Request payload:\n{json}");
         }
 
         let response = self
@@ -207,9 +301,7 @@ impl RobustHttpClient {
         let url = format!("{}{}", self.config.base_url, endpoint);
         let payload_json = serde_json::to_value(payload)?;
 
-        if self.config.debug {
-            println!("🌐 PUT {url} (with retry logic)");
-        }
+        debug!("🌐 PUT {url} (with retry logic)");
 
         let response = self
             .execute_with_retry(|| self.client.put(&url).json(&payload_json).send())
@@ -225,9 +317,7 @@ impl RobustHttpClient {
     {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
-        if self.config.debug {
-            println!("🌐 DELETE {url} (with retry logic)");
-        }
+        debug!("🌐 DELETE {url} (with retry logic)");
 
         let response = self
             .execute_with_retry(|| self.client.delete(&url).send())
@@ -249,10 +339,8 @@ impl RobustHttpClient {
     {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
-        if self.config.debug {
-            println!("🌐 UPLOAD {url} (with retry logic)");
-            println!("📤 File: {file_name} ({} bytes)", file_data.len());
-        }
+        debug!("🌐 UPLOAD {url} (with retry logic)");
+        debug!("📤 File: {file_name} ({} bytes)", file_data.len());
 
         // Serialize additional fields once
         let additional_fields_json = if let Some(ref fields) = additional_fields {
@@ -270,12 +358,12 @@ impl RobustHttpClient {
                         .file_name(file_name.to_string()),
                 );
 
-                if let Some(ref json) = additional_fields_json {
-                    if let Some(obj) = json.as_object() {
-                        for (key, value) in obj {
-                            if let Some(text) = value.as_str() {
-                                retry_form = retry_form.text(key.clone(), text.to_string());
-                            }
+                if let Some(ref json) = additional_fields_json
+                    && let Some(obj) = json.as_object()
+                {
+                    for (key, value) in obj {
+                        if let Some(text) = value.as_str() {
+                            retry_form = retry_form.text(key.clone(), text.to_string());
                         }
                     }
                 }
@@ -300,8 +388,8 @@ impl RobustHttpClient {
         let mut current_delay = self.config.retry_config.initial_delay;
 
         for attempt in 0..=self.config.retry_config.max_retries {
-            if self.config.debug && attempt > 0 {
-                println!(
+            if attempt > 0 {
+                debug!(
                     "🔄 Retry attempt {}/{} after {}ms delay",
                     attempt,
                     self.config.retry_config.max_retries,
@@ -316,9 +404,7 @@ impl RobustHttpClient {
 
                     // Check if error is retryable
                     if !self.is_retryable_error(&error) {
-                        if self.config.debug {
-                            println!("❌ Non-retryable error encountered: {error}");
-                        }
+                        debug!("❌ Non-retryable error encountered: {error}");
                         return Err(HttpClientError::RequestError(error));
                     }
 
@@ -331,9 +417,7 @@ impl RobustHttpClient {
                             current_delay
                         };
 
-                        if self.config.debug {
-                            println!("⏳ Waiting {}ms before retry...", delay.as_millis());
-                        }
+                        debug!("⏳ Waiting {}ms before retry...", delay.as_millis());
 
                         sleep(delay).await;
 
@@ -410,18 +494,14 @@ impl RobustHttpClient {
         if status.is_success() {
             let result: T = response.json().await?;
 
-            if self.config.debug {
-                println!("📥 API Response: {status}");
-            }
+            debug!("📥 API Response: {status}");
 
             Ok(result)
         } else {
             let status_code = status.as_u16();
             let error_text = response.text().await.unwrap_or("Unknown error".to_string());
 
-            if self.config.debug {
-                println!("❌ API Error: {status_code} - {error_text}");
-            }
+            debug!("❌ API Error: {status_code} - {error_text}");
 
             Err(HttpClientError::ApiError {
                 status: status_code,
@@ -434,9 +514,7 @@ impl RobustHttpClient {
     pub async fn test_connectivity(&self, endpoint: &str) -> Result<(), HttpClientError> {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
-        if self.config.debug {
-            println!("🔍 Testing connectivity to {url}");
-        }
+        debug!("🔍 Testing connectivity to {url}");
 
         let response = self
             .execute_with_retry(|| self.client.get(&url).send())
@@ -444,9 +522,7 @@ impl RobustHttpClient {
 
         let status = response.status();
         if status.is_success() {
-            if self.config.debug {
-                println!("✅ Connectivity test successful");
-            }
+            debug!("✅ Connectivity test successful");
             Ok(())
         } else {
             let status_code = status.as_u16();
@@ -459,13 +535,9 @@ impl RobustHttpClient {
     }
 
     /// Get the base URL for this client
+    #[must_use]
     pub fn base_url(&self) -> &str {
         &self.config.base_url
-    }
-
-    /// Check if debug mode is enabled
-    pub fn is_debug(&self) -> bool {
-        self.config.debug
     }
 }
 
@@ -475,6 +547,7 @@ pub struct HttpClientConfigBuilder {
 }
 
 impl HttpClientConfigBuilder {
+    #[must_use]
     pub fn new(base_url: String) -> Self {
         Self {
             config: HttpClientConfig::new(base_url),
@@ -554,6 +627,7 @@ impl HttpClientConfigBuilder {
     }
 
     /// Load certificate validation setting from environment variables with prefix
+    #[must_use]
     pub fn with_env_cert_validation(mut self, prefix: &str) -> Self {
         use std::env;
 
@@ -562,16 +636,38 @@ impl HttpClientConfigBuilder {
         self
     }
 
+    #[must_use]
     pub fn with_headers(mut self, headers: HeaderMap) -> Self {
         self.config.default_headers = headers;
         self
     }
 
-    pub fn with_debug(mut self, debug: bool) -> Self {
-        self.config.debug = debug;
+    /// Apply authentication strategy to the configuration
+    pub fn with_auth_strategy(mut self, auth: AuthStrategy) -> Result<Self, HttpClientError> {
+        auth.apply_to_headers(&mut self.config.default_headers)?;
+        Ok(self)
+    }
+
+    /// Convenience method for API clients with common patterns
+    pub fn for_api_client(base_url: String, env_prefix: &str) -> Self {
+        let mut headers = HeaderMap::new();
+        headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
+
+        Self::new(base_url)
+            .with_headers(headers)
+            .with_env_timeouts(env_prefix)
+            .with_env_retry_config(env_prefix)
+            .with_env_cert_validation(env_prefix)
+    }
+
+    /// Enable debug mode for API clients
+    #[must_use]
+    pub fn with_api(self, api_name: &str) -> Self {
+        debug!("🔍 Initializing {api_name} client with debug mode enabled");
         self
     }
 
+    #[must_use]
     pub fn build(self) -> HttpClientConfig {
         self.config
     }
@@ -608,11 +704,10 @@ mod tests {
 
         let config = HttpClientConfig::new("https://api.example.com".to_string())
             .with_headers(headers)
-            .with_debug(true)
             .with_cert_validation(false);
 
         assert_eq!(config.base_url, "https://api.example.com");
-        assert!(config.debug);
+        // Debug functionality removed from config
         assert!(config.disable_cert_validation);
         assert_eq!(config.default_headers.len(), 2);
     }
@@ -635,7 +730,6 @@ mod tests {
             .with_env_timeouts("TEST")
             .with_env_retry_config("TEST")
             .with_env_cert_validation("TEST")
-            .with_debug(true)
             .build();
 
         assert_eq!(config.timeouts.connect_timeout, Duration::from_secs(15));
@@ -661,14 +755,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_http_client_creation() {
-        let config = HttpClientConfig::new("https://api.example.com".to_string()).with_debug(false);
+        let config = HttpClientConfig::new("https://api.example.com".to_string());
 
         let client = RobustHttpClient::new(config);
         assert!(client.is_ok());
 
         let client = client.unwrap();
         assert_eq!(client.base_url(), "https://api.example.com");
-        assert!(!client.is_debug());
     }
 
     #[test]

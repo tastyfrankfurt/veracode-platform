@@ -1,6 +1,6 @@
 [package]
 name = "veracode-platform"
-version = "0.3.1"
+version = "0.5.0"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client library for the Veracode platform (Applications, Identity, Pipeline Scan, Sandbox)"
@@ -38,6 +38,12 @@ url = "2.4"
 urlencoding = "2.1"
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "2.0"
+
+# Logging
+log = "0.4"
+
+# Security - for secure credential handling
+secrecy = { version = "0.10", features = ["serde"] }
 
 # XML parsing for legacy API responses
 quick-xml = "0.38"
@@ -79,3 +85,7 @@ required-features = ["sandbox"]
 [[example]]
 name = "policy_lifecycle"
 required-features = ["policy"]
+
+[[example]]
+name = "credentials_example"
+required-features = ["applications"]

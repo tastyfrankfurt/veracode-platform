@@ -5,6 +5,7 @@
 
 use hex;
 use hmac::{Hmac, Mac};
+use log::{info, warn};
 use reqwest::{Client, multipart};
 use serde::Serialize;
 use sha2::Sha256;
@@ -92,16 +93,19 @@ impl VeracodeClient {
     }
 
     /// Get the base URL for API requests.
+    #[must_use]
     pub fn base_url(&self) -> &str {
         &self.config.base_url
     }
 
     /// Get access to the configuration
+    #[must_use]
     pub fn config(&self) -> &VeracodeConfig {
         &self.config
     }
 
     /// Get access to the underlying reqwest client
+    #[must_use]
     pub fn client(&self) -> &Client {
         &self.client
     }
@@ -193,7 +197,7 @@ impl VeracodeClient {
                             Some(seconds) => format!("{seconds}s (from Retry-After header)"),
                             None => format!("{}s (until next minute window)", delay.as_secs()),
                         };
-                        eprintln!(
+                        warn!(
                             "🚦 {operation_name} rate limited on attempt {attempt}, waiting {wait_time}"
                         );
 
@@ -205,7 +209,7 @@ impl VeracodeClient {
 
                     if attempt > 1 {
                         // Log successful retry for debugging
-                        eprintln!("✅ {operation_name} succeeded on attempt {attempt}");
+                        info!("✅ {operation_name} succeeded on attempt {attempt}");
                     }
                     return Ok(response);
                 }
@@ -237,7 +241,7 @@ impl VeracodeClient {
                     }
 
                     // Log retry attempt for debugging
-                    eprintln!(
+                    warn!(
                         "⚠️  {operation_name} failed on attempt {attempt}, retrying in {}ms: {veracode_error}",
                         delay.as_millis()
                     );
@@ -300,7 +304,7 @@ impl VeracodeClient {
         // var data = `id=${id}&host=${host}&url=${url}&method=${method}`;
         let data = format!(
             "id={}&host={}&url={}&method={}",
-            self.config.api_id.as_str(),
+            self.config.credentials.expose_api_id(),
             host,
             path_and_query,
             method
@@ -310,7 +314,7 @@ impl VeracodeClient {
         let ver_str = "vcode_request_version_1";
 
         // Convert hex strings to bytes
-        let key_bytes = hex::decode(self.config.api_key.as_str())
+        let key_bytes = hex::decode(self.config.credentials.expose_api_key())
             .map_err(|_| VeracodeError::Authentication(INVALID_API_KEY_MSG.to_string()))?;
 
         let nonce_bytes = hex::decode(nonce)
@@ -348,7 +352,7 @@ impl VeracodeClient {
     pub fn generate_auth_header(&self, method: &str, url: &str) -> Result<String, VeracodeError> {
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
-            .unwrap()
+            .map_err(|e| VeracodeError::Authentication(format!("System time error: {e}")))?
             .as_millis() as u64; // Use milliseconds like JavaScript
 
         // Generate a 16-byte random nonce and convert to hex string
@@ -359,7 +363,7 @@ impl VeracodeClient {
 
         Ok(format!(
             "VERACODE-HMAC-SHA-256 id={},ts={},nonce={},sig={}",
-            self.config.api_id.as_str(),
+            self.config.credentials.expose_api_id(),
             timestamp,
             nonce,
             signature
@@ -388,26 +392,25 @@ impl VeracodeClient {
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
-        if let Some(params) = query_params {
-            if !params.is_empty() {
-                url.push('?');
-                for (i, (key, value)) in params.iter().enumerate() {
-                    if i > 0 {
-                        url.push('&');
-                    }
-                    url.push_str(key);
-                    url.push('=');
-                    url.push_str(value);
+        if let Some(params) = query_params
+            && !params.is_empty()
+        {
+            url.push('?');
+            for (i, (key, value)) in params.iter().enumerate() {
+                if i > 0 {
+                    url.push('&');
                 }
+                url.push_str(key);
+                url.push('=');
+                url.push_str(value);
             }
         }
 
         // Create request builder closure for retry logic
         let request_builder = || {
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("GET", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.get("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("GET", &url) else {
+                return self.client.get("invalid://url");
             };
 
             self.client
@@ -455,9 +458,8 @@ impl VeracodeClient {
         // Create request builder closure for retry logic
         let request_builder = || {
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("POST", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("POST", &url) else {
+                return self.client.post("invalid://url");
             };
 
             let mut request = self
@@ -511,9 +513,8 @@ impl VeracodeClient {
         // Create request builder closure for retry logic
         let request_builder = || {
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("PUT", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.put("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("PUT", &url) else {
+                return self.client.put("invalid://url");
             };
 
             let mut request = self
@@ -555,9 +556,8 @@ impl VeracodeClient {
         // Create request builder closure for retry logic
         let request_builder = || {
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("DELETE", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.delete("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("DELETE", &url) else {
+                return self.client.delete("invalid://url");
             };
 
             self.client
@@ -715,13 +715,12 @@ impl VeracodeClient {
                 if let Some(embedded) = json_value.get("_embedded") {
                     if let Some(items_array) =
                         embedded.as_object().and_then(|obj| obj.values().next())
+                        && let Some(items) = items_array.as_array()
                     {
-                        if let Some(items) = items_array.as_array() {
-                            if items.is_empty() {
-                                break; // No more items
-                            }
-                            all_items.extend(items.clone());
+                        if items.is_empty() {
+                            break; // No more items
                         }
+                        all_items.extend(items.clone());
                     }
                 } else if let Some(items) = json_value.as_array() {
                     // Handle direct array response
@@ -740,10 +739,9 @@ impl VeracodeClient {
                     if let (Some(current), Some(total)) = (
                         page_obj.get("number").and_then(|n| n.as_u64()),
                         page_obj.get("totalPages").and_then(|n| n.as_u64()),
-                    ) {
-                        if current + 1 >= total {
-                            break; // Last page reached
-                        }
+                    ) && current + 1 >= total
+                    {
+                        break; // Last page reached
                     }
                 }
             } else {
@@ -1010,20 +1008,18 @@ impl VeracodeClient {
             let file_data_clone = Arc::clone(&file_data_arc);
 
             // Re-create multipart form for each attempt
-            let part = match multipart::Part::bytes((*file_data_clone).clone())
+            let Ok(part) = multipart::Part::bytes((*file_data_clone).clone())
                 .file_name(filename_cow.to_string())
                 .mime_str("application/octet-stream")
-            {
-                Ok(part) => part,
-                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            else {
+                return self.client.post("invalid://url");
             };
 
             let form = multipart::Form::new().part(field_name_cow.to_string(), part);
 
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("POST", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("POST", &url) else {
+                return self.client.post("invalid://url");
             };
 
             self.client
@@ -1184,9 +1180,8 @@ impl VeracodeClient {
             let file_data_clone = Arc::clone(&file_data_arc);
 
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("POST", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("POST", &url) else {
+                return self.client.post("invalid://url");
             };
 
             self.client
@@ -1259,9 +1254,8 @@ impl VeracodeClient {
             let file_data_clone = Arc::clone(&file_data_arc);
 
             // Re-generate auth header for each attempt to avoid signature expiry
-            let auth_header = match self.generate_auth_header("POST", &url) {
-                Ok(header) => header,
-                Err(_) => return self.client.post("invalid://url"), // This will fail immediately
+            let Ok(auth_header) = self.generate_auth_header("POST", &url) else {
+                return self.client.post("invalid://url");
             };
 
             self.client

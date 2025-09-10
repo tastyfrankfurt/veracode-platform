@@ -48,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Initialize GitLab client
     println!("\n🔗 Initializing GitLab client...");
-    let mut client = GitLabIssuesClient::from_env(true)?;
+    let mut client = GitLabIssuesClient::from_env()?;
 
     println!("✅ GitLab client initialized successfully");
 
@@ -184,6 +184,7 @@ fn create_mock_aggregated_findings(finding_with_source: FindingWithSource) -> Ag
         findings: vec![finding_with_source],
         summary,
         stats,
+        original_rest_findings: None, // Example uses pipeline findings
     }
 }
 
