@@ -3,6 +3,7 @@
 //! This module provides functionality to interact with the Veracode Pipeline Scan API,
 //! allowing you to submit applications for static analysis and retrieve scan results.
 
+use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
@@ -73,11 +74,13 @@ pub enum ScanStatus {
 
 impl ScanStatus {
     /// Check if the scan completed successfully
+    #[must_use]
     pub fn is_successful(&self) -> bool {
         matches!(self, ScanStatus::Success)
     }
 
     /// Check if the scan failed or was terminated
+    #[must_use]
     pub fn is_failed(&self) -> bool {
         matches!(
             self,
@@ -89,6 +92,7 @@ impl ScanStatus {
     }
 
     /// Check if the scan is still in progress
+    #[must_use]
     pub fn is_in_progress(&self) -> bool {
         matches!(
             self,
@@ -239,6 +243,7 @@ pub struct LegacyFinding {
 
 impl Finding {
     /// Convert to legacy format for backwards compatibility
+    #[must_use]
     pub fn to_legacy(&self) -> LegacyFinding {
         LegacyFinding {
             file: self.files.source_file.file.clone(),
@@ -474,30 +479,16 @@ pub struct StandardCompliance {
 /// Pipeline Scan API client
 pub struct PipelineApi {
     client: VeracodeClient,
-    debug: bool,
     // Cached base URL to avoid repeated string operations
     base_url: String,
 }
 
 impl PipelineApi {
     /// Create a new Pipeline API client
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         let base_url = Self::compute_base_url(&client);
-        Self {
-            client,
-            debug: false,
-            base_url,
-        }
-    }
-
-    /// Create a new Pipeline API client with debug enabled
-    pub fn new_with_debug(client: VeracodeClient, debug: bool) -> Self {
-        let base_url = Self::compute_base_url(&client);
-        Self {
-            client,
-            debug,
-            base_url,
-        }
+        Self { client, base_url }
     }
 
     /// Compute the pipeline scan v1 base URL for file uploads
@@ -535,19 +526,19 @@ impl PipelineApi {
             1 => Ok(applications[0].id.to_string()),
             _ => {
                 // Print the found applications to help the user
-                eprintln!(
+                error!(
                     "❌ Found {} applications matching '{}':",
                     applications.len(),
                     app_name
                 );
                 for (i, app) in applications.iter().enumerate() {
                     if let Some(ref profile) = app.profile {
-                        eprintln!("   {}. ID: {} - Name: '{}'", i + 1, app.id, profile.name);
+                        error!("   {}. ID: {} - Name: '{}'", i + 1, app.id, profile.name);
                     } else {
-                        eprintln!("   {}. ID: {} - GUID: {}", i + 1, app.id, app.guid);
+                        error!("   {}. ID: {} - GUID: {}", i + 1, app.id, app.guid);
                     }
                 }
-                eprintln!(
+                error!(
                     "💡 Please provide a more specific application name that matches exactly one application."
                 );
                 Err(PipelineError::MultipleApplicationsFound(
@@ -573,16 +564,12 @@ impl PipelineApi {
         app_name: Option<&str>,
     ) -> Result<ScanCreationResult, PipelineError> {
         // Look up app_id if app_name is provided
-        if let Some(name) = app_name {
-            if request.app_id.is_none() {
-                let app_id = self.lookup_app_id_by_name(name).await?;
-                request.app_id = Some(app_id);
-                println!(
-                    "✅ Found application '{}' with ID: {}",
-                    name,
-                    request.app_id.as_ref().unwrap()
-                );
-            }
+        if let Some(name) = app_name
+            && request.app_id.is_none()
+        {
+            let app_id = self.lookup_app_id_by_name(name).await?;
+            request.app_id = Some(app_id.clone());
+            info!("✅ Found application '{name}' with ID: {app_id}");
         }
 
         self.create_scan(request).await
@@ -666,24 +653,22 @@ impl PipelineApi {
                 .and_then(|segments| segments.as_u64())
                 .map(|s| s as u32);
 
-            if self.debug {
-                println!("✅ Scan creation response parsed:");
-                println!("   Scan ID: {scan_id}");
-                if let Some(ref uri) = upload_uri {
-                    println!("   Upload URI: {uri}");
-                }
-                if let Some(ref uri) = details_uri {
-                    println!("   Details URI: {uri}");
-                }
-                if let Some(ref uri) = start_uri {
-                    println!("   Start URI: {uri}");
-                }
-                if let Some(ref uri) = cancel_uri {
-                    println!("   Cancel URI: {uri}");
-                }
-                if let Some(segments) = expected_segments {
-                    println!("   Expected segments: {segments}");
-                }
+            debug!("✅ Scan creation response parsed:");
+            debug!("   Scan ID: {scan_id}");
+            if let Some(ref uri) = upload_uri {
+                debug!("   Upload URI: {uri}");
+            }
+            if let Some(ref uri) = details_uri {
+                debug!("   Details URI: {uri}");
+            }
+            if let Some(ref uri) = start_uri {
+                debug!("   Start URI: {uri}");
+            }
+            if let Some(ref uri) = cancel_uri {
+                debug!("   Cancel URI: {uri}");
+            }
+            if let Some(segments) = expected_segments {
+                debug!("   Expected segments: {segments}");
             }
 
             return Ok(ScanCreationResult {
@@ -729,12 +714,8 @@ impl PipelineApi {
         let total_size = binary_data.len();
         let segment_size = ((total_size as f64) / (expected_segments as f64)).ceil() as usize;
 
-        if self.debug {
-            println!(
-                "📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)"
-            );
-            println!("   Segment size: {segment_size} bytes each");
-        }
+        debug!("📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)");
+        debug!("   Segment size: {segment_size} bytes each");
 
         let mut current_upload_uri = initial_upload_uri.to_string();
 
@@ -743,53 +724,41 @@ impl PipelineApi {
             let end_idx = std::cmp::min(start_idx + segment_size, total_size);
             let segment_data = &binary_data[start_idx..end_idx];
 
-            if self.debug {
-                println!(
-                    "   Uploading segment {}/{} ({} bytes)...",
-                    segment_num + 1,
-                    expected_segments,
-                    segment_data.len()
-                );
-            }
+            debug!(
+                "   Uploading segment {}/{} ({} bytes)...",
+                segment_num + 1,
+                expected_segments,
+                segment_data.len()
+            );
 
             match self
                 .upload_single_segment(&current_upload_uri, segment_data, file_name)
                 .await
             {
                 Ok(response_text) => {
-                    if self.debug {
-                        println!("   ✅ Segment {} uploaded successfully", segment_num + 1);
-                    }
+                    debug!("   ✅ Segment {} uploaded successfully", segment_num + 1);
 
                     // Parse response to get next upload URI (like Java implementation)
                     if segment_num < expected_segments - 1 {
                         match self.extract_next_upload_uri(&response_text) {
                             Some(next_uri) => {
                                 current_upload_uri = next_uri;
-                                if self.debug {
-                                    println!("   📍 Next segment URI: {current_upload_uri}");
-                                }
+                                debug!("   📍 Next segment URI: {current_upload_uri}");
                             }
                             None => {
-                                if self.debug {
-                                    eprintln!(
-                                        "   ⚠️  No next URI found in response, using current"
-                                    );
-                                }
+                                warn!("   ⚠️  No next URI found in response, using current");
                             }
                         }
                     }
                 }
                 Err(e) => {
-                    eprintln!("   ❌ Failed to upload segment {}: {}", segment_num + 1, e);
+                    error!("   ❌ Failed to upload segment {}: {}", segment_num + 1, e);
                     return Err(e);
                 }
             }
         }
 
-        if self.debug {
-            println!("✅ All {expected_segments} segments uploaded successfully");
-        }
+        debug!("✅ All {expected_segments} segments uploaded successfully");
         Ok(())
     }
 
@@ -860,12 +829,11 @@ impl PipelineApi {
         // Parse JSON response to find the next upload URI
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(response_text) {
             // Look for _links.upload.href (HAL format)
-            if let Some(links) = json_value.get("_links") {
-                if let Some(upload) = links.get("upload") {
-                    if let Some(href) = upload.get("href") {
-                        return href.as_str().map(str::to_owned);
-                    }
-                }
+            if let Some(links) = json_value.get("_links")
+                && let Some(upload) = links.get("upload")
+                && let Some(href) = upload.get("href")
+            {
+                return href.as_str().map(str::to_owned);
             }
 
             // Alternative: look for upload_url field
@@ -1105,7 +1073,7 @@ impl PipelineApi {
         let endpoint = format!("/scans/{scan_id}/findings");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
 
-        // println!("🔍 Debug - get_findings() calling: {}", url);
+        debug!("🔍 Debug - get_findings() calling: {url}");
 
         // Generate auth header for GET request
         let auth_header = self
@@ -1126,52 +1094,40 @@ impl PipelineApi {
         let response_text = response.text().await?;
 
         // Debug: Print findings response summary
-        if self.debug {
-            println!("🔍 Debug - Findings API Response:");
-            println!("   Status: {status}");
-            println!("   Response Length: {} bytes", response_text.len());
-        }
+        debug!("🔍 Debug - Findings API Response:");
+        debug!("   Status: {status}");
+        debug!("   Response Length: {} bytes", response_text.len());
 
         match status.as_u16() {
             200 => {
                 // Findings are ready - parse the response as FindingsResponse
                 match serde_json::from_str::<FindingsResponse>(&response_text) {
                     Ok(findings_response) => {
-                        if self.debug {
-                            println!("🔍 Debug - Successfully parsed findings response:");
-                            println!("   Scan Status: {}", findings_response.scan_status);
-                            println!("   Message: {}", findings_response.message);
-                            println!("   Modules: {:?}", findings_response.modules);
-                            println!("   Findings Count: {}", findings_response.findings.len());
-                        }
+                        debug!("🔍 Debug - Successfully parsed findings response:");
+                        debug!("   Scan Status: {}", findings_response.scan_status);
+                        debug!("   Message: {}", findings_response.message);
+                        debug!("   Modules: {:?}", findings_response.modules);
+                        debug!("   Findings Count: {}", findings_response.findings.len());
                         Ok(findings_response.findings)
                     }
                     Err(e) => {
-                        if self.debug {
-                            println!("❌ Debug - Failed to parse FindingsResponse: {e}");
-                        }
+                        debug!("❌ Debug - Failed to parse FindingsResponse: {e}");
                         // Fallback: try to parse as generic JSON and extract findings array
                         if let Ok(json_value) =
                             serde_json::from_str::<serde_json::Value>(&response_text)
-                        {
-                            if let Some(findings_array) =
+                            && let Some(findings_array) =
                                 json_value.get("findings").and_then(|f| f.as_array())
-                            {
-                                if self.debug {
-                                    println!(
-                                        "🔍 Debug - Trying fallback parsing of findings array..."
-                                    );
-                                }
-                                let findings: Result<Vec<Finding>, _> = findings_array
-                                    .iter()
-                                    .map(|f| serde_json::from_value(f.clone()))
-                                    .collect();
-                                return findings.map_err(|e| {
-                                    PipelineError::InvalidRequest(format!(
-                                        "Failed to parse findings array: {e}"
-                                    ))
-                                });
-                            }
+                        {
+                            debug!("🔍 Debug - Trying fallback parsing of findings array...");
+                            let findings: Result<Vec<Finding>, _> = findings_array
+                                .iter()
+                                .map(|f| serde_json::from_value(f.clone()))
+                                .collect();
+                            return findings.map_err(|e| {
+                                PipelineError::InvalidRequest(format!(
+                                    "Failed to parse findings array: {e}"
+                                ))
+                            });
                         }
                         Err(PipelineError::InvalidRequest(format!(
                             "Failed to parse findings response: {e}"
@@ -1207,14 +1163,10 @@ impl PipelineApi {
     /// This method will return `FindingsNotReady` error if the scan findings are not yet available.
     /// Use `get_scan()` to check scan status before calling this method.
     pub async fn get_results(&self, scan_id: &str) -> Result<ScanResults, PipelineError> {
-        if self.debug {
-            println!("🔍 Debug - get_results() getting scan details for: {scan_id}");
-        }
+        debug!("🔍 Debug - get_results() getting scan details for: {scan_id}");
         let scan = self.get_scan(scan_id).await?;
-        if self.debug {
-            println!("🔍 Debug - get_results() scan status: {}", scan.scan_status);
-            println!("🔍 Debug - get_results() calling get_findings() for: {scan_id}");
-        }
+        debug!("🔍 Debug - get_results() scan status: {}", scan.scan_status);
+        debug!("🔍 Debug - get_results() calling get_findings() for: {scan_id}");
         let findings = self.get_findings(scan_id).await?;
 
         // Calculate summary
@@ -1261,35 +1213,6 @@ impl PipelineApi {
                 "Failed to cancel scan: {error_text}"
             )))
         }
-    }
-
-    /// List pipeline scans with optional filtering
-    ///
-    /// **Note**: This method is not supported by the Veracode Pipeline Scan API.
-    /// Veracode does not provide endpoints to enumerate/list all scans.
-    /// Use `get_scan()` with a specific scan ID instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `project_name` - Optional project name filter  
-    /// * `dev_stage` - Optional development stage filter
-    /// * `limit` - Maximum number of scans to return
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing an error indicating this operation is not supported
-    #[deprecated(
-        note = "Veracode Pipeline Scan API does not support listing scans. Use get_scan() with specific scan ID instead."
-    )]
-    pub async fn list_scans(
-        &self,
-        _project_name: Option<&str>,
-        _dev_stage: Option<DevStage>,
-        _limit: Option<u32>,
-    ) -> Result<Vec<Scan>, PipelineError> {
-        Err(PipelineError::InvalidRequest(
-            "Veracode Pipeline Scan API does not support listing/enumerating scans. Use get_scan() with a specific scan ID instead.".to_string()
-        ))
     }
 
     /// Wait for scan to complete with polling

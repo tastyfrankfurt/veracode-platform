@@ -2,6 +2,8 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
+use log::debug;
+
 #[derive(Debug, Clone, PartialEq)]
 pub enum SupportedFileType {
     Jar,
@@ -74,16 +76,13 @@ impl Default for FileValidator {
 }
 
 impl FileValidator {
+    #[must_use]
     pub fn new() -> Self {
         FileValidator
     }
 
     /// Validate a file by checking its header signature
-    pub fn validate_file(
-        &self,
-        file_path: &Path,
-        debug: bool,
-    ) -> Result<SupportedFileType, ValidationError> {
+    pub fn validate_file(&self, file_path: &Path) -> Result<SupportedFileType, ValidationError> {
         // Read the first 512 bytes to check file signatures
         let mut file = File::open(file_path).map_err(|e| {
             ValidationError::IoError(format!(
@@ -102,10 +101,8 @@ impl FileValidator {
             ))
         })?;
 
-        if debug {
-            println!("🔍 DEBUG: Reading file: {}", file_path.display());
-            println!("🔍 DEBUG: Bytes read: {bytes_read}");
-        }
+        debug!("🔍 DEBUG: Reading file: {}", file_path.display());
+        debug!("🔍 DEBUG: Bytes read: {bytes_read}");
 
         if bytes_read == 0 {
             return Err(ValidationError::InvalidFileHeader(
@@ -116,12 +113,10 @@ impl FileValidator {
         // Resize buffer to actual bytes read
         buffer.truncate(bytes_read);
 
-        if debug {
-            println!(
-                "🔍 DEBUG: First 16 bytes: {:02x?}",
-                &buffer[..std::cmp::min(16, buffer.len())]
-            );
-        }
+        debug!(
+            "🔍 DEBUG: First 16 bytes: {:02x?}",
+            &buffer[..std::cmp::min(16, buffer.len())]
+        );
 
         // Use infer library for MIME type detection
         let file_type = infer::get(&buffer);
@@ -130,67 +125,46 @@ impl FileValidator {
         let file_extension = file_path
             .extension()
             .and_then(|ext| ext.to_str())
-            .map(|s| s.to_lowercase());
+            .map(str::to_lowercase);
 
-        if debug {
-            println!("🔍 DEBUG: File extension: {file_extension:?}");
-            println!(
-                "🔍 DEBUG: Infer detected type: {:?}",
-                file_type.as_ref().map(|t| t.mime_type())
-            );
-        }
+        debug!("🔍 DEBUG: File extension: {file_extension:?}");
+        debug!(
+            "🔍 DEBUG: Infer detected type: {:?}",
+            file_type.as_ref().map(|t| t.mime_type())
+        );
 
         match file_type {
             Some(kind) => {
                 match kind.mime_type() {
                     "application/zip" => {
-                        if debug {
-                            println!("🔍 DEBUG: Detected ZIP-based file");
-                        }
+                        debug!("🔍 DEBUG: Detected ZIP-based file");
                         // Could be ZIP, JAR, or WAR - check extension and content
                         match file_extension.as_deref() {
                             Some("jar") => {
-                                if debug {
-                                    println!("🔍 DEBUG: Extension indicates JAR file");
-                                }
+                                debug!("🔍 DEBUG: Extension indicates JAR file");
                                 // Additional validation: check for META-INF/MANIFEST.MF signature
-                                if self.is_jar_file(&buffer, debug) {
-                                    if debug {
-                                        println!("🔍 DEBUG: JAR structure confirmed");
-                                    }
+                                if self.is_jar_file(&buffer) {
+                                    debug!("🔍 DEBUG: JAR structure confirmed");
                                     Ok(SupportedFileType::Jar)
                                 } else {
-                                    if debug {
-                                        println!(
-                                            "🔍 DEBUG: JAR structure not found, treating as ZIP"
-                                        );
-                                    }
+                                    debug!("🔍 DEBUG: JAR structure not found, treating as ZIP");
                                     Ok(SupportedFileType::Zip) // ZIP-based but not a proper JAR
                                 }
                             }
                             Some("war") => {
-                                if debug {
-                                    println!("🔍 DEBUG: Extension indicates WAR file");
-                                }
+                                debug!("🔍 DEBUG: Extension indicates WAR file");
                                 // Additional validation: check for WEB-INF structure signature
-                                if self.is_war_file(&buffer, debug) {
-                                    if debug {
-                                        println!("🔍 DEBUG: WAR structure confirmed");
-                                    }
+                                if self.is_war_file(&buffer) {
+                                    debug!("🔍 DEBUG: WAR structure confirmed");
                                     Ok(SupportedFileType::War)
                                 } else {
-                                    if debug {
-                                        println!(
-                                            "🔍 DEBUG: WAR structure not found, treating as ZIP"
-                                        );
-                                    }
+                                    debug!("🔍 DEBUG: WAR structure not found, treating as ZIP");
+
                                     Ok(SupportedFileType::Zip) // ZIP-based but not a proper WAR
                                 }
                             }
                             _ => {
-                                if debug {
-                                    println!("🔍 DEBUG: Generic ZIP file");
-                                }
+                                debug!("🔍 DEBUG: Generic ZIP file");
                                 Ok(SupportedFileType::Zip)
                             }
                         }
@@ -285,7 +259,7 @@ impl FileValidator {
     }
 
     /// Enhanced JAR detection - looks for JAR-specific patterns
-    fn is_jar_file(&self, buffer: &[u8], debug: bool) -> bool {
+    fn is_jar_file(&self, buffer: &[u8]) -> bool {
         if !self.has_zip_signature(buffer) {
             return false;
         }
@@ -294,14 +268,12 @@ impl FileValidator {
         // This is a heuristic check - a proper JAR should contain META-INF/MANIFEST.MF
         let search_pattern = b"META-INF/";
         let found = self.contains_pattern(buffer, search_pattern);
-        if debug {
-            println!("🔍 DEBUG: JAR pattern search for 'META-INF/': {found}");
-        }
+        debug!("🔍 DEBUG: JAR pattern search for 'META-INF/': {found}");
         found
     }
 
     /// Enhanced WAR detection - looks for WAR-specific patterns
-    fn is_war_file(&self, buffer: &[u8], debug: bool) -> bool {
+    fn is_war_file(&self, buffer: &[u8]) -> bool {
         if !self.has_zip_signature(buffer) {
             return false;
         }
@@ -310,9 +282,7 @@ impl FileValidator {
         // A proper WAR should contain WEB-INF/web.xml
         let search_pattern = b"WEB-INF/";
         let found = self.contains_pattern(buffer, search_pattern);
-        if debug {
-            println!("🔍 DEBUG: WAR pattern search for 'WEB-INF/': {found}");
-        }
+        debug!("🔍 DEBUG: WAR pattern search for 'WEB-INF/': {found}");
         found
     }
 
@@ -331,6 +301,7 @@ impl FileValidator {
     }
 
     /// Get human-readable file type description
+    #[must_use]
     pub fn get_file_type_description(&self, file_type: &SupportedFileType) -> &'static str {
         match file_type {
             SupportedFileType::Jar => "Java Archive (JAR) - Executable Java application or library",
@@ -345,6 +316,7 @@ impl FileValidator {
     }
 
     /// Check if file type is suitable for Veracode static analysis
+    #[must_use]
     pub fn is_suitable_for_static_analysis(&self, file_type: &SupportedFileType) -> bool {
         match file_type {
             SupportedFileType::Jar | SupportedFileType::War | SupportedFileType::Zip => true,
@@ -354,12 +326,12 @@ impl FileValidator {
     }
 
     /// Validate file size against specified limit
-    pub fn validate_file_size(
+    pub async fn validate_file_size(
         &self,
         file_path: &Path,
         max_size_mb: f64,
     ) -> Result<u64, ValidationError> {
-        let metadata = std::fs::metadata(file_path).map_err(|e| {
+        let metadata = tokio::fs::metadata(file_path).await.map_err(|e| {
             ValidationError::IoError(format!(
                 "Failed to get file metadata for '{}': {}",
                 file_path.display(),
@@ -382,17 +354,23 @@ impl FileValidator {
     }
 
     /// Validate file size for pipeline scans (200MB limit)
-    pub fn validate_pipeline_file_size(&self, file_path: &Path) -> Result<u64, ValidationError> {
-        self.validate_file_size(file_path, 200.0)
+    pub async fn validate_pipeline_file_size(
+        &self,
+        file_path: &Path,
+    ) -> Result<u64, ValidationError> {
+        self.validate_file_size(file_path, 200.0).await
     }
 
     /// Validate file size for assessment scans (2GB limit)
-    pub fn validate_assessment_file_size(&self, file_path: &Path) -> Result<u64, ValidationError> {
-        self.validate_file_size(file_path, 2048.0) // 2GB = 2048MB
+    pub async fn validate_assessment_file_size(
+        &self,
+        file_path: &Path,
+    ) -> Result<u64, ValidationError> {
+        self.validate_file_size(file_path, 2048.0).await // 2GB = 2048MB
     }
 
     /// Validate cumulative file sizes for assessment scans (5GB total limit)
-    pub fn validate_assessment_cumulative_size(
+    pub async fn validate_assessment_cumulative_size(
         &self,
         file_paths: &[&Path],
     ) -> Result<u64, ValidationError> {
@@ -400,7 +378,7 @@ impl FileValidator {
         let max_total_mb = 5120.0; // 5GB = 5120MB
 
         for file_path in file_paths {
-            let metadata = std::fs::metadata(file_path).map_err(|e| {
+            let metadata = tokio::fs::metadata(file_path).await.map_err(|e| {
                 ValidationError::IoError(format!(
                     "Failed to get file metadata for '{}': {}",
                     file_path.display(),

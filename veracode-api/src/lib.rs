@@ -91,6 +91,7 @@
 pub mod app;
 pub mod build;
 pub mod client;
+pub mod findings;
 pub mod identity;
 pub mod pipeline;
 pub mod policy;
@@ -99,7 +100,9 @@ pub mod scan;
 pub mod workflow;
 
 use reqwest::Error as ReqwestError;
+use secrecy::{ExposeSecret, SecretString};
 use std::fmt;
+use std::sync::Arc;
 use std::time::Duration;
 
 // Re-export common types for convenience
@@ -112,6 +115,10 @@ pub use build::{
     DeleteBuildResult, GetBuildInfoRequest, GetBuildListRequest, UpdateBuildRequest,
 };
 pub use client::VeracodeClient;
+pub use findings::{
+    CweInfo, FindingCategory, FindingDetails, FindingStatus, FindingsApi, FindingsError,
+    FindingsQuery, FindingsResponse, RestFinding,
+};
 pub use identity::{
     ApiCredential, BusinessUnit, CreateApiCredentialRequest, CreateTeamRequest, CreateUserRequest,
     IdentityApi, IdentityError, Role, Team, UpdateTeamRequest, UpdateUserRequest, User, UserQuery,
@@ -122,8 +129,8 @@ pub use pipeline::{
     ScanConfig, ScanResults, ScanStage, ScanStatus, SecurityStandards, Severity,
 };
 pub use policy::{
-    PolicyApi, PolicyComplianceResult, PolicyComplianceStatus, PolicyError, PolicyRule,
-    PolicyScanRequest, PolicyScanResult, PolicyThresholds, ScanType, SecurityPolicy,
+    ApiSource, PolicyApi, PolicyComplianceResult, PolicyComplianceStatus, PolicyError, PolicyRule,
+    PolicyScanRequest, PolicyScanResult, PolicyThresholds, ScanType, SecurityPolicy, SummaryReport,
 };
 pub use sandbox::{
     ApiError, ApiErrorResponse, CreateSandboxRequest, Sandbox, SandboxApi, SandboxError,
@@ -152,6 +159,8 @@ pub struct RetryConfig {
     pub rate_limit_buffer_seconds: u64,
     /// Maximum number of retry attempts specifically for rate limit errors (default: 1)
     pub rate_limit_max_attempts: u32,
+    /// Whether to enable jitter in retry delays (default: true)
+    pub jitter_enabled: bool,
 }
 
 impl Default for RetryConfig {
@@ -161,62 +170,104 @@ impl Default for RetryConfig {
             initial_delay_ms: 1000,
             max_delay_ms: 30000,
             backoff_multiplier: 2.0,
-            max_total_delay_ms: 300000,   // 5 minutes
+            max_total_delay_ms: 300_000,  // 5 minutes
             rate_limit_buffer_seconds: 5, // 5 second buffer for rate limit windows
             rate_limit_max_attempts: 1,   // Only retry once for rate limits
+            jitter_enabled: true,         // Enable jitter by default
         }
     }
 }
 
 impl RetryConfig {
     /// Create a new retry configuration with conservative defaults
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
 
     /// Set the maximum number of retry attempts
+    #[must_use]
     pub fn with_max_attempts(mut self, max_attempts: u32) -> Self {
         self.max_attempts = max_attempts;
         self
     }
 
     /// Set the initial delay between retries
+    #[must_use]
     pub fn with_initial_delay(mut self, delay_ms: u64) -> Self {
         self.initial_delay_ms = delay_ms;
         self
     }
 
+    /// Set the initial delay between retries (alias for compatibility)
+    #[must_use]
+    pub fn with_initial_delay_millis(mut self, delay_ms: u64) -> Self {
+        self.initial_delay_ms = delay_ms;
+        self
+    }
+
     /// Set the maximum delay between retries
+    #[must_use]
     pub fn with_max_delay(mut self, delay_ms: u64) -> Self {
         self.max_delay_ms = delay_ms;
         self
     }
 
+    /// Set the maximum delay between retries (alias for compatibility)
+    #[must_use]
+    pub fn with_max_delay_millis(mut self, delay_ms: u64) -> Self {
+        self.max_delay_ms = delay_ms;
+        self
+    }
+
     /// Set the exponential backoff multiplier
+    #[must_use]
     pub fn with_backoff_multiplier(mut self, multiplier: f64) -> Self {
         self.backoff_multiplier = multiplier;
         self
     }
 
+    /// Set the exponential backoff multiplier (alias for compatibility)
+    #[must_use]
+    pub fn with_exponential_backoff(mut self, multiplier: f64) -> Self {
+        self.backoff_multiplier = multiplier;
+        self
+    }
+
     /// Set the maximum total time to spend on retries
+    #[must_use]
     pub fn with_max_total_delay(mut self, delay_ms: u64) -> Self {
         self.max_total_delay_ms = delay_ms;
         self
     }
 
     /// Set the buffer time to add when waiting for rate limit window reset
+    #[must_use]
     pub fn with_rate_limit_buffer(mut self, buffer_seconds: u64) -> Self {
         self.rate_limit_buffer_seconds = buffer_seconds;
         self
     }
 
     /// Set the maximum number of retry attempts for rate limit errors
+    #[must_use]
     pub fn with_rate_limit_max_attempts(mut self, max_attempts: u32) -> Self {
         self.rate_limit_max_attempts = max_attempts;
         self
     }
 
+    /// Disable jitter in retry delays
+    ///
+    /// Jitter adds randomness to retry delays to prevent thundering herd problems.
+    /// Disabling jitter makes retry timing more predictable but may cause synchronized
+    /// retries from multiple clients.
+    #[must_use]
+    pub fn with_jitter_disabled(mut self) -> Self {
+        self.jitter_enabled = false;
+        self
+    }
+
     /// Calculate the delay for a given attempt number using exponential backoff
+    #[must_use]
     pub fn calculate_delay(&self, attempt: u32) -> Duration {
         if attempt == 0 {
             return Duration::from_millis(0);
@@ -225,7 +276,17 @@ impl RetryConfig {
         let delay_ms = (self.initial_delay_ms as f64
             * self.backoff_multiplier.powi((attempt - 1) as i32)) as u64;
 
-        let capped_delay = delay_ms.min(self.max_delay_ms);
+        let mut capped_delay = delay_ms.min(self.max_delay_ms);
+
+        // Apply jitter if enabled (±25% randomization)
+        if self.jitter_enabled {
+            use rand::Rng;
+            let jitter_range = (capped_delay as f64 * 0.25) as u64;
+            let min_delay = capped_delay.saturating_sub(jitter_range);
+            let max_delay = capped_delay + jitter_range;
+            capped_delay = rand::rng().random_range(min_delay..=max_delay);
+        }
+
         Duration::from_millis(capped_delay)
     }
 
@@ -234,6 +295,7 @@ impl RetryConfig {
     /// For Veracode's 500 requests/minute rate limiting, this calculates the optimal
     /// wait time based on the current time within the minute window or uses the
     /// server's Retry-After header if provided.
+    #[must_use]
     pub fn calculate_rate_limit_delay(&self, retry_after_seconds: Option<u64>) -> Duration {
         if let Some(seconds) = retry_after_seconds {
             // Use the server's suggested delay
@@ -254,6 +316,7 @@ impl RetryConfig {
     }
 
     /// Check if an error is retryable based on its type
+    #[must_use]
     pub fn is_retryable_error(&self, error: &VeracodeError) -> bool {
         match error {
             VeracodeError::Http(reqwest_error) => {
@@ -341,58 +404,69 @@ impl VeracodeClient {
 
     /// Get an applications API instance.
     /// Uses REST API (api.veracode.*).
+    #[must_use]
     pub fn applications_api(&self) -> &Self {
         self
     }
 
     /// Get a sandbox API instance.
     /// Uses REST API (api.veracode.*).
-    pub fn sandbox_api(&self) -> SandboxApi {
+    #[must_use]
+    pub fn sandbox_api(&self) -> SandboxApi<'_> {
         SandboxApi::new(self)
     }
 
     /// Get an identity API instance.
     /// Uses REST API (api.veracode.*).
-    pub fn identity_api(&self) -> IdentityApi {
+    #[must_use]
+    pub fn identity_api(&self) -> IdentityApi<'_> {
         IdentityApi::new(self)
     }
 
     /// Get a pipeline scan API instance.
     /// Uses REST API (api.veracode.*).
+    #[must_use]
     pub fn pipeline_api(&self) -> PipelineApi {
         PipelineApi::new(self.clone())
     }
 
-    /// Get a pipeline scan API instance with debug enabled.
-    /// Uses REST API (api.veracode.*).
-    pub fn pipeline_api_with_debug(&self, debug: bool) -> PipelineApi {
-        PipelineApi::new_with_debug(self.clone(), debug)
-    }
-
     /// Get a policy API instance.
     /// Uses REST API (api.veracode.*).
-    pub fn policy_api(&self) -> PolicyApi {
+    #[must_use]
+    pub fn policy_api(&self) -> PolicyApi<'_> {
         PolicyApi::new(self)
+    }
+
+    /// Get a findings API instance.
+    /// Uses REST API (api.veracode.*).
+    #[must_use]
+    pub fn findings_api(&self) -> FindingsApi {
+        FindingsApi::new(self.clone())
     }
 
     /// Get a scan API instance.
     /// Uses XML API (analysiscenter.veracode.*) for both sandbox and application scans.
+    #[must_use]
     pub fn scan_api(&self) -> ScanApi {
         // Create a specialized XML client for scan operations
-        let xml_client = Self::new_xml_client(self.config().clone()).unwrap();
+        let xml_client = Self::new_xml_client(self.config().clone())
+            .expect("XML client creation should not fail if main client was created successfully");
         ScanApi::new(xml_client)
     }
 
     /// Get a build API instance.
     /// Uses XML API (analysiscenter.veracode.*) for build management operations.
+    #[must_use]
     pub fn build_api(&self) -> build::BuildApi {
         // Create a specialized XML client for build operations
-        let xml_client = Self::new_xml_client(self.config().clone()).unwrap();
+        let xml_client = Self::new_xml_client(self.config().clone())
+            .expect("XML client creation should not fail if main client was created successfully");
         build::BuildApi::new(xml_client)
     }
 
     /// Get a workflow helper instance.
     /// Provides high-level operations that combine multiple API calls.
+    #[must_use]
     pub fn workflow(&self) -> workflow::VeracodeWorkflow {
         workflow::VeracodeWorkflow::new(self.clone())
     }
@@ -435,51 +509,78 @@ impl From<serde_json::Error> for VeracodeError {
     }
 }
 
-/// Secure wrapper for Veracode API ID that prevents exposure in debug output
+/// ARC-based credential storage for thread-safe access via memory pointers
+///
+/// This struct provides secure credential storage with the following protections:
+/// - Fields are private to prevent direct access
+/// - SecretString provides memory protection and debug redaction
+/// - ARC allows safe sharing across threads
+/// - Access is only possible through controlled expose_* methods
 #[derive(Clone)]
-pub struct SecureVeracodeApiId(String);
+pub struct VeracodeCredentials {
+    /// API ID stored in ARC for shared access - PRIVATE for security
+    api_id: Arc<SecretString>,
+    /// API key stored in ARC for shared access - PRIVATE for security  
+    api_key: Arc<SecretString>,
+}
 
-/// Secure wrapper for Veracode API key that prevents exposure in debug output
-#[derive(Clone)]
-pub struct SecureVeracodeApiKey(String);
-
-impl SecureVeracodeApiId {
-    pub fn new(api_id: String) -> Self {
-        SecureVeracodeApiId(api_id)
+impl VeracodeCredentials {
+    /// Create new ARC-based credentials
+    #[must_use]
+    pub fn new(api_id: String, api_key: String) -> Self {
+        Self {
+            api_id: Arc::new(SecretString::new(api_id.into())),
+            api_key: Arc::new(SecretString::new(api_key.into())),
+        }
     }
 
-    pub fn as_str(&self) -> &str {
-        &self.0
+    /// Get API ID via memory pointer (ARC) - USE WITH CAUTION
+    ///
+    /// # Security Warning
+    /// This returns an `Arc<SecretString>` which allows the caller to call expose_secret().
+    /// Only use this method when you need to share credentials across thread boundaries.
+    /// For authentication, prefer using expose_api_id() directly.
+    #[must_use]
+    pub fn api_id_ptr(&self) -> Arc<SecretString> {
+        Arc::clone(&self.api_id)
     }
 
-    pub fn into_string(self) -> String {
-        self.0
+    /// Get API key via memory pointer (ARC) - USE WITH CAUTION
+    ///
+    /// # Security Warning  
+    /// This returns an `Arc<SecretString>` which allows the caller to call expose_secret().
+    /// Only use this method when you need to share credentials across thread boundaries.
+    /// For authentication, prefer using expose_api_key() directly.
+    #[must_use]
+    pub fn api_key_ptr(&self) -> Arc<SecretString> {
+        Arc::clone(&self.api_key)
+    }
+
+    /// Access API ID securely (temporary access for authentication)
+    ///
+    /// This is the preferred method for accessing the API ID during authentication.
+    /// The returned reference is only valid for the lifetime of this call.
+    #[must_use]
+    pub fn expose_api_id(&self) -> &str {
+        self.api_id.expose_secret()
+    }
+
+    /// Access API key securely (temporary access for authentication)
+    ///
+    /// This is the preferred method for accessing the API key during authentication.
+    /// The returned reference is only valid for the lifetime of this call.
+    #[must_use]
+    pub fn expose_api_key(&self) -> &str {
+        self.api_key.expose_secret()
     }
 }
 
-impl SecureVeracodeApiKey {
-    pub fn new(api_key: String) -> Self {
-        SecureVeracodeApiKey(api_key)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn into_string(self) -> String {
-        self.0
-    }
-}
-
-impl std::fmt::Debug for SecureVeracodeApiId {
+impl std::fmt::Debug for VeracodeCredentials {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("[REDACTED]")
-    }
-}
-
-impl std::fmt::Debug for SecureVeracodeApiKey {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("[REDACTED]")
+        f.debug_struct("VeracodeCredentials")
+            .field("api_id", &"[REDACTED]")
+            .field("api_key", &"[REDACTED]")
+            .finish()
     }
 }
 
@@ -491,10 +592,8 @@ impl std::fmt::Debug for SecureVeracodeApiKey {
 /// (analysiscenter.veracode.*) endpoints based on the selected region.
 #[derive(Clone)]
 pub struct VeracodeConfig {
-    /// Your Veracode API ID (securely wrapped)
-    pub api_id: SecureVeracodeApiId,
-    /// Your Veracode API key (securely wrapped, should be kept secret)
-    pub api_key: SecureVeracodeApiKey,
+    /// ARC-based credentials for thread-safe access
+    pub credentials: VeracodeCredentials,
     /// Base URL for the current client instance
     pub base_url: String,
     /// REST API base URL (api.veracode.*)
@@ -517,8 +616,7 @@ pub struct VeracodeConfig {
 impl std::fmt::Debug for VeracodeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("VeracodeConfig")
-            .field("api_id", &self.api_id)
-            .field("api_key", &self.api_key)
+            .field("credentials", &self.credentials)
             .field("base_url", &self.base_url)
             .field("rest_base_url", &self.rest_base_url)
             .field("xml_base_url", &self.xml_base_url)
@@ -569,10 +667,11 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// A new `VeracodeConfig` instance configured for the Commercial region.
+    #[must_use]
     pub fn new(api_id: &str, api_key: &str) -> Self {
+        let credentials = VeracodeCredentials::new(api_id.to_string(), api_key.to_string());
         Self {
-            api_id: SecureVeracodeApiId::new(api_id.to_string()),
-            api_key: SecureVeracodeApiKey::new(api_key.to_string()),
+            credentials,
             base_url: COMMERCIAL_REST_URL.to_string(),
             rest_base_url: COMMERCIAL_REST_URL.to_string(),
             xml_base_url: COMMERCIAL_XML_URL.to_string(),
@@ -581,6 +680,27 @@ impl VeracodeConfig {
             retry_config: RetryConfig::default(),
             connect_timeout: 30,  // Default: 30 seconds
             request_timeout: 300, // Default: 5 minutes
+        }
+    }
+
+    /// Create a new configuration with ARC-based credentials
+    ///
+    /// This method allows direct use of ARC pointers for credential sharing
+    /// across threads and components.
+    #[must_use]
+    pub fn from_arc_credentials(api_id: Arc<SecretString>, api_key: Arc<SecretString>) -> Self {
+        let credentials = VeracodeCredentials { api_id, api_key };
+
+        Self {
+            credentials,
+            base_url: COMMERCIAL_REST_URL.to_string(),
+            rest_base_url: COMMERCIAL_REST_URL.to_string(),
+            xml_base_url: COMMERCIAL_XML_URL.to_string(),
+            region: VeracodeRegion::Commercial,
+            validate_certificates: true,
+            retry_config: RetryConfig::default(),
+            connect_timeout: 30,
+            request_timeout: 300,
         }
     }
 
@@ -596,6 +716,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_region(mut self, region: VeracodeRegion) -> Self {
         let (rest_url, xml_url) = match region {
             VeracodeRegion::Commercial => (COMMERCIAL_REST_URL, COMMERCIAL_XML_URL),
@@ -618,6 +739,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_certificate_validation_disabled(mut self) -> Self {
         self.validate_certificates = false;
         self
@@ -635,6 +757,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_retry_config(mut self, retry_config: RetryConfig) -> Self {
         self.retry_config = retry_config;
         self
@@ -648,6 +771,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_retries_disabled(mut self) -> Self {
         self.retry_config = RetryConfig::new().with_max_attempts(0);
         self
@@ -664,6 +788,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_connect_timeout(mut self, timeout_seconds: u64) -> Self {
         self.connect_timeout = timeout_seconds;
         self
@@ -681,6 +806,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_request_timeout(mut self, timeout_seconds: u64) -> Self {
         self.request_timeout = timeout_seconds;
         self
@@ -698,6 +824,7 @@ impl VeracodeConfig {
     /// # Returns
     ///
     /// The updated configuration instance (for method chaining).
+    #[must_use]
     pub fn with_timeouts(
         mut self,
         connect_timeout_seconds: u64,
@@ -706,6 +833,18 @@ impl VeracodeConfig {
         self.connect_timeout = connect_timeout_seconds;
         self.request_timeout = request_timeout_seconds;
         self
+    }
+
+    /// Get ARC pointer to API ID for sharing across threads
+    #[must_use]
+    pub fn api_id_arc(&self) -> Arc<SecretString> {
+        self.credentials.api_id_ptr()
+    }
+
+    /// Get ARC pointer to API key for sharing across threads
+    #[must_use]
+    pub fn api_key_arc(&self) -> Arc<SecretString> {
+        self.credentials.api_key_ptr()
     }
 }
 
@@ -717,8 +856,8 @@ mod tests {
     fn test_config_creation() {
         let config = VeracodeConfig::new("test_api_id", "test_api_key");
 
-        assert_eq!(config.api_id.as_str(), "test_api_id");
-        assert_eq!(config.api_key.as_str(), "test_api_key");
+        assert_eq!(config.credentials.expose_api_id(), "test_api_id");
+        assert_eq!(config.credentials.expose_api_key(), "test_api_key");
         assert_eq!(config.base_url, "https://api.veracode.com");
         assert_eq!(config.rest_base_url, "https://api.veracode.com");
         assert_eq!(config.xml_base_url, "https://analysiscenter.veracode.com");
@@ -758,18 +897,19 @@ mod tests {
     }
 
     #[test]
-    fn test_secure_api_id_debug_redaction() {
-        let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
-        let debug_output = format!("{api_id:?}");
-        assert_eq!(debug_output, "[REDACTED]");
-        assert!(!debug_output.contains("test_api_id_123"));
-    }
+    fn test_veracode_credentials_debug_redaction() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+        let debug_output = format!("{credentials:?}");
 
-    #[test]
-    fn test_secure_api_key_debug_redaction() {
-        let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
-        let debug_output = format!("{api_key:?}");
-        assert_eq!(debug_output, "[REDACTED]");
+        // Should show structure but redact actual values
+        assert!(debug_output.contains("VeracodeCredentials"));
+        assert!(debug_output.contains("[REDACTED]"));
+
+        // Should not contain actual credential values
+        assert!(!debug_output.contains("test_api_id_123"));
         assert!(!debug_output.contains("test_api_key_456"));
     }
 
@@ -780,8 +920,7 @@ mod tests {
 
         // Should show structure but redact actual values
         assert!(debug_output.contains("VeracodeConfig"));
-        assert!(debug_output.contains("api_id"));
-        assert!(debug_output.contains("api_key"));
+        assert!(debug_output.contains("credentials"));
         assert!(debug_output.contains("[REDACTED]"));
 
         // Should not contain actual credential values
@@ -790,40 +929,65 @@ mod tests {
     }
 
     #[test]
-    fn test_secure_api_id_access_methods() {
-        let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
+    fn test_veracode_credentials_access_methods() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
 
-        // Test as_str method
-        assert_eq!(api_id.as_str(), "test_api_id_123");
-
-        // Test into_string method
-        let string_value = api_id.into_string();
-        assert_eq!(string_value, "test_api_id_123");
+        // Test expose methods
+        assert_eq!(credentials.expose_api_id(), "test_api_id_123");
+        assert_eq!(credentials.expose_api_key(), "test_api_key_456");
     }
 
     #[test]
-    fn test_secure_api_key_access_methods() {
-        let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
+    fn test_veracode_credentials_arc_pointers() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
 
-        // Test as_str method
-        assert_eq!(api_key.as_str(), "test_api_key_456");
+        // Test ARC pointer methods
+        let api_id_arc = credentials.api_id_ptr();
+        let api_key_arc = credentials.api_key_ptr();
 
-        // Test into_string method
-        let string_value = api_key.into_string();
-        assert_eq!(string_value, "test_api_key_456");
+        // Should be able to access through ARC
+        assert_eq!(api_id_arc.expose_secret(), "test_api_id_123");
+        assert_eq!(api_key_arc.expose_secret(), "test_api_key_456");
     }
 
     #[test]
-    fn test_secure_api_credentials_clone() {
-        let api_id = SecureVeracodeApiId::new("test_api_id_123".to_string());
-        let api_key = SecureVeracodeApiKey::new("test_api_key_456".to_string());
-
-        let cloned_api_id = api_id.clone();
-        let cloned_api_key = api_key.clone();
+    fn test_veracode_credentials_clone() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+        let cloned_credentials = credentials.clone();
 
         // Both should have the same values
-        assert_eq!(api_id.as_str(), cloned_api_id.as_str());
-        assert_eq!(api_key.as_str(), cloned_api_key.as_str());
+        assert_eq!(
+            credentials.expose_api_id(),
+            cloned_credentials.expose_api_id()
+        );
+        assert_eq!(
+            credentials.expose_api_key(),
+            cloned_credentials.expose_api_key()
+        );
+    }
+
+    #[test]
+    fn test_config_with_arc_credentials() {
+        use secrecy::SecretString;
+        use std::sync::Arc;
+
+        let api_id_arc = Arc::new(SecretString::new("test_api_id".into()));
+        let api_key_arc = Arc::new(SecretString::new("test_api_key".into()));
+
+        let config = VeracodeConfig::from_arc_credentials(api_id_arc, api_key_arc);
+
+        assert_eq!(config.credentials.expose_api_id(), "test_api_id");
+        assert_eq!(config.credentials.expose_api_key(), "test_api_key");
+        assert_eq!(config.region, VeracodeRegion::Commercial);
     }
 
     #[test]
@@ -854,6 +1018,7 @@ mod tests {
         assert_eq!(config.max_delay_ms, 30000);
         assert_eq!(config.backoff_multiplier, 2.0);
         assert_eq!(config.max_total_delay_ms, 300000);
+        assert!(config.jitter_enabled); // Jitter should be enabled by default
     }
 
     #[test]
@@ -877,7 +1042,8 @@ mod tests {
         let config = RetryConfig::new()
             .with_initial_delay(1000)
             .with_backoff_multiplier(2.0)
-            .with_max_delay(10000);
+            .with_max_delay(10000)
+            .with_jitter_disabled(); // Disable jitter for predictable testing
 
         // Test exponential backoff calculation
         assert_eq!(config.calculate_delay(0).as_millis(), 0); // No delay for attempt 0
@@ -1057,5 +1223,33 @@ mod tests {
         // The delay should include our custom 15s buffer
         assert!(delay.as_secs() >= 15);
         assert!(delay.as_secs() <= 75); // 60 + 15
+    }
+
+    #[test]
+    fn test_jitter_disabled() {
+        let config = RetryConfig::new().with_jitter_disabled();
+        assert!(!config.jitter_enabled);
+
+        // With jitter disabled, delays should be consistent
+        let delay1 = config.calculate_delay(2);
+        let delay2 = config.calculate_delay(2);
+        assert_eq!(delay1, delay2);
+    }
+
+    #[test]
+    fn test_jitter_enabled() {
+        let config = RetryConfig::new(); // Jitter enabled by default
+        assert!(config.jitter_enabled);
+
+        // With jitter enabled, delays may vary (though they might occasionally be the same)
+        let base_delay = config.initial_delay_ms;
+        let delay = config.calculate_delay(1);
+
+        // The delay should be within the expected range (±25% jitter)
+        let min_expected = (base_delay as f64 * 0.75) as u64;
+        let max_expected = (base_delay as f64 * 1.25) as u64;
+
+        assert!(delay.as_millis() >= min_expected as u128);
+        assert!(delay.as_millis() <= max_expected as u128);
     }
 }

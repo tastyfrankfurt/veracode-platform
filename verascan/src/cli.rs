@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use log::{error, info};
 use serde_json;
 
 #[derive(Parser)]
@@ -6,7 +7,7 @@ use serde_json;
 #[command(
     about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
 )]
-#[command(version = "0.1.0")]
+#[command(version = "0.5.0")]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
@@ -249,13 +250,36 @@ pub enum Commands {
         #[arg(
             long = "no-wait",
             help = "Submit scan and exit without waiting for completion",
-            default_value = "false"
+            default_value = "false",
+            conflicts_with = "break_build"
         )]
         no_wait: bool,
 
         /// Delete incomplete scan policy for assessment scans
         #[arg(long = "deleteincompletescan", help = "Build deletion policy for assessment scans: 0=Never delete, 1=Delete safe builds only (default), 2=Delete any build except Results Ready", default_value = "1", value_parser = validate_delete_incomplete_scan)]
         deleteincompletescan: u8,
+
+        /// Break build on Veracode platform policy compliance
+        #[arg(
+            long = "break",
+            help = "Break build based on Veracode platform policy compliance",
+            conflicts_with = "no_wait"
+        )]
+        break_build: bool,
+
+        /// Force use of getbuildinfo.do API for policy compliance (skip summary report)
+        #[arg(
+            long = "force-buildinfo-api",
+            help = "Skip summary report API and use getbuildinfo.do XML API for break build evaluation"
+        )]
+        force_buildinfo_api: bool,
+
+        /// Break build on sandbox Conditional Pass
+        #[arg(
+            long = "strict-sandbox",
+            help = "Exit with code 4 when sandbox scans return 'Conditional Pass'"
+        )]
+        strict_sandbox: bool,
     },
 
     /// Download Veracode security policy by name
@@ -264,6 +288,45 @@ pub enum Commands {
         #[arg(help = "Name of the Veracode security policy to download", value_parser = validate_policy_name)]
         policy_name: String,
     },
+
+    /// Export findings from completed policy or sandbox scans
+    Export {
+        /// Veracode application profile name to export findings from
+        #[arg(long = "app-profile-name", short = 'n', help = "Veracode application profile name for automatic app lookup (required)", value_parser = validate_name_field, required = true)]
+        app_profile_name: String,
+
+        /// Sandbox name for sandbox scan findings (optional, if not specified exports policy scan findings)
+        #[arg(long = "sandbox-name", help = "Sandbox name to retrieve findings from (optional, for sandbox scans)", value_parser = validate_sandbox_name)]
+        sandbox_name: Option<String>,
+
+        /// Export format
+        #[arg(long = "format", help = "Export format (gitlab, json, csv, all)", default_value = "gitlab", value_parser = validate_export_format)]
+        export_format: String,
+
+        /// Output file path
+        #[arg(
+            long = "output",
+            short = 'o',
+            help = "Output file path for exported findings",
+            default_value = "findings_export.json"
+        )]
+        output_path: String,
+
+        /// Project directory for GitLab file path resolution
+        #[arg(
+            long = "project-dir",
+            help = "Project directory for file path resolution in GitLab reports",
+            default_value = "."
+        )]
+        project_dir: String,
+
+        /// Minimum severity filter
+        #[arg(long = "min-severity", help = "Minimum severity to include (informational, very-low, low, medium, high, very-high)", value_parser = validate_severity_filter)]
+        min_severity: Option<String>,
+    },
+
+    /// Show all supported environment variables
+    HelpEnv,
 }
 
 impl Args {
@@ -294,6 +357,12 @@ impl Args {
             }
             Commands::Policy { .. } => {
                 // Policy validation happens at the field level
+            }
+            Commands::Export { .. } => {
+                // Export validation happens at the field level with required fields
+            }
+            Commands::HelpEnv => {
+                // No validation needed for help-env subcommand
             }
         }
 
@@ -419,7 +488,7 @@ fn validate_sandbox_name(s: &str) -> Result<String, String> {
 
     // Show user the transformation if any forward slashes were replaced
     if s.contains('/') {
-        println!("📝 Sandbox name transformed: '{s}' → '{sanitized_name}'");
+        info!("📝 Sandbox name transformed: '{s}' → '{sanitized_name}'");
     }
 
     // Use the existing validate_name_field function for standard validation
@@ -453,9 +522,8 @@ fn validate_project_url(s: &str) -> Result<String, String> {
             return Err(format!(
                 "Project URL must start with https:// or http:// (http allowed due to VERASCAN_DISABLE_CERT_VALIDATION), got: '{s}'"
             ));
-        } else {
-            return Err(format!("Project URL must start with https://, got: '{s}'"));
         }
+        return Err(format!("Project URL must start with https://, got: '{s}'"));
     }
 
     // Additional basic URI structure validation
@@ -590,7 +658,7 @@ fn validate_fail_on_severity(s: &str) -> Result<String, String> {
     }
 
     // Split by comma and validate each severity
-    let severities: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    let severities: Vec<&str> = s.split(',').map(str::trim).collect();
 
     for severity in &severities {
         let lower_severity = severity.to_lowercase();
@@ -611,7 +679,7 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
     }
 
     // Split by comma and validate each CWE ID
-    let cwes: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    let cwes: Vec<&str> = s.split(',').map(str::trim).collect();
 
     for cwe in &cwes {
         // CWE should be numeric (with or without "CWE-" prefix)
@@ -638,7 +706,7 @@ fn validate_modules_list(s: &str) -> Result<String, String> {
     }
 
     // Split by comma and validate each module name
-    let modules: Vec<&str> = s.split(',').map(|s| s.trim()).collect();
+    let modules: Vec<&str> = s.split(',').map(str::trim).collect();
 
     for module in &modules {
         if module.is_empty() {
@@ -707,7 +775,36 @@ fn validate_delete_incomplete_scan(s: &str) -> Result<u8, String> {
     }
 }
 
+/// Validate severity filter for export command
+fn validate_severity_filter(s: &str) -> Result<String, String> {
+    const VALID_SEVERITIES: &[&str] = &[
+        "informational",
+        "info",
+        "very-low",
+        "verylow",
+        "very_low",
+        "low",
+        "medium",
+        "med",
+        "high",
+        "very-high",
+        "veryhigh",
+        "very_high",
+        "critical",
+    ];
+
+    let lower_input = s.to_lowercase();
+    if VALID_SEVERITIES.contains(&lower_input.as_str()) {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "Invalid severity filter '{s}'. Valid options are: informational, very-low, low, medium, high, very-high"
+        ))
+    }
+}
+
 /// Parse business criticality string to BusinessCriticality enum
+#[must_use]
 pub fn parse_business_criticality(
     criticality_str: &str,
 ) -> veracode_platform::app::BusinessCriticality {
@@ -721,12 +818,96 @@ pub fn parse_business_criticality(
         "very-low" | "verylow" | "very_low" => BusinessCriticality::VeryLow,
         _ => {
             // This should not happen due to CLI validation, but provide a fallback
-            eprintln!(
+            error!(
                 "⚠️  Warning: Invalid business criticality '{criticality_str}', defaulting to Medium"
             );
             BusinessCriticality::Medium
         }
     }
+}
+
+/// Print all supported environment variables documentation
+pub fn print_environment_variables() {
+    println!("Environment Variables");
+    println!("====================");
+    println!();
+
+    println!("🔐 AUTHENTICATION");
+    println!("  VERACODE_API_ID       - Veracode API ID for authentication");
+    println!("  VERACODE_API_KEY      - Veracode API Key for authentication");
+    println!();
+
+    println!("🏦 HASHICORP VAULT INTEGRATION");
+    println!("  VAULT_CLI_ADDR        - Vault server URL (HTTPS required)");
+    println!("  VAULT_CLI_JWT         - JWT token for OIDC authentication");
+    println!("  VAULT_CLI_ROLE        - Vault role name for authentication");
+    println!("  VAULT_CLI_SECRET_PATH - Secret path containing Veracode credentials");
+    println!("  VAULT_CLI_NAMESPACE   - Vault namespace (optional)");
+    println!("  VAULT_CLI_AUTH_PATH   - Vault auth path (default: auth/jwt)");
+    println!();
+
+    println!("🔧 API CONFIGURATION");
+    println!("  VERASCAN_FORCE_BUILDINFO_API - Force XML buildinfo API for break build evaluation");
+    println!();
+
+    println!("🌐 NETWORK CONFIGURATION");
+    println!("  VERASCAN_DISABLE_CERT_VALIDATION - Disable TLS certificate validation (dev only)");
+    println!(
+        "  VERASCAN_CONNECT_TIMEOUT         - HTTP connection timeout in seconds (default: 10)"
+    );
+    println!("  VERASCAN_REQUEST_TIMEOUT         - HTTP request timeout in seconds (default: 30)");
+    println!();
+
+    println!("🔄 RETRY CONFIGURATION");
+    println!("  VERASCAN_MAX_RETRIES             - Maximum retry attempts (default: 3)");
+    println!(
+        "  VERASCAN_INITIAL_RETRY_DELAY_MS  - Initial retry delay in milliseconds (default: 500)"
+    );
+    println!(
+        "  VERASCAN_MAX_RETRY_DELAY_MS      - Maximum retry delay in milliseconds (default: 10000)"
+    );
+    println!("  VERASCAN_BACKOFF_MULTIPLIER      - Exponential backoff multiplier (default: 2.0)");
+    println!("  VERASCAN_DISABLE_JITTER          - Disable randomized jitter in retry timing");
+    println!();
+
+    println!("🦊 GITLAB INTEGRATION");
+    println!("  PRIVATE_TOKEN         - GitLab API token for issue creation and repository access");
+    println!("  CI_TOKEN              - GitLab CI token (alternative to PRIVATE_TOKEN)");
+    println!("  GITLAB_TOKEN          - GitLab API token (alternative to PRIVATE_TOKEN)");
+    println!("  CI_PROJECT_ID         - GitLab project ID for issue creation");
+    println!("  GITLAB_URL            - GitLab instance URL (default: https://gitlab.com)");
+    println!();
+
+    println!("📖 EXAMPLES");
+    println!();
+    println!("Basic authentication:");
+    println!("  export VERACODE_API_ID=\"your-api-id\"");
+    println!("  export VERACODE_API_KEY=\"your-api-key\"");
+    println!();
+    println!("Network optimization for slow connections:");
+    println!("  export VERASCAN_CONNECT_TIMEOUT=\"60\"");
+    println!("  export VERASCAN_REQUEST_TIMEOUT=\"120\"");
+    println!("  export VERASCAN_MAX_RETRIES=\"5\"");
+    println!();
+    println!("Force XML API for restricted permissions:");
+    println!("  export VERASCAN_FORCE_BUILDINFO_API=\"1\"");
+    println!();
+    println!("GitLab CI integration:");
+    println!("  export PRIVATE_TOKEN=\"your-gitlab-token\"");
+    println!("  export CI_PROJECT_ID=\"123456\"");
+    println!();
+    println!("Vault integration:");
+    println!("  export VAULT_CLI_ADDR=\"https://vault.example.com\"");
+    println!("  export VAULT_CLI_JWT=\"your-jwt-token\"");
+    println!("  export VAULT_CLI_ROLE=\"veracode-role\"");
+    println!("  export VAULT_CLI_SECRET_PATH=\"secret/veracode/api\"");
+    println!("  export VAULT_CLI_AUTH_PATH=\"auth/jwt\"  # Optional, defaults to auth/jwt");
+    println!();
+    println!("  Vault secret must contain these exact key names:");
+    println!("  {{");
+    println!("    \"VERACODE_API_ID\": \"your-veracode-api-id\",");
+    println!("    \"VERACODE_API_KEY\": \"your-veracode-api-key\"");
+    println!("  }}");
 }
 
 #[cfg(test)]
@@ -760,10 +941,10 @@ mod tests {
                 fail_on_severity: None,
                 fail_on_cwe: None,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = args.validate_conditional_requirements();
@@ -802,10 +983,10 @@ mod tests {
                 fail_on_severity: None,
                 fail_on_cwe: None,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = args.validate_conditional_requirements();
@@ -835,11 +1016,14 @@ mod tests {
                 teamname: None,
                 bus_cri: "very-high".to_string(),
                 deleteincompletescan: 1,
+                break_build: false,
+                force_buildinfo_api: false,
+                strict_sandbox: false,
             },
-            debug: false,
             region: "commercial".to_string(),
             api_id: None,
             api_key: None,
+            debug: false,
         };
 
         let result = args.validate_conditional_requirements();

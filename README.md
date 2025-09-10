@@ -93,12 +93,28 @@ A powerful command-line application for security scanning and Veracode integrati
 - Custom local policy file support
 - Pass/fail criteria based on severity levels or CWE IDs
 - Combined baseline and policy enforcement
+- **Break Build Functionality**: CI/CD integration with Veracode platform policy compliance
+  - `--break` flag enables build breaking on policy failures
+  - **Intelligent API Fallback**: Automatic fallback from summary report API to getbuildinfo.do XML API on permission errors (401/403)
+  - `--force-buildinfo-api` flag or `VERASCAN_FORCE_BUILDINFO_API` env var to skip REST API and use XML API directly
+  - **Enhanced Compatibility**: Works with any Veracode account permission level (REST+XML, XML-only, or restricted access)
+  - Standard exit codes: 0 for success, 4 for policy failure (matches Veracode Java wrapper)
+  - Works with both regular application scans and sandbox scans
+  - Graceful error handling - API failures don't break builds
+  - **Transparent Operation**: Clear logging shows which API path was used (summary report vs buildinfo)
 
 ### 📤 **Multi-format Export**
 - **JSON**: Veracode baseline format for future comparisons
 - **CSV**: Spreadsheet-compatible findings export
 - **GitLab SAST**: Security Dashboard integration
 - **Filtered JSON**: Policy violation reports
+
+### 📊 **Export from Completed Scans**
+- **Findings Retrieval**: Export security findings from completed Veracode assessment scans
+- **Policy & Sandbox Support**: Export from both policy scans and sandbox scans
+- **Server-Side Filtering**: API-level severity filtering to reduce network traffic
+- **Automatic Pagination**: Handles large result sets with intelligent pagination
+- **Performance Optimized**: Uses FindingsQuery builder pattern for efficient data retrieval
 
 ### 🦊 **GitLab Integration**
 - Automatic GitLab issue creation for findings
@@ -189,6 +205,63 @@ verascan assessment --filepath ./target \
 verascan assessment --filepath ./target \
   --app-profile-name "MyApplication" \
   --no-wait
+
+# Assessment scan with break build on policy failure
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --break \
+  --export-results results.json
+
+# Assessment scan with break build using buildinfo API directly (for restricted permissions)
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --break \
+  --force-buildinfo-api \
+  --export-results results.json
+```
+
+### Export from Completed Scans
+
+```bash
+# Export findings from completed policy scan (default: GitLab SAST format)
+verascan export --app-profile-name "MyApplication" \
+  --output policy-findings.json
+
+# Export findings from completed sandbox scan
+verascan export --app-profile-name "MyApplication" \
+  --sandbox-name "development-sandbox" \
+  --output sandbox-findings.json
+
+# Export with severity filtering (High and Very High only)
+verascan export --app-profile-name "MyApplication" \
+  --min-severity "high" \
+  --output critical-findings.json
+
+# Export to JSON format
+verascan export --app-profile-name "MyApplication" \
+  --format json \
+  --output findings.json
+
+# Export to CSV format
+verascan export --app-profile-name "MyApplication" \
+  --format csv \
+  --output findings.csv
+
+# Export to multiple formats
+verascan export --app-profile-name "MyApplication" \
+  --format all \
+  --output comprehensive-report
+
+# Export with custom project directory for GitLab file path resolution
+verascan export --app-profile-name "MyApplication" \
+  --format gitlab \
+  --output gitlab-sast-report.json \
+  --project-dir /path/to/project
+
+# Export with debug output
+verascan export --app-profile-name "MyApplication" \
+  --output findings.json \
+  --debug
 ```
 
 ### Baseline Security Management
@@ -277,6 +350,82 @@ verascan assessment --filepath ./artifacts \
   --debug
 ```
 
+## 🌍 Environment Variables
+
+Verascan supports comprehensive HTTP client configuration through VERASCAN_ prefixed environment variables. These variables provide unified configuration for network timeouts, retry behavior, and certificate validation across all Veracode API calls and GitLab integrations.
+
+### Authentication Variables
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `VERACODE_API_ID` | ✅ | Your Veracode API ID credential |
+| `VERACODE_API_KEY` | ✅ | Your Veracode API key credential |
+
+### API Configuration
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERASCAN_FORCE_BUILDINFO_API` | - | Skip summary report API and use getbuildinfo.do XML API directly for break build evaluation (set any value) |
+
+### Network Configuration
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERASCAN_CONNECT_TIMEOUT` | `30` | HTTP connection timeout in seconds |
+| `VERASCAN_REQUEST_TIMEOUT` | `300` | HTTP request timeout in seconds (5 minutes) |
+| `VERASCAN_DISABLE_CERT_VALIDATION` | - | Disable TLS certificate validation (set any value) |
+
+### Retry Configuration  
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `VERASCAN_MAX_RETRIES` | `5` | Maximum number of retry attempts |
+| `VERASCAN_INITIAL_RETRY_DELAY_MS` | `1000` | Initial retry delay in milliseconds |
+| `VERASCAN_MAX_RETRY_DELAY_MS` | `30000` | Maximum retry delay in milliseconds (30 seconds) |
+| `VERASCAN_BACKOFF_MULTIPLIER` | `2.0` | Exponential backoff multiplier |
+| `VERASCAN_DISABLE_JITTER` | - | Disable retry timing randomization (set any value) |
+
+### GitLab Integration (CI/CD environments)
+| Variable | Description |
+|----------|-------------|
+| `PRIVATE_TOKEN` | GitLab personal access token |
+| `CI_TOKEN` | GitLab CI job token |
+| `GITLAB_TOKEN` | Alternative GitLab token |
+| `CI_PROJECT_ID` | GitLab project ID |
+| `CI_API_V4_URL` | GitLab API v4 URL |
+| `CI_PIPELINE_ID` | GitLab pipeline ID |
+| `CI_PROJECT_URL` | GitLab project web URL |
+| `CI_COMMIT_SHA` | GitLab commit SHA |
+
+### Example Configuration
+
+```bash
+# Authentication (required)
+export VERACODE_API_ID="your-api-id-here"
+export VERACODE_API_KEY="your-api-key-here"
+
+# API configuration for restricted permissions
+export VERASCAN_FORCE_BUILDINFO_API="1"     # Force XML API usage for break build
+
+# Network optimization for slow connections
+export VERASCAN_CONNECT_TIMEOUT="60"        # 60 second connection timeout
+export VERASCAN_REQUEST_TIMEOUT="900"       # 15 minute request timeout
+
+# Aggressive retry for CI/CD environments
+export VERASCAN_MAX_RETRIES="10"            # More retries for reliability
+export VERASCAN_INITIAL_RETRY_DELAY_MS="500" # Faster initial retry
+export VERASCAN_BACKOFF_MULTIPLIER="1.5"    # Gentler backoff
+
+# Development environment (disable certificate validation)
+export VERASCAN_DISABLE_CERT_VALIDATION="true"
+
+# Disable jitter for predictable timing in tests
+export VERASCAN_DISABLE_JITTER="true"
+```
+
+### Benefits
+- **Unified Configuration**: Same variables work for all HTTP operations (Veracode API, GitLab integration)
+- **CI/CD Optimization**: Tune timeouts and retries for your specific environment
+- **Development Support**: Disable certificate validation for local testing
+- **Reliability**: Configurable retry strategies with jitter support
+- **Security**: Automatic credential redaction in logs and debug output
+
 ## 🎛️ Command Reference
 
 ### Required Arguments
@@ -320,6 +469,19 @@ verascan assessment --filepath ./artifacts \
 | `--timeout <MINUTES>` | `60` | Scan timeout in minutes |
 | `--threads <COUNT>` | `4` | Concurrent threads (2-10) |
 | `--export-results <FILE>` | `assessment-results.json` | Export assessment results |
+| `--break` | `false` | Break build on Veracode platform policy compliance failure (conflicts with `--no-wait`) |
+
+### Export Command Options
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--app-profile-name <NAME>` | - | Veracode application profile name (required) |
+| `--sandbox-name <NAME>` | - | Sandbox name for sandbox scan export (optional) |
+| `--output <FILE>` | `findings_export.json` | Output file path for exported findings |
+| `--format <FORMAT>` | `gitlab` | Export format (gitlab/json/csv/all) |
+| `--min-severity <LEVEL>` | - | Filter by minimum severity (informational/very-low/low/medium/high/very-high) |
+| `--project-dir <DIR>` | `.` | Project directory for file path resolution in GitLab reports |
+| `--debug` | `false` | Enable detailed diagnostic output (global option) |
 
 ### Export & Display Options
 
@@ -467,7 +629,7 @@ pipeline {
 [dependencies]
 veracode-platform = { path = "veracode-api" }
 # Or if published to crates.io:
-# veracode-platform = "0.1.0"
+# veracode-platform = "0.4.1"
 ```
 
 ### Basic API Usage
@@ -657,6 +819,7 @@ verascan --threads 2 --timeout 30 --pipeline-scan --filepath .
 | `0` | Success - no policy violations found |
 | `1` | Policy violations detected or scan errors |
 | `2` | Configuration or authentication errors |
+| `4` | Veracode platform policy failure (when using `--break` flag) |
 
 ## 🏷️ Severity Levels
 

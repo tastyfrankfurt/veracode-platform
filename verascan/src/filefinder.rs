@@ -3,13 +3,14 @@ use glob::Pattern;
 use std::fs;
 use std::path::{Path, PathBuf};
 
+use log::{debug, error, info};
+
 #[derive(Debug, Clone)]
 pub struct SearchConfig {
     pub directory: PathBuf,
     pub patterns: Vec<Pattern>,
     pub recursive: bool,
     pub validate_files: bool,
-    pub debug: bool,
 }
 
 #[derive(Debug)]
@@ -44,6 +45,7 @@ impl Default for FileFinder {
 }
 
 impl FileFinder {
+    #[must_use]
     pub fn new() -> Self {
         FileFinder {
             validator: FileValidator::new(),
@@ -55,7 +57,6 @@ impl FileFinder {
         patterns_str: &str,
         recursive: bool,
         validate_files: bool,
-        debug: bool,
     ) -> Result<SearchConfig, SearchError> {
         // Validate directory
         let dir_path = Path::new(directory);
@@ -70,7 +71,7 @@ impl FileFinder {
         // Parse comma-separated patterns
         let patterns: Result<Vec<Pattern>, _> = patterns_str
             .split(',')
-            .map(|s| s.trim())
+            .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(|pattern| {
                 Pattern::new(pattern)
@@ -91,7 +92,6 @@ impl FileFinder {
             patterns,
             recursive,
             validate_files,
-            debug,
         })
     }
 
@@ -141,7 +141,7 @@ impl FileFinder {
             let file_type = match entry.file_type() {
                 Ok(ft) => ft,
                 Err(e) => {
-                    eprintln!(
+                    error!(
                         "Warning: Could not determine file type for {}: {}",
                         entry.path().display(),
                         e
@@ -161,55 +161,40 @@ impl FileFinder {
 
                         // Validate file if validation is enabled
                         if config.validate_files {
-                            match self.validator.validate_file(&file_path, config.debug) {
+                            match self.validator.validate_file(&file_path) {
                                 Ok(file_type) => {
                                     let suitable =
                                         self.validator.is_suitable_for_static_analysis(&file_type);
-                                    if config.debug {
-                                        println!("✅ Valid file: {}", file_path.display());
-                                        println!(
-                                            "   Type: {} ({})",
-                                            file_type,
-                                            self.validator.get_file_type_description(&file_type)
-                                        );
-                                        println!(
-                                            "   Static Analysis: {}",
-                                            if suitable {
-                                                "✅ Suitable"
-                                            } else {
-                                                "❌ Not recommended"
-                                            }
-                                        );
-                                    } else {
-                                        println!("✅ Valid file: {}", file_path.display());
-                                    }
+                                    debug!("✅ Valid file: {}", file_path.display());
+                                    debug!(
+                                        "   Type: {} ({})",
+                                        file_type,
+                                        self.validator.get_file_type_description(&file_type)
+                                    );
+                                    debug!(
+                                        "   Static Analysis: {}",
+                                        if suitable {
+                                            "✅ Suitable"
+                                        } else {
+                                            "❌ Not recommended"
+                                        }
+                                    );
+                                    info!("✅ Valid file: {}", file_path.display());
                                     matched_files.push(file_path);
                                 }
                                 Err(ValidationError::UnsupportedFileType(msg)) => {
-                                    if config.debug {
-                                        println!(
-                                            "⚠️  Unsupported file type: {}",
-                                            file_path.display()
-                                        );
-                                        println!("   Reason: {msg}");
-                                    }
+                                    debug!("⚠️  Unsupported file type: {}", file_path.display());
+                                    debug!("   Reason: {msg}");
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::InvalidFileHeader(msg)) => {
-                                    if config.debug {
-                                        println!("❌ Invalid file: {}", file_path.display());
-                                        println!("   Reason: {msg}");
-                                    }
+                                    debug!("❌ Invalid file: {}", file_path.display());
+                                    debug!("   Reason: {msg}");
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::IoError(msg)) => {
-                                    if config.debug {
-                                        println!(
-                                            "❌ IO Error reading file: {}",
-                                            file_path.display()
-                                        );
-                                        println!("   Reason: {msg}");
-                                    }
+                                    debug!("❌ IO Error reading file: {}", file_path.display());
+                                    debug!("   Reason: {msg}");
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::FileTooLarge {
@@ -217,12 +202,10 @@ impl FileFinder {
                                     size_mb,
                                     max_size_mb,
                                 }) => {
-                                    if config.debug {
-                                        println!("⚠️  File too large: {}", file_path.display());
-                                        println!(
-                                            "   Size: {size_mb:.2} MB exceeds {max_size_mb:.0} MB limit"
-                                        );
-                                    }
+                                    debug!("⚠️  File too large: {}", file_path.display());
+                                    debug!(
+                                        "   Size: {size_mb:.2} MB exceeds {max_size_mb:.0} MB limit"
+                                    );
                                     // Don't add to matched_files - filter it out
                                 }
                             }
@@ -248,7 +231,7 @@ impl FileFinder {
         let entries = match fs::read_dir(dir_path) {
             Ok(entries) => entries,
             Err(e) => {
-                eprintln!(
+                error!(
                     "Warning: Failed to read directory '{}': {}",
                     dir_path.display(),
                     e
@@ -261,7 +244,7 @@ impl FileFinder {
             let entry = match entry {
                 Ok(entry) => entry,
                 Err(e) => {
-                    eprintln!("Warning: Error reading directory entry: {e}");
+                    error!("Warning: Error reading directory entry: {e}");
                     continue;
                 }
             };
@@ -269,7 +252,7 @@ impl FileFinder {
             let file_type = match entry.file_type() {
                 Ok(ft) => ft,
                 Err(e) => {
-                    eprintln!(
+                    error!(
                         "Warning: Could not determine file type for {}: {}",
                         entry.path().display(),
                         e
@@ -289,55 +272,40 @@ impl FileFinder {
 
                         // Validate file if validation is enabled
                         if config.validate_files {
-                            match self.validator.validate_file(&file_path, config.debug) {
+                            match self.validator.validate_file(&file_path) {
                                 Ok(file_type) => {
                                     let suitable =
                                         self.validator.is_suitable_for_static_analysis(&file_type);
-                                    if config.debug {
-                                        println!("✅ Valid file: {}", file_path.display());
-                                        println!(
-                                            "   Type: {} ({})",
-                                            file_type,
-                                            self.validator.get_file_type_description(&file_type)
-                                        );
-                                        println!(
-                                            "   Static Analysis: {}",
-                                            if suitable {
-                                                "✅ Suitable"
-                                            } else {
-                                                "❌ Not recommended"
-                                            }
-                                        );
-                                    } else {
-                                        println!("✅ Valid file: {}", file_path.display());
-                                    }
+                                    debug!("✅ Valid file: {}", file_path.display());
+                                    debug!(
+                                        "   Type: {} ({})",
+                                        file_type,
+                                        self.validator.get_file_type_description(&file_type)
+                                    );
+                                    debug!(
+                                        "   Static Analysis: {}",
+                                        if suitable {
+                                            "✅ Suitable"
+                                        } else {
+                                            "❌ Not recommended"
+                                        }
+                                    );
+                                    info!("✅ Valid file: {}", file_path.display());
                                     matched_files.push(file_path);
                                 }
                                 Err(ValidationError::UnsupportedFileType(msg)) => {
-                                    if config.debug {
-                                        println!(
-                                            "⚠️  Unsupported file type: {}",
-                                            file_path.display()
-                                        );
-                                        println!("   Reason: {msg}");
-                                    }
+                                    debug!("⚠️  Unsupported file type: {}", file_path.display());
+                                    debug!("   Reason: {msg}");
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::InvalidFileHeader(msg)) => {
-                                    if config.debug {
-                                        println!("❌ Invalid file: {}", file_path.display());
-                                        println!("   Reason: {msg}");
-                                    }
+                                    debug!("❌ Invalid file: {}", file_path.display());
+                                    debug!("   Reason: {msg}");
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::IoError(msg)) => {
-                                    if config.debug {
-                                        println!(
-                                            "❌ IO Error reading file: {}",
-                                            file_path.display()
-                                        );
-                                        println!("   Reason: {msg}");
-                                    }
+                                    debug!("❌ IO Error reading file: {}", file_path.display());
+                                    debug!("   Reason: {msg}");
                                     // Don't add to matched_files - filter it out
                                 }
                                 Err(ValidationError::FileTooLarge {
@@ -345,12 +313,10 @@ impl FileFinder {
                                     size_mb,
                                     max_size_mb,
                                 }) => {
-                                    if config.debug {
-                                        println!("⚠️  File too large: {}", file_path.display());
-                                        println!(
-                                            "   Size: {size_mb:.2} MB exceeds {max_size_mb:.0} MB limit"
-                                        );
-                                    }
+                                    debug!("⚠️  File too large: {}", file_path.display());
+                                    debug!(
+                                        "   Size: {size_mb:.2} MB exceeds {max_size_mb:.0} MB limit"
+                                    );
                                     // Don't add to matched_files - filter it out
                                 }
                             }
@@ -381,16 +347,14 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path().to_string_lossy();
 
-        let config =
-            FileFinder::parse_config(&temp_path, "*.txt,*.rs", false, false, false).unwrap();
+        let config = FileFinder::parse_config(&temp_path, "*.txt,*.rs", false, false).unwrap();
         assert_eq!(config.patterns.len(), 2);
         assert!(!config.recursive);
     }
 
     #[test]
     fn test_parse_config_invalid_directory() {
-        let result =
-            FileFinder::parse_config("/nonexistent/directory", "*.txt", false, false, false);
+        let result = FileFinder::parse_config("/nonexistent/directory", "*.txt", false, false);
         assert!(matches!(result, Err(SearchError::DirectoryNotFound(_))));
     }
 
@@ -399,7 +363,7 @@ mod tests {
         let temp_dir = tempdir().unwrap();
         let temp_path = temp_dir.path().to_string_lossy();
 
-        let result = FileFinder::parse_config(&temp_path, "[invalid", false, false, false);
+        let result = FileFinder::parse_config(&temp_path, "[invalid", false, false);
         assert!(matches!(result, Err(SearchError::InvalidPattern(_))));
     }
 
@@ -418,7 +382,6 @@ mod tests {
         let config = FileFinder::parse_config(
             &temp_path.to_string_lossy(),
             "*.txt,*.rs,test_*",
-            false,
             false,
             false,
         )
@@ -450,8 +413,7 @@ mod tests {
 
         let finder = FileFinder::new();
         let config =
-            FileFinder::parse_config(&temp_path.to_string_lossy(), "*.txt", true, false, false)
-                .unwrap();
+            FileFinder::parse_config(&temp_path.to_string_lossy(), "*.txt", true, false).unwrap();
 
         let matched_files = finder.search(&config).unwrap();
         assert_eq!(matched_files.len(), 3); // root.txt, sub.txt, nested.txt

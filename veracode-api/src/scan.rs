@@ -5,6 +5,8 @@
 //! application-level and sandbox scans. This implementation mirrors the Java API wrapper functionality.
 
 use chrono::{DateTime, Utc};
+#[allow(unused_imports)] // debug is used in tests
+use log::{debug, error, info};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
@@ -294,6 +296,7 @@ pub struct ScanApi {
 
 impl ScanApi {
     /// Create a new ScanApi instance
+    #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         Self { client }
     }
@@ -331,7 +334,7 @@ impl ScanApi {
         }
 
         // Read file data
-        let file_data = std::fs::read(&request.file_path)?;
+        let file_data = tokio::fs::read(&request.file_path).await?;
 
         // Get filename from path
         let filename = Path::new(&request.file_path)
@@ -349,6 +352,7 @@ impl ScanApi {
             200 => {
                 let response_text = response.text().await?;
                 self.parse_upload_response(&response_text, &request.file_path)
+                    .await
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -395,7 +399,7 @@ impl ScanApi {
         }
 
         // Check file size (2GB limit for uploadlargefile.do)
-        let file_metadata = std::fs::metadata(&request.file_path)?;
+        let file_metadata = tokio::fs::metadata(&request.file_path).await?;
         let file_size = file_metadata.len();
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
 
@@ -420,7 +424,7 @@ impl ScanApi {
         }
 
         // Read file data
-        let file_data = std::fs::read(&request.file_path)?;
+        let file_data = tokio::fs::read(&request.file_path).await?;
 
         let response = self
             .client
@@ -432,6 +436,7 @@ impl ScanApi {
             200 => {
                 let response_text = response.text().await?;
                 self.parse_upload_response(&response_text, &request.file_path)
+                    .await
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -491,7 +496,7 @@ impl ScanApi {
         }
 
         // Check file size (2GB limit)
-        let file_metadata = std::fs::metadata(&request.file_path)?;
+        let file_metadata = tokio::fs::metadata(&request.file_path).await?;
         let file_size = file_metadata.len();
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
 
@@ -531,6 +536,7 @@ impl ScanApi {
             200 => {
                 let response_text = response.text().await?;
                 self.parse_upload_response(&response_text, &request.file_path)
+                    .await
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -585,7 +591,7 @@ impl ScanApi {
         }
 
         // Get file size to determine upload method
-        let file_metadata = std::fs::metadata(&request.file_path)?;
+        let file_metadata = tokio::fs::metadata(&request.file_path).await?;
         let file_size = file_metadata.len();
 
         // Use large file upload for files over 100MB or when build might exist
@@ -993,7 +999,7 @@ impl ScanApi {
         let build_info = self.get_build_info(app_id, None, sandbox_id).await?;
 
         if !build_info.build_id.is_empty() && build_info.build_id != "unknown" {
-            println!("   🗑️  Deleting build: {}", build_info.build_id);
+            info!("Deleting build: {}", build_info.build_id);
             self.delete_build(app_id, &build_info.build_id, sandbox_id)
                 .await?;
         }
@@ -1053,7 +1059,11 @@ impl ScanApi {
 
     // Helper methods for parsing XML responses (Veracode API returns XML)
 
-    fn parse_upload_response(&self, xml: &str, file_path: &str) -> Result<UploadedFile, ScanError> {
+    async fn parse_upload_response(
+        &self,
+        xml: &str,
+        file_path: &str,
+    ) -> Result<UploadedFile, ScanError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
 
@@ -1085,7 +1095,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1102,48 +1112,14 @@ impl ScanApi {
         Ok(UploadedFile {
             file_id: file_id.unwrap_or_else(|| format!("file_{}", chrono::Utc::now().timestamp())),
             file_name: filename,
-            file_size: std::fs::metadata(file_path).map(|m| m.len()).unwrap_or(0),
+            file_size: tokio::fs::metadata(file_path)
+                .await
+                .map(|m| m.len())
+                .unwrap_or(0),
             uploaded: Utc::now(),
             file_status,
             md5: None,
         })
-    }
-
-    #[allow(dead_code)]
-    fn parse_build_id_response(&self, xml: &str) -> Result<String, ScanError> {
-        let mut reader = Reader::from_str(xml);
-        reader.config_mut().trim_text(true);
-
-        let mut buf = Vec::new();
-        let mut build_id = None;
-
-        loop {
-            match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) => {
-                    match e.name().as_ref() {
-                        b"buildinfo" | b"build" => {
-                            // Extract build_id from attributes
-                            for attr in e.attributes().flatten() {
-                                if attr.key.as_ref() == b"build_id" {
-                                    build_id = Some(attr_to_string(&attr.value));
-                                }
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                Ok(Event::Eof) => break,
-                Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
-                    break;
-                }
-                _ => {}
-            }
-            buf.clear();
-        }
-
-        build_id
-            .ok_or_else(|| ScanError::PreScanFailed("No build_id found in response".to_string()))
     }
 
     /// Validate scan response for basic success without parsing build_id
@@ -1180,11 +1156,10 @@ impl ScanApi {
 
             if !error_message.is_empty() {
                 return Err(ScanError::ScanFailed(error_message));
-            } else {
-                return Err(ScanError::ScanFailed(
-                    "Unknown error in scan response".to_string(),
-                ));
             }
+            return Err(ScanError::ScanFailed(
+                "Unknown error in scan response".to_string(),
+            ));
         }
 
         // Check for successful response indicators
@@ -1281,7 +1256,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1355,7 +1330,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1473,7 +1448,7 @@ impl ScanApi {
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
-                    eprintln!("Error parsing XML: {e}");
+                    error!("Error parsing XML: {e}");
                     break;
                 }
                 _ => {}
@@ -1701,20 +1676,20 @@ impl ScanApi {
         file_path: &str,
     ) -> Result<String, ScanError> {
         // Step 1: Upload file
-        println!("📤 Uploading file to sandbox...");
+        info!("Uploading file to sandbox...");
         let _uploaded_file = self
             .upload_file_to_sandbox(app_id, file_path, sandbox_id)
             .await?;
 
         // Step 2: Begin pre-scan
-        println!("🔍 Beginning pre-scan...");
+        info!("Beginning pre-scan...");
         self.begin_sandbox_prescan(app_id, sandbox_id).await?;
 
         // Step 3: Wait a moment for pre-scan to complete (in production, poll for status)
         tokio::time::sleep(tokio::time::Duration::from_secs(5)).await;
 
         // Step 4: Begin scan
-        println!("🚀 Beginning scan...");
+        info!("Beginning scan...");
         self.begin_sandbox_scan_all_modules(app_id, sandbox_id)
             .await?;
 
@@ -1936,7 +1911,7 @@ mod tests {
 
             // Test progress callback signature
             let progress_callback = |bytes_uploaded: u64, total_bytes: u64, percentage: f64| {
-                println!("Progress: {bytes_uploaded}/{total_bytes} ({percentage:.1}%)");
+                debug!("Upload progress: {bytes_uploaded}/{total_bytes} ({percentage:.1}%)");
             };
             let _: Result<UploadedFile, _> = api
                 .upload_large_file_with_progress(request, progress_callback)
