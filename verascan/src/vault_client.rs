@@ -136,8 +136,10 @@ pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
 
     let namespace = std::env::var("VAULT_CLI_NAMESPACE").ok();
 
+    let auth_path = std::env::var("VAULT_CLI_AUTH_PATH").unwrap_or_else(|_| "auth/jwt".to_string()); // Default to "auth/jwt" if not specified
+
     // Validate vault configuration
-    validate_vault_config(&addr, &jwt, &role, &secret_path)?;
+    validate_vault_config(&addr, &jwt, &role, &secret_path, &auth_path)?;
 
     info!("Vault configuration loaded successfully from environment");
 
@@ -147,6 +149,7 @@ pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
         role,
         secret_path,
         namespace,
+        auth_path,
     })
 }
 
@@ -206,12 +209,14 @@ fn validate_vault_config(
     jwt: &str,
     role: &str,
     secret_path: &str,
+    auth_path: &str,
 ) -> Result<(), CredentialError> {
     // Validate vault address with URL parsing
     validate_vault_addr(addr)?;
     validate_jwt_token(jwt)?;
     validate_role(role)?;
     validate_secret_path(secret_path)?;
+    validate_auth_path(auth_path)?;
 
     debug!("Vault configuration validation passed");
     Ok(())
@@ -294,6 +299,25 @@ fn validate_secret_path(path: &str) -> Result<(), CredentialError> {
     Ok(())
 }
 
+fn validate_auth_path(auth_path: &str) -> Result<(), CredentialError> {
+    if auth_path.len() > 100 {
+        return Err(CredentialError::ValidationError {
+            field: "VAULT_CLI_AUTH_PATH".to_string(),
+            message: "VAULT_CLI_AUTH_PATH must not exceed 100 characters.".to_string(),
+        });
+    }
+    let allowed = |c: char| c.is_ascii_alphanumeric() || c == '/' || c == '-' || c == '_';
+    if !auth_path.chars().all(allowed) {
+        return Err(CredentialError::ValidationError {
+            field: "VAULT_CLI_AUTH_PATH".to_string(),
+            message:
+                "VAULT_CLI_AUTH_PATH contains invalid characters. Allowed: alphanumeric and / - _"
+                    .to_string(),
+        });
+    }
+    Ok(())
+}
+
 /// Create vault client with retry logic
 fn create_vault_client(config: &VaultConfig) -> Result<VaultClient, CredentialError> {
     debug!("Creating vault client for addr: {}", config.addr);
@@ -339,8 +363,8 @@ async fn authenticate_vault(
         ..Default::default()
     };
 
-    // Extract mount point from auth path (default to "jwt" if not specified)
-    let auth_path = "auth/jwt"; // Default auth path
+    // Extract mount point from configurable auth path
+    let auth_path = &config.auth_path;
     let mount_point = if let Some(stripped) = auth_path.strip_prefix("auth/") {
         stripped // Remove "auth/" prefix
     } else {
@@ -777,6 +801,7 @@ mod tests {
             "valid-jwt-123",
             "test-role",
             "secret/path",
+            "auth/jwt",
         );
         assert!(result.is_ok());
     }
@@ -788,6 +813,7 @@ mod tests {
             "valid-jwt-123",
             "test-role",
             "secret/path@kvv2",
+            "auth/jwt",
         );
         assert!(result.is_ok());
     }
@@ -799,6 +825,7 @@ mod tests {
             "valid-jwt-123",
             "test-role",
             "secret/path",
+            "auth/jwt",
         );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("HTTPS"));
@@ -807,7 +834,13 @@ mod tests {
     #[test]
     fn test_vault_config_validation_long_addr() {
         let long_addr = format!("https://{}.com", "a".repeat(200));
-        let result = validate_vault_config(&long_addr, "valid-jwt-123", "test-role", "secret/path");
+        let result = validate_vault_config(
+            &long_addr,
+            "valid-jwt-123",
+            "test-role",
+            "secret/path",
+            "auth/jwt",
+        );
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("exceed"));
     }
@@ -819,6 +852,7 @@ mod tests {
             "invalid@jwt#123",
             "test-role",
             "secret/path",
+            "auth/jwt",
         );
         assert!(result.is_err());
         assert!(
@@ -875,5 +909,40 @@ mod tests {
             secret.insert(format!("key{i}"), "value".to_string());
         }
         assert!(validate_secret_data(&secret).is_err());
+    }
+
+    #[test]
+    fn test_auth_path_validation_success() {
+        let result = validate_auth_path("auth/jwt");
+        assert!(result.is_ok());
+
+        let result = validate_auth_path("auth/custom");
+        assert!(result.is_ok());
+
+        let result = validate_auth_path("auth/my-auth");
+        assert!(result.is_ok());
+
+        let result = validate_auth_path("jwt");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_auth_path_validation_invalid_chars() {
+        let result = validate_auth_path("auth/jwt@invalid");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("invalid characters")
+        );
+    }
+
+    #[test]
+    fn test_auth_path_validation_too_long() {
+        let long_path = format!("auth/{}", "a".repeat(100));
+        let result = validate_auth_path(&long_path);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("exceed"));
     }
 }

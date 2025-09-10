@@ -28,6 +28,7 @@ export VAULT_CLI_SECRET_PATH="secret/veracode/api"       # Path to secret contai
 
 # Optional Vault Configuration  
 export VAULT_CLI_NAMESPACE="my-namespace"                # Vault namespace (if using Vault Enterprise)
+export VAULT_CLI_AUTH_PATH="auth/jwt"                    # Vault auth path (default: auth/jwt)
 ```
 
 ### Fallback Configuration (Priority 2)
@@ -58,6 +59,39 @@ The secret at `VAULT_CLI_SECRET_PATH` must contain the following keys:
 }
 ```
 
+## Auth Path Configuration
+
+The `VAULT_CLI_AUTH_PATH` environment variable allows you to specify a custom authentication path for your Vault setup. This is useful when your Vault auth methods are mounted at non-standard paths.
+
+### Default Behavior
+If not specified, Verascan uses `auth/jwt` as the default auth path.
+
+### Common Auth Path Examples
+
+| Auth Method | Example Path | Description |
+|-------------|--------------|-------------|
+| JWT/OIDC | `auth/jwt` | Default JWT authentication (default) |
+| OIDC | `auth/oidc` | Custom OIDC authentication |
+| Kubernetes | `auth/kubernetes` | Kubernetes service account auth |
+| AppRole | `auth/approle` | AppRole authentication |
+| AWS | `auth/aws` | AWS IAM authentication |
+| Direct Mount | `jwt` | Direct mount point without `auth/` prefix |
+
+### Usage
+```bash
+# Use default JWT auth (no need to set)
+# VAULT_CLI_AUTH_PATH is automatically set to "auth/jwt"
+
+# Use custom OIDC auth path
+export VAULT_CLI_AUTH_PATH="auth/oidc"
+
+# Use Kubernetes auth
+export VAULT_CLI_AUTH_PATH="auth/kubernetes"
+
+# Use direct mount point
+export VAULT_CLI_AUTH_PATH="jwt"
+```
+
 ## Usage Examples
 
 ### Basic Vault Setup
@@ -68,6 +102,7 @@ export VAULT_CLI_ADDR="https://vault.company.com"
 export VAULT_CLI_JWT="eyJhbGciOiJSUzI1NiIs..."
 export VAULT_CLI_ROLE="veracode-scanner"  
 export VAULT_CLI_SECRET_PATH="secret/security/veracode"
+export VAULT_CLI_AUTH_PATH="auth/jwt"  # Optional: Use default JWT auth
 
 # Run verascan - credentials will be loaded from Vault
 verascan pipeline --app-name MyApp --scan-name test-scan
@@ -81,6 +116,7 @@ export VAULT_CLI_JWT="eyJhbGciOiJSUzI1NiIs..."
 export VAULT_CLI_ROLE="veracode-role"
 export VAULT_CLI_SECRET_PATH="secret/data/veracode/api"
 export VAULT_CLI_NAMESPACE="security-team"
+export VAULT_CLI_AUTH_PATH="auth/oidc"  # Custom OIDC auth path
 
 verascan pipeline --app-name MyApp --scan-name test-scan
 ```
@@ -93,6 +129,7 @@ export VAULT_CLI_JWT="eyJhbGciOiJSUzI1NiIs..."
 export VAULT_CLI_ROLE="veracode-scanner"
 # Use custom secret engine named 'secrets'
 export VAULT_CLI_SECRET_PATH="veracode/api/credentials@secrets"
+export VAULT_CLI_AUTH_PATH="auth/kubernetes"  # Kubernetes auth
 
 verascan pipeline --app-name MyApp --scan-name test-scan
 ```
@@ -126,6 +163,12 @@ verascan pipeline --app-name MyApp --scan-name test-scan
 - Cannot be empty
 - Supports custom secret engines using format: `path@engine` (e.g., `secret/data/app@kvv2`)
 - Defaults to `kvv2` engine if no engine specified
+
+### Auth Path
+- Maximum length: 100 characters
+- Allowed characters: alphanumeric, forward slashes, hyphens, underscores
+- Default value: `auth/jwt` (if not specified)
+- Examples: `auth/jwt`, `auth/oidc`, `auth/kubernetes`, `jwt`
 
 ## Error Handling
 
