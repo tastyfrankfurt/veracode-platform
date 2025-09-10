@@ -1,6 +1,6 @@
 [package]
 name = "verascan"
-version = "0.5.1"
+version = "0.5.2"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."

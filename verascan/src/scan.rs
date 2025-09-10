@@ -1536,7 +1536,11 @@ async fn validate_teams_exist(
     let all_teams = match identity_api.list_teams().await {
         Ok(teams) => teams,
         Err(e) => {
-            return Err(format!("Failed to fetch teams from Veracode: {e}"));
+            warn!("⚠️  Could not validate teams due to API error: {e}");
+            warn!(
+                "   Skipping team validation - will let Veracode handle team assignment during application creation"
+            );
+            return Ok(());
         }
     };
 
