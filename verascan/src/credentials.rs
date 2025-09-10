@@ -19,6 +19,7 @@ pub struct VaultConfig {
     pub role: String,
     pub secret_path: String,
     pub namespace: Option<String>,
+    pub auth_path: String,
 }
 
 /// Custom error types for credential operations

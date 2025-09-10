@@ -361,6 +361,36 @@ let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
     .with_certificate_validation_disabled(); // Only for development!
 ```
 
+### HashiCorp Vault Integration
+For enhanced security in production environments, you can retrieve Veracode credentials from HashiCorp Vault using JWT/OIDC authentication:
+
+```bash
+# Required Vault environment variables
+export VAULT_CLI_ADDR="https://vault.example.com"
+export VAULT_CLI_JWT="your-jwt-token"
+export VAULT_CLI_ROLE="veracode-role"
+export VAULT_CLI_SECRET_PATH="secret/veracode/api"
+
+# Optional: Custom auth path (default: auth/jwt)
+export VAULT_CLI_AUTH_PATH="auth/jwt"         # Default JWT auth
+export VAULT_CLI_AUTH_PATH="auth/oidc"        # Custom OIDC auth
+export VAULT_CLI_AUTH_PATH="auth/kubernetes"  # Kubernetes auth
+export VAULT_CLI_AUTH_PATH="jwt"              # Direct mount point
+
+# Optional: Vault namespace (Enterprise only)
+export VAULT_CLI_NAMESPACE="my-namespace"
+```
+
+The Vault secret must contain:
+```json
+{
+  "VERACODE_API_ID": "your-veracode-api-id",
+  "VERACODE_API_KEY": "your-veracode-api-key"
+}
+```
+
+**Note**: Vault integration is available in the `verascan` CLI application. See [VAULT_INTEGRATION.md](../VAULT_INTEGRATION.md) for detailed setup instructions.
+
 ## 🔄 Intelligent Retry Configuration
 
 The library includes comprehensive retry functionality with exponential backoff for improved reliability and **smart rate limit handling** optimized for Veracode's 500 requests/minute limit:

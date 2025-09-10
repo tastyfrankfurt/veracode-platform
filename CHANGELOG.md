@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2025-01-13
+
+### Added
+- **Configurable Vault Auth Path**: New `VAULT_CLI_AUTH_PATH` environment variable for custom Vault authentication paths
+  - **Flexible Authentication**: Support for different auth methods (JWT, OIDC, Kubernetes, AppRole, AWS)
+  - **Default Behavior**: Automatically defaults to `auth/jwt` when not specified for backward compatibility
+  - **Validation**: Comprehensive input validation with character restrictions and length limits
+  - **Examples**: Updated documentation with common auth path configurations
+  - **Testing**: Added comprehensive test coverage for auth path validation
+
+### Enhanced
+- **Vault Integration Documentation**: Updated README and VAULT_INTEGRATION.md with auth path examples
+- **CLI Help**: Added `VAULT_CLI_AUTH_PATH` to environment variable help output
+- **Validation Rules**: Added auth path validation to existing Vault configuration checks
+
 ## [0.5.0] - 2025-01-13
 
 ### Added
