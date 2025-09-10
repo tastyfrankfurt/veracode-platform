@@ -1319,12 +1319,19 @@ impl<'a> IdentityApi<'a> {
             ("deleted".to_string(), "false".to_string()),
         ];
 
+        log::debug!("🔍 Team lookup request - endpoint: {}", endpoint);
+        log::debug!("🔍 Team lookup request - query parameters: {:?}", query_params);
+        log::debug!("🔍 Team lookup request - searching for team: '{}'", team_name);
+
         let response = self.client.get(endpoint, Some(&query_params)).await?;
         let status = response.status().as_u16();
+
+        log::debug!("🔍 Team lookup response - HTTP status: {}", status);
 
         match status {
             200 => {
                 let response_text = response.text().await?;
+                log::debug!("🔍 Team lookup response - body: {}", response_text);
 
                 // Try embedded response format first
                 if let Ok(teams_response) = serde_json::from_str::<TeamsResponse>(&response_text) {
@@ -1337,23 +1344,40 @@ impl<'a> IdentityApi<'a> {
                     };
 
                     // Return the first team if found (should be exact match due to team_name filter)
-                    Ok(teams.into_iter().find(|team| team.team_name == team_name))
+                    let found_team = teams.into_iter().find(|team| team.team_name == team_name);
+                    if let Some(ref team) = found_team {
+                        log::debug!("🔍 Team lookup result - found team: '{}' with GUID: {}", team.team_name, team.team_id);
+                    } else {
+                        log::debug!("🔍 Team lookup result - no team found matching name: '{}'", team_name);
+                    }
+                    Ok(found_team)
                 } else if let Ok(teams) = serde_json::from_str::<Vec<Team>>(&response_text) {
                     // Try direct array as fallback
-                    Ok(teams.into_iter().find(|team| team.team_name == team_name))
+                    let found_team = teams.into_iter().find(|team| team.team_name == team_name);
+                    if let Some(ref team) = found_team {
+                        log::debug!("🔍 Team lookup result - found team: '{}' with GUID: {}", team.team_name, team.team_id);
+                    } else {
+                        log::debug!("🔍 Team lookup result - no team found matching name: '{}'", team_name);
+                    }
+                    Ok(found_team)
                 } else {
                     Err(IdentityError::Api(VeracodeError::InvalidResponse(
                         "Unable to parse team response".to_string(),
                     )))
                 }
             }
-            404 => Ok(None), // Team not found
+            404 => {
+                log::debug!("🔍 Team lookup result - HTTP 404: team '{}' not found", team_name);
+                Ok(None) // Team not found
+            }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
+                log::debug!("🔍 Team lookup error - HTTP 403: permission denied - {}", error_text);
                 Err(IdentityError::PermissionDenied(error_text))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
+                log::debug!("🔍 Team lookup error - HTTP {}: {}", status, error_text);
                 Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
                     "HTTP {status}: {error_text}"
                 ))))
