@@ -5,7 +5,43 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.0] - 2025-01-13
+## [0.5.1] - 2025-09-10
+
+### Added
+- **Team Lookup API**: New efficient team search functionality in Identity API
+  - `get_team_by_name(team_name)` - Find team by exact name with single API call using `team_name` query parameter
+  - `get_team_guid_by_name(team_name)` - Convenience method to get team GUID for application creation workflows
+  - Uses Veracode's `/api/authn/v2/teams?team_name=...` endpoint for efficient server-side filtering
+
+### Enhanced  
+- **Automatic Team Resolution in Application Creation**: Enhanced application creation methods now automatically resolve team names to GUIDs
+  - `create_application_if_not_exists()` now accepts team names and resolves them to GUIDs behind the scenes
+  - Clear error messages when teams are not found: `"Team 'Security Team' not found"`
+  - No more manual GUID lookups required for application creation workflows
+  - Backwards compatible with existing GUID-based team assignment methods
+
+### Improved
+- **Error Handling**: Better error context for team-related operations
+  - Specific `VeracodeError::NotFound` when team lookup fails with team name in error message
+  - `VeracodeError::InvalidResponse` for team API communication failures
+  - Clear distinction between team lookup errors and application creation errors
+
+### Technical Details
+- **New Identity API Methods**:
+  - `IdentityApi::get_team_by_name(&self, team_name: &str) -> Result<Option<Team>, IdentityError>`
+  - `IdentityApi::get_team_guid_by_name(&self, team_name: &str) -> Result<Option<String>, IdentityError>`
+- **Enhanced Application Methods**:
+  - Updated `create_application_if_not_exists()` to automatically resolve team names to GUIDs
+  - Team resolution happens per-team with efficient individual lookups instead of fetching all teams
+- **Query Parameters**: Uses `team_name`, `ignore_self_teams=false`, `only_manageable=false`, `deleted=false` for optimal filtering
+
+### Benefits
+- **Simplified User Experience**: Users can specify team names directly instead of looking up GUIDs manually
+- **Better Performance**: Individual team lookups instead of fetching all teams for validation
+- **Clearer Error Messages**: More specific error messages when team resolution fails
+- **Backwards Compatible**: Existing GUID-based methods continue to work unchanged
+
+## [0.5.0] - 2025-09-10
 
 ### Added
 - **Policy API Fallback System**: Intelligent dual-API approach for policy compliance evaluation
