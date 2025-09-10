@@ -63,9 +63,13 @@ pub struct Sandbox {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateSandboxRequest {
     pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub auto_recreate: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_fields: Option<HashMap<String, String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_identifiers: Option<Vec<String>>,
 }
 

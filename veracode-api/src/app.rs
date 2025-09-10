@@ -121,11 +121,17 @@ pub struct Policy {
 /// Team information.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Team {
+    /// Team GUID (primary identifier)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub guid: Option<String>,
     /// Team ID
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_id: Option<u64>,
     /// Team name
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_name: Option<String>,
     /// Legacy team ID
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_legacy_id: Option<u64>,
 }
 
@@ -219,18 +225,25 @@ pub struct CreateApplicationProfile {
     #[serde(serialize_with = "serialize_business_criticality")]
     pub business_criticality: BusinessCriticality,
     /// Application description
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     /// Business unit
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub business_unit: Option<BusinessUnit>,
     /// Business owners
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub business_owners: Option<Vec<BusinessOwner>>,
     /// Policies
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub policies: Option<Vec<Policy>>,
     /// Teams
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub teams: Option<Vec<Team>>,
     /// Tags
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub tags: Option<String>,
     /// Custom fields
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_fields: Option<Vec<CustomField>>,
 }
 
@@ -569,6 +582,14 @@ impl VeracodeClient {
     ) -> Result<Application, VeracodeError> {
         let endpoint = "/appsec/v1/applications";
 
+        // Debug: Log the exact JSON being sent to the API
+        if let Ok(json_payload) = serde_json::to_string_pretty(&request) {
+            log::debug!(
+                "🔍 Creating application with JSON payload: {}",
+                json_payload
+            );
+        }
+
         let response = self.post(endpoint, Some(&request)).await?;
         let response = Self::handle_response(response).await?;
 
@@ -797,13 +818,95 @@ impl VeracodeClient {
 
         // Application doesn't exist, create it
 
-        // Convert team names to Team objects if provided
-        let teams = team_names.map(|names| {
-            names
+        // Convert team names to Team objects with GUIDs if provided
+        let teams = if let Some(names) = team_names {
+            let identity_api = self.identity_api();
+            let mut resolved_teams = Vec::new();
+
+            for team_name in names {
+                match identity_api.get_team_guid_by_name(&team_name).await {
+                    Ok(Some(team_guid)) => {
+                        resolved_teams.push(Team {
+                            guid: Some(team_guid),
+                            team_id: None,
+                            team_name: None, // Not needed when using GUID
+                            team_legacy_id: None,
+                        });
+                    }
+                    Ok(None) => {
+                        return Err(VeracodeError::NotFound(format!(
+                            "Team '{}' not found",
+                            team_name
+                        )));
+                    }
+                    Err(identity_err) => {
+                        return Err(VeracodeError::InvalidResponse(format!(
+                            "Failed to lookup team '{}': {}",
+                            team_name, identity_err
+                        )));
+                    }
+                }
+            }
+
+            Some(resolved_teams)
+        } else {
+            None
+        };
+
+        let create_request = CreateApplicationRequest {
+            profile: CreateApplicationProfile {
+                name: name.to_string(),
+                business_criticality,
+                description,
+                business_unit: None,
+                business_owners: None,
+                policies: None,
+                teams,
+                tags: None,
+                custom_fields: None,
+            },
+        };
+
+        self.create_application(&create_request).await
+    }
+
+    /// Create application if it doesn't exist, or return existing application (with team GUIDs).
+    ///
+    /// This method allows specifying teams by their GUID, which is the preferred
+    /// approach for programmatic application creation.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The name of the application
+    /// * `business_criticality` - Business criticality level (required for creation)
+    /// * `description` - Optional description for new applications
+    /// * `team_guids` - Optional list of team GUIDs to assign to the application
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the application (existing or newly created).
+    pub async fn create_application_if_not_exists_with_team_guids(
+        &self,
+        name: &str,
+        business_criticality: BusinessCriticality,
+        description: Option<String>,
+        team_guids: Option<Vec<String>>,
+    ) -> Result<Application, VeracodeError> {
+        // First, check if application already exists
+        if let Some(existing_app) = self.get_application_by_name(name).await? {
+            return Ok(existing_app);
+        }
+
+        // Application doesn't exist, create it
+
+        // Convert team GUIDs to Team objects if provided
+        let teams = team_guids.map(|guids| {
+            guids
                 .into_iter()
-                .map(|team_name| Team {
-                    team_id: None, // Will be assigned by Veracode
-                    team_name: Some(team_name),
+                .map(|team_guid| Team {
+                    guid: Some(team_guid),
+                    team_id: None,        // Will be assigned by Veracode
+                    team_name: None,      // Not needed when using GUID
                     team_legacy_id: None, // Will be assigned by Veracode
                 })
                 .collect()
@@ -895,6 +998,7 @@ mod tests {
         let teams: Vec<Team> = team_names
             .into_iter()
             .map(|team_name| Team {
+                guid: None,
                 team_id: None,
                 team_name: Some(team_name),
                 team_legacy_id: None,
@@ -932,5 +1036,47 @@ mod tests {
             request_teams[1].team_name,
             Some("Development Team".to_string())
         );
+    }
+
+    #[test]
+    fn test_create_application_request_with_team_guids() {
+        let team_guids = vec!["team-guid-1".to_string(), "team-guid-2".to_string()];
+        let teams: Vec<Team> = team_guids
+            .into_iter()
+            .map(|team_guid| Team {
+                guid: Some(team_guid),
+                team_id: None,
+                team_name: None,
+                team_legacy_id: None,
+            })
+            .collect();
+
+        let request = CreateApplicationRequest {
+            profile: CreateApplicationProfile {
+                name: "Test Application".to_string(),
+                business_criticality: BusinessCriticality::High,
+                description: Some("Test description".to_string()),
+                business_unit: None,
+                business_owners: None,
+                policies: None,
+                teams: Some(teams.clone()),
+                tags: None,
+                custom_fields: None,
+            },
+        };
+
+        assert_eq!(request.profile.name, "Test Application");
+        assert_eq!(
+            request.profile.business_criticality,
+            BusinessCriticality::High
+        );
+        assert!(request.profile.teams.is_some());
+
+        let request_teams = request.profile.teams.unwrap();
+        assert_eq!(request_teams.len(), 2);
+        assert_eq!(request_teams[0].guid, Some("team-guid-1".to_string()));
+        assert_eq!(request_teams[1].guid, Some("team-guid-2".to_string()));
+        assert!(request_teams[0].team_name.is_none());
+        assert!(request_teams[1].team_name.is_none());
     }
 }

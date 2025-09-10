@@ -5,6 +5,33 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.3] - 2025-09-10
+
+### Added
+- **Team Lookup API**: New efficient team search functionality in Identity API
+  - `get_team_by_name(team_name)` - Find team by exact name with single API call
+  - `get_team_guid_by_name(team_name)` - Convenience method to get team GUID for application creation
+  - Uses efficient `team_name` query parameter instead of fetching all teams
+
+### Enhanced  
+- **Automatic Team Resolution**: Enhanced application creation methods now automatically resolve team names to GUIDs
+  - `create_application_if_not_exists()` now accepts team names and resolves them to GUIDs behind the scenes
+  - Clear error messages when teams are not found: `"Team 'XYZ' not found"`
+  - No more manual GUID lookups required for application creation workflows
+
+### Improved
+- **Streamlined Team Validation**: Removed redundant team validation in verascan
+  - Eliminated `validate_teams_exist()` function that fetched all teams unnecessarily  
+  - Team validation now happens efficiently during application creation
+  - Better error handling with specific team lookup failures
+  - Significant performance improvement for workflows with team assignments
+
+### Benefits
+- **Simplified Workflows**: Users can now specify team names directly instead of looking up GUIDs
+- **Better Performance**: Individual team lookups instead of fetching all teams
+- **Clearer Errors**: More specific error messages when team resolution fails
+- **Backwards Compatible**: Existing GUID-based methods still work as before
+
 ## [0.5.2] - 2025-09-10
 
 ### Enhanced

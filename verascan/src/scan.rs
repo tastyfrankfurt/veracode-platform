@@ -12,7 +12,7 @@ use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use veracode_platform::identity::IdentityApi;
+// IdentityApi import removed - no longer needed since team validation is handled in app creation
 use veracode_platform::{RetryConfig, VeracodeConfig, VeracodeRegion};
 
 /// Configure VeracodeConfig with VERASCAN environment variables
@@ -1520,71 +1520,7 @@ fn calculate_cwe_breakdown(findings: &[FindingWithSource]) -> serde_json::Value 
     serde_json::to_value(top_cwes).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
 }
 
-/// Validate that all specified teams exist in Veracode
-async fn validate_teams_exist(
-    client: &veracode_platform::VeracodeClient,
-    team_names: &[String],
-) -> Result<(), String> {
-    if team_names.is_empty() {
-        return Ok(());
-    }
-
-    debug!("🔍 Validating team existence...");
-
-    // Get all available teams from Veracode
-    let identity_api = IdentityApi::new(client);
-    let all_teams = match identity_api.list_teams().await {
-        Ok(teams) => teams,
-        Err(e) => {
-            warn!("⚠️  Could not validate teams due to API error: {e}");
-            warn!(
-                "   Skipping team validation - will let Veracode handle team assignment during application creation"
-            );
-            return Ok(());
-        }
-    };
-
-    debug!("   Found {} teams in Veracode", all_teams.len());
-
-    // Create a set of existing team names for fast lookup
-    let existing_team_names: std::collections::HashSet<String> = all_teams
-        .iter()
-        .map(|team| team.team_name.clone())
-        .collect();
-
-    // Check if all requested teams exist
-    let mut missing_teams = Vec::new();
-    for team_name in team_names {
-        if !existing_team_names.contains(team_name) {
-            missing_teams.push(team_name.clone());
-        }
-    }
-
-    if !missing_teams.is_empty() {
-        return Err(format!(
-            "The following teams do not exist in Veracode: {}. Available teams: {}",
-            missing_teams.join(", "),
-            existing_team_names
-                .iter()
-                .take(10)
-                .cloned()
-                .collect::<Vec<_>>()
-                .join(", ")
-                + if existing_team_names.len() > 10 {
-                    " ..."
-                } else {
-                    ""
-                }
-        ));
-    }
-
-    debug!("✅ All teams validated successfully");
-    for team_name in team_names {
-        debug!("   ✓ {team_name}");
-    }
-
-    Ok(())
-}
+// Team validation removed - now handled during application creation with efficient individual lookups
 
 /// Execute assessment scan workflow
 pub fn execute_assessment_scan(
@@ -1712,12 +1648,9 @@ async fn execute_assessment_scan_async(
 
         if let Some(ref teams) = team_names {
             debug!("   Teams to assign: {}", teams.join(", "));
+            debug!("   Team names as Vec<String>: {:?}", teams);
 
-            // Validate team existence before creating application
-            if let Err(e) = validate_teams_exist(&submitter.client, teams).await {
-                error!("❌ Team validation failed: {e}");
-                return Err(1);
-            }
+            // Team validation is now handled during application creation with clear error messages
         }
 
         let app_id = match submitter
@@ -1725,7 +1658,7 @@ async fn execute_assessment_scan_async(
             .create_application_if_not_exists(
                 app_profile_name,
                 crate::cli::parse_business_criticality(bus_cri),
-                Some("Application created by Verascan for assessment scanning".to_string()),
+                Some("Application created for assessment scanning".to_string()),
                 team_names,
             )
             .await

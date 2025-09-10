@@ -239,10 +239,13 @@ pub struct CreateTeamRequest {
     /// Team name (required)
     pub team_name: String,
     /// Team description
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_description: Option<String>,
     /// Business unit ID
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub business_unit_id: Option<String>,
     /// List of user IDs to add to the team
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_ids: Option<Vec<String>>,
 }
 
@@ -1292,6 +1295,91 @@ impl<'a> IdentityApi<'a> {
                     "HTTP {status}: {error_text}"
                 ))))
             }
+        }
+    }
+
+    /// Get a team by its name
+    ///
+    /// # Arguments
+    ///
+    /// * `team_name` - The exact name of the team to find
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an `Option<Team>` if found, or an error
+    pub async fn get_team_by_name(&self, team_name: &str) -> Result<Option<Team>, IdentityError> {
+        let endpoint = "/api/authn/v2/teams";
+
+        let query_params = vec![
+            ("page".to_string(), "0".to_string()),
+            ("size".to_string(), "1".to_string()),
+            ("team_name".to_string(), team_name.to_string()),
+            ("ignore_self_teams".to_string(), "false".to_string()),
+            ("only_manageable".to_string(), "false".to_string()),
+            ("deleted".to_string(), "false".to_string()),
+        ];
+
+        let response = self.client.get(endpoint, Some(&query_params)).await?;
+        let status = response.status().as_u16();
+
+        match status {
+            200 => {
+                let response_text = response.text().await?;
+
+                // Try embedded response format first
+                if let Ok(teams_response) = serde_json::from_str::<TeamsResponse>(&response_text) {
+                    let teams = if !teams_response.teams.is_empty() {
+                        teams_response.teams
+                    } else if let Some(embedded) = teams_response.embedded {
+                        embedded.teams
+                    } else {
+                        Vec::new()
+                    };
+
+                    // Return the first team if found (should be exact match due to team_name filter)
+                    Ok(teams.into_iter().find(|team| team.team_name == team_name))
+                } else if let Ok(teams) = serde_json::from_str::<Vec<Team>>(&response_text) {
+                    // Try direct array as fallback
+                    Ok(teams.into_iter().find(|team| team.team_name == team_name))
+                } else {
+                    Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                        "Unable to parse team response".to_string(),
+                    )))
+                }
+            }
+            404 => Ok(None), // Team not found
+            403 => {
+                let error_text = response.text().await.unwrap_or_default();
+                Err(IdentityError::PermissionDenied(error_text))
+            }
+            _ => {
+                let error_text = response.text().await.unwrap_or_default();
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
+            }
+        }
+    }
+
+    /// Get a team's GUID by its name
+    ///
+    /// This is a convenience method for application creation workflows where
+    /// only the team GUID is needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `team_name` - The exact name of the team to find
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an `Option<String>` with the team's GUID if found, or an error
+    pub async fn get_team_guid_by_name(
+        &self,
+        team_name: &str,
+    ) -> Result<Option<String>, IdentityError> {
+        match self.get_team_by_name(team_name).await? {
+            Some(team) => Ok(Some(team.team_id)),
+            None => Ok(None),
         }
     }
 
