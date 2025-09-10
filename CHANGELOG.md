@@ -5,7 +5,26 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2025-01-13
+## [0.5.2] - 2025-09-10
+
+### Enhanced
+- **Vault Client Logging Control**: Improved logging configuration to reduce verbose output from upstream vault dependencies
+  - **Intelligent Log Filtering**: Automatic filtering of noisy upstream crate logs (`vaultrs`, `rustify`, `tracing`) while preserving `verascan` application logs
+  - **Debug Flag Integration**: Vault logging respects existing `--debug` flag behavior for consistent log level control
+  - **User Override Support**: Respects manually set `RUST_LOG` environment variable for custom logging configuration
+  - **Thread-Safe Implementation**: Uses `env_logger::Builder::parse_filters()` for safe log configuration without unsafe operations
+  - **Default Filter Levels**: 
+    - Normal mode: `verascan=info,vaultrs=warn,rustify=warn,tracing=warn`
+    - Debug mode: `verascan=debug,vaultrs=info,rustify=warn,tracing=warn`
+  - **Backward Compatibility**: Preserves existing `log` crate implementation and `env_logger` configuration
+
+### Benefits
+- **Cleaner Log Output**: Significantly reduced verbose logging from vault operations while maintaining security audit trail
+- **Consistent User Experience**: Logging behavior remains consistent with existing `--debug` flag expectations
+- **Customizable**: Users can still override with `RUST_LOG=debug` for full upstream logging when needed
+- **Production Ready**: Maintains important vault operation logs (authentication, secret retrieval, token revocation) at appropriate levels
+
+## [0.5.1] - 2025-09-10
 
 ### Added
 - **Configurable Vault Auth Path**: New `VAULT_CLI_AUTH_PATH` environment variable for custom Vault authentication paths
@@ -20,7 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Help**: Added `VAULT_CLI_AUTH_PATH` to environment variable help output
 - **Validation Rules**: Added auth path validation to existing Vault configuration checks
 
-## [0.5.0] - 2025-01-13
+## [0.5.0] - 2025-09-10
 
 ### Added
 - **API Fallback Strategy for Break Build**: Intelligent fallback system for policy compliance evaluation
