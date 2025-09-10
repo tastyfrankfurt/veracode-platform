@@ -1,5 +1,5 @@
 use clap::Parser;
-use log::{LevelFilter, debug, error, info};
+use log::{LevelFilter, debug, error};
 use verascan::cli::print_environment_variables;
 use verascan::credentials::load_veracode_credentials_from_env;
 use verascan::{
@@ -40,7 +40,6 @@ fn main() {
             let runtime = tokio::runtime::Runtime::new().unwrap();
             match runtime.block_on(load_veracode_credentials_with_vault()) {
                 Ok(credentials) => {
-                    info!("Successfully loaded credentials securely from vault");
                     // Create config directly from credentials - no args copying!
                     match create_veracode_config_from_credentials(credentials, &args.region) {
                         Ok(config) => config,
