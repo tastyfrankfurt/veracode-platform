@@ -37,7 +37,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.5.0"
+veracode-platform = "0.5.3"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -104,6 +104,7 @@ let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
 Complete application lifecycle management:
 
 ```rust
+use veracode_platform::app::{BusinessCriticality, CreateApplicationRequest};
 // List all applications
 let apps = client.get_all_applications().await?;
 
@@ -123,6 +124,15 @@ let create_request = CreateApplicationRequest {
     tags: vec![],
 };
 let new_app = client.create_application(create_request).await?;
+
+// Create application with team assignment (new in 0.5.1)
+// Teams are automatically resolved from names to GUIDs
+let app_with_teams = client.create_application_if_not_exists(
+    "My Team App",
+    BusinessCriticality::High,
+    Some("App with team assignment".to_string()),
+    Some(vec!["Security Team".to_string(), "Development Team".to_string()])
+).await?;
 ```
 
 ### Pipeline Scan API (REST)
@@ -185,6 +195,12 @@ let new_user = identity.create_user(create_user).await?;
 
 // Manage teams
 let teams = identity.get_teams().await?;
+
+// Find team by name (new in 0.5.1)
+let security_team = identity.get_team_by_name("Security Team").await?;
+
+// Get team GUID for application creation (new in 0.5.1)
+let team_guid = identity.get_team_guid_by_name("Security Team").await?;
 ```
 
 ### Sandbox API (REST)

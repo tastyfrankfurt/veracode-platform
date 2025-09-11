@@ -239,10 +239,13 @@ pub struct CreateTeamRequest {
     /// Team name (required)
     pub team_name: String,
     /// Team description
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub team_description: Option<String>,
     /// Business unit ID
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub business_unit_id: Option<String>,
     /// List of user IDs to add to the team
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub user_ids: Option<Vec<String>>,
 }
 
@@ -1292,6 +1295,156 @@ impl<'a> IdentityApi<'a> {
                     "HTTP {status}: {error_text}"
                 ))))
             }
+        }
+    }
+
+    /// Get a team by its name
+    ///
+    /// Searches for a team by exact name match. The API may return multiple teams
+    /// that match the search criteria, so this method performs an exact string
+    /// comparison to find the specific team requested.
+    ///
+    /// # Arguments
+    ///
+    /// * `team_name` - The exact name of the team to find
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an `Option<Team>` if found, or an error
+    pub async fn get_team_by_name(&self, team_name: &str) -> Result<Option<Team>, IdentityError> {
+        let endpoint = "/api/authn/v2/teams";
+
+        let query_params = vec![
+            ("page".to_string(), "0".to_string()),
+            ("size".to_string(), "50".to_string()),
+            ("team_name".to_string(), team_name.to_string()),
+            ("ignore_self_teams".to_string(), "false".to_string()),
+            ("only_manageable".to_string(), "false".to_string()),
+            ("deleted".to_string(), "false".to_string()),
+        ];
+
+        log::debug!("🔍 Team lookup request - endpoint: {}", endpoint);
+        log::debug!(
+            "🔍 Team lookup request - query parameters: {:?}",
+            query_params
+        );
+        log::debug!(
+            "🔍 Team lookup request - searching for team: '{}'",
+            team_name
+        );
+
+        let response = self.client.get(endpoint, Some(&query_params)).await?;
+        let status = response.status().as_u16();
+
+        log::debug!("🔍 Team lookup response - HTTP status: {}", status);
+
+        match status {
+            200 => {
+                let response_text = response.text().await?;
+                log::debug!("🔍 Team lookup response - body: {}", response_text);
+
+                // Helper closure to process teams list and find exact case-insensitive match
+                let process_teams = |teams: Vec<Team>, format_description: &str| -> Option<Team> {
+                    let team_count = teams.len();
+                    log::debug!(
+                        "🔍 Team lookup response - found {} teams total ({})",
+                        team_count,
+                        format_description
+                    );
+                    for (i, team) in teams.iter().enumerate() {
+                        log::debug!(
+                            "🔍 Team lookup response - team {}: '{}' (GUID: {})",
+                            i + 1,
+                            team.team_name,
+                            team.team_id
+                        );
+                    }
+
+                    // Find exact case-insensitive match by team name
+                    // Note: API search is case-insensitive, so we match case-insensitively too
+                    let found_team = teams
+                        .into_iter()
+                        .find(|team| team.team_name.to_lowercase() == team_name.to_lowercase());
+                    if let Some(ref team) = found_team {
+                        log::debug!(
+                            "🔍 Team lookup result - found case-insensitive match: '{}' (searched for '{}') with GUID: {}",
+                            team.team_name,
+                            team_name,
+                            team.team_id
+                        );
+                    } else {
+                        log::debug!(
+                            "🔍 Team lookup result - no case-insensitive match for '{}' among {} teams",
+                            team_name,
+                            team_count
+                        );
+                    }
+                    found_team
+                };
+
+                // Parse response - prioritize embedded format as shown in your example
+                if let Ok(teams_response) = serde_json::from_str::<TeamsResponse>(&response_text) {
+                    let teams = if let Some(embedded) = teams_response.embedded {
+                        embedded.teams
+                    } else if !teams_response.teams.is_empty() {
+                        teams_response.teams
+                    } else {
+                        Vec::new()
+                    };
+                    Ok(process_teams(teams, "embedded format"))
+                } else if let Ok(teams) = serde_json::from_str::<Vec<Team>>(&response_text) {
+                    // Fallback for direct array (less common based on your example)
+                    Ok(process_teams(teams, "direct array"))
+                } else {
+                    Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                        "Unable to parse team response".to_string(),
+                    )))
+                }
+            }
+            404 => {
+                log::debug!(
+                    "🔍 Team lookup result - HTTP 404: team '{}' not found",
+                    team_name
+                );
+                Ok(None) // Team not found
+            }
+            403 => {
+                let error_text = response.text().await.unwrap_or_default();
+                log::debug!(
+                    "🔍 Team lookup error - HTTP 403: permission denied - {}",
+                    error_text
+                );
+                Err(IdentityError::PermissionDenied(error_text))
+            }
+            _ => {
+                let error_text = response.text().await.unwrap_or_default();
+                log::debug!("🔍 Team lookup error - HTTP {}: {}", status, error_text);
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                    "HTTP {status}: {error_text}"
+                ))))
+            }
+        }
+    }
+
+    /// Get a team's GUID by its name
+    ///
+    /// This is a convenience method for application creation workflows where
+    /// only the team GUID is needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `team_name` - The exact name of the team to find
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing an `Option<String>` with the team's GUID if found, or an error
+    pub async fn get_team_guid_by_name(
+        &self,
+        team_name: &str,
+    ) -> Result<Option<String>, IdentityError> {
+        match self.get_team_by_name(team_name).await? {
+            Some(team) => Ok(Some(team.team_id)),
+            None => Ok(None),
         }
     }
 

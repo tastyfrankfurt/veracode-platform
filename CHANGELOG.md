@@ -5,7 +5,65 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2025-01-13
+## [0.5.3] - 2025-09-10
+
+### Added
+- **Team Lookup API**: New efficient team search functionality in Identity API
+  - `get_team_by_name(team_name)` - Find team by exact name with single API call
+  - `get_team_guid_by_name(team_name)` - Convenience method to get team GUID for application creation
+  - Uses efficient `team_name` query parameter instead of fetching all teams
+
+### Enhanced  
+- **Automatic Team Resolution**: Enhanced application creation methods now automatically resolve team names to GUIDs
+  - `create_application_if_not_exists()` now accepts team names and resolves them to GUIDs behind the scenes
+  - Clear error messages when teams are not found: `"Team 'XYZ' not found"`
+  - No more manual GUID lookups required for application creation workflows
+
+### Fixed
+- **Vault Secrets Security**: Enhanced vault secrets to be zeroised after retrieval from vault
+  - **Security Enhancement**: Vault secrets now properly cleared from memory after use for enhanced security
+  - **Memory Safety**: Implements secure memory patterns to prevent credential leakage
+  - **Defensive Security**: Follows security best practices for credential handling in memory
+
+### Improved
+- **Streamlined Team Validation**: Removed redundant team validation in verascan
+  - Eliminated `validate_teams_exist()` function that fetched all teams unnecessarily  
+  - Team validation now happens efficiently during application creation
+  - Better error handling with specific team lookup failures
+  - Significant performance improvement for workflows with team assignments
+- **Team GUID Lookup**: Adjusted team GUID lookup to handle multiple results properly
+  - **Robust Handling**: Enhanced logic to properly handle cases where multiple teams match search criteria
+  - **Error Handling**: Improved error messages and validation for team lookup operations
+- **Application Creation Debugging**: Added more debug logging for application creation workflows
+  - **Enhanced Visibility**: Additional logging provides better insight into application creation process
+  - **Troubleshooting Support**: Improved debugging capabilities for application lifecycle operations
+
+### Benefits
+- **Simplified Workflows**: Users can now specify team names directly instead of looking up GUIDs
+- **Better Performance**: Individual team lookups instead of fetching all teams
+- **Clearer Errors**: More specific error messages when team resolution fails
+- **Backwards Compatible**: Existing GUID-based methods still work as before
+
+## [0.5.2] - 2025-09-10
+
+### Enhanced
+- **Vault Client Logging Control**: Improved logging configuration to reduce verbose output from upstream vault dependencies
+  - **Intelligent Log Filtering**: Automatic filtering of noisy upstream crate logs (`vaultrs`, `rustify`, `tracing`) while preserving `verascan` application logs
+  - **Debug Flag Integration**: Vault logging respects existing `--debug` flag behavior for consistent log level control
+  - **User Override Support**: Respects manually set `RUST_LOG` environment variable for custom logging configuration
+  - **Thread-Safe Implementation**: Uses `env_logger::Builder::parse_filters()` for safe log configuration without unsafe operations
+  - **Default Filter Levels**: 
+    - Normal mode: `verascan=info,vaultrs=warn,rustify=warn,tracing=warn`
+    - Debug mode: `verascan=debug,vaultrs=info,rustify=warn,tracing=warn`
+  - **Backward Compatibility**: Preserves existing `log` crate implementation and `env_logger` configuration
+
+### Benefits
+- **Cleaner Log Output**: Significantly reduced verbose logging from vault operations while maintaining security audit trail
+- **Consistent User Experience**: Logging behavior remains consistent with existing `--debug` flag expectations
+- **Customizable**: Users can still override with `RUST_LOG=debug` for full upstream logging when needed
+- **Production Ready**: Maintains important vault operation logs (authentication, secret retrieval, token revocation) at appropriate levels
+
+## [0.5.1] - 2025-09-10
 
 ### Added
 - **Configurable Vault Auth Path**: New `VAULT_CLI_AUTH_PATH` environment variable for custom Vault authentication paths
@@ -20,7 +78,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **CLI Help**: Added `VAULT_CLI_AUTH_PATH` to environment variable help output
 - **Validation Rules**: Added auth path validation to existing Vault configuration checks
 
-## [0.5.0] - 2025-01-13
+## [0.5.0] - 2025-09-10
 
 ### Added
 - **API Fallback Strategy for Break Build**: Intelligent fallback system for policy compliance evaluation

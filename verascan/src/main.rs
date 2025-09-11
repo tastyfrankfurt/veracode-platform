@@ -18,7 +18,20 @@ fn main() {
     }
 
     // Initialize logger based on debug flag
-    env_logger::Builder::from_default_env()
+    // Set default log filters to reduce noise from upstream crates
+    let mut builder = env_logger::Builder::from_default_env();
+
+    // If RUST_LOG is not set, apply our default filters
+    if std::env::var("RUST_LOG").is_err() {
+        let log_filter = if args.debug {
+            "verascan=debug,vaultrs=info,rustify=warn,tracing=warn"
+        } else {
+            "verascan=info,vaultrs=warn,rustify=warn,tracing=warn"
+        };
+        builder.parse_filters(log_filter);
+    }
+
+    builder
         .filter_level(if args.debug {
             LevelFilter::Debug
         } else {
