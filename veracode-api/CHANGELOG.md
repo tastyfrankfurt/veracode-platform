@@ -5,7 +5,7 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.1] - 2025-09-10
+## [0.5.3] - 2025-09-11
 
 ### Added
 - **Team Lookup API**: New efficient team search functionality in Identity API
@@ -34,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Updated `create_application_if_not_exists()` to automatically resolve team names to GUIDs
   - Team resolution happens per-team with efficient individual lookups instead of fetching all teams
 - **Query Parameters**: Uses `team_name`, `ignore_self_teams=false`, `only_manageable=false`, `deleted=false` for optimal filtering
+
+### Fixed
+- **Team Lookup Multiple Results**: Improved handling of API responses containing multiple teams to ensure exact name matching
+- **Enhanced Debug Logging**: Added comprehensive debug logging for team lookup operations and application creation workflows
 
 ### Benefits
 - **Simplified User Experience**: Users can specify team names directly instead of looking up GUIDs manually

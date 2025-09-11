@@ -2001,7 +2001,7 @@ dependencies = [
 
 [[package]]
 name = "veracode-platform"
-version = "0.5.1"
+version = "0.5.3"
 dependencies = [
  "chrono",
  "hex",
@@ -2023,7 +2023,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.5.2"
+version = "0.5.3"
 dependencies = [
  "backoff",
  "chrono",

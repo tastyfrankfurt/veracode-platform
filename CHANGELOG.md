@@ -19,12 +19,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Clear error messages when teams are not found: `"Team 'XYZ' not found"`
   - No more manual GUID lookups required for application creation workflows
 
+### Fixed
+- **Vault Secrets Security**: Enhanced vault secrets to be zeroised after retrieval from vault
+  - **Security Enhancement**: Vault secrets now properly cleared from memory after use for enhanced security
+  - **Memory Safety**: Implements secure memory patterns to prevent credential leakage
+  - **Defensive Security**: Follows security best practices for credential handling in memory
+
 ### Improved
 - **Streamlined Team Validation**: Removed redundant team validation in verascan
   - Eliminated `validate_teams_exist()` function that fetched all teams unnecessarily  
   - Team validation now happens efficiently during application creation
   - Better error handling with specific team lookup failures
   - Significant performance improvement for workflows with team assignments
+- **Team GUID Lookup**: Adjusted team GUID lookup to handle multiple results properly
+  - **Robust Handling**: Enhanced logic to properly handle cases where multiple teams match search criteria
+  - **Error Handling**: Improved error messages and validation for team lookup operations
+- **Application Creation Debugging**: Added more debug logging for application creation workflows
+  - **Enhanced Visibility**: Additional logging provides better insight into application creation process
+  - **Troubleshooting Support**: Improved debugging capabilities for application lifecycle operations
 
 ### Benefits
 - **Simplified Workflows**: Users can now specify team names directly instead of looking up GUIDs

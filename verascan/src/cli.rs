@@ -7,7 +7,7 @@ use serde_json;
 #[command(
     about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
 )]
-#[command(version = "0.5.2")]
+#[command(version = "0.5.3")]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
@@ -901,12 +901,13 @@ pub fn print_environment_variables() {
     println!("  export VAULT_CLI_JWT=\"your-jwt-token\"");
     println!("  export VAULT_CLI_ROLE=\"veracode-role\"");
     println!("  export VAULT_CLI_SECRET_PATH=\"secret/veracode/api\"");
-    println!("  export VAULT_CLI_AUTH_PATH=\"auth/jwt\"  # Optional, defaults to auth/jwt");
+    println!("  export VAULT_CLI_AUTH_PATH=\"auth/jwt\"");
+    println!("  # export VAULT_CLI_NAMESPACE=\"my-namespace\"  # Optional for Vault Enterprise");
     println!();
     println!("  Vault secret must contain these exact key names:");
     println!("  {{");
-    println!("    \"VERACODE_API_ID\": \"your-veracode-api-id\",");
-    println!("    \"VERACODE_API_KEY\": \"your-veracode-api-key\"");
+    println!("    \"api_id\": \"your-veracode-api-id\",");
+    println!("    \"api_secret\": \"your-veracode-api-secret\"");
     println!("  }}");
 }
 
