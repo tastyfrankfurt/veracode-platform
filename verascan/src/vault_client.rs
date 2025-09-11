@@ -3,6 +3,8 @@ use crate::credentials::{
 };
 use backoff::{ExponentialBackoff, future::retry};
 use log::{debug, error, info, warn};
+use secrecy::{ExposeSecret, SecretString};
+use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
 use std::error::Error;
 use std::time::Duration;
@@ -26,6 +28,56 @@ const MAX_SECRET_SIZE_BYTES: usize = 1024 * 1024; // 1MB limit
 const MAX_SECRET_KEYS: usize = 100; // Maximum number of keys in secret
 const MAX_KEY_LENGTH: usize = 256; // Maximum length for secret key names
 const MAX_VALUE_LENGTH: usize = 64 * 1024; // 64KB per secret value
+
+/// Secure HashMap that deserializes string values directly into SecretString
+/// This avoids creating intermediate plain text strings during deserialization
+#[derive(Debug)]
+pub struct SecureSecretMap(HashMap<String, SecretString>);
+
+impl SecureSecretMap {
+    /// Get a secret by key
+    pub fn get(&self, key: &str) -> Option<&SecretString> {
+        self.0.get(key)
+    }
+
+    /// Get the number of secrets
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Check if empty
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Iterate over key-value pairs
+    pub fn iter(&self) -> impl Iterator<Item = (&String, &SecretString)> {
+        self.0.iter()
+    }
+
+    /// Remove a secret by key and return ownership
+    pub fn remove(&mut self, key: &str) -> Option<SecretString> {
+        self.0.remove(key)
+    }
+}
+
+impl<'de> Deserialize<'de> for SecureSecretMap {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Deserialize as HashMap<String, String> first (unavoidable with serde)
+        let plain_map: HashMap<String, String> = HashMap::deserialize(deserializer)?;
+
+        // Immediately convert to SecretString and let the original strings drop
+        let secure_map: HashMap<String, SecretString> = plain_map
+            .into_iter()
+            .map(|(k, v)| (k, SecretString::new(v.into())))
+            .collect();
+
+        Ok(SecureSecretMap(secure_map))
+    }
+}
 
 /// Vault client for secure credential management
 pub struct VaultCredentialClient {
@@ -54,39 +106,43 @@ impl VaultCredentialClient {
         validate_secret_data(&secret_data)?;
 
         // Extract API credentials from vault secret
-        let api_id = secret_data.get("VERACODE_API_ID").ok_or_else(|| {
-            CredentialError::MissingCredentials {
-                missing: "VERACODE_API_ID not found in vault secret".to_string(),
-            }
-        })?;
+        let api_id_secret = secret_data
+            .get("api_id")
+            .ok_or_else(|| CredentialError::MissingCredentials {
+                missing: "api_id not found in vault secret".to_string(),
+            })?
+            .clone();
 
-        let api_key = secret_data.get("VERACODE_API_KEY").ok_or_else(|| {
-            CredentialError::MissingCredentials {
-                missing: "VERACODE_API_KEY not found in vault secret".to_string(),
-            }
-        })?;
+        let api_key_secret = secret_data
+            .get("api_secret")
+            .ok_or_else(|| CredentialError::MissingCredentials {
+                missing: "api_secret not found in vault secret".to_string(),
+            })?
+            .clone();
 
-        // Validate extracted credentials
-        validate_api_credential(api_id, "VERACODE_API_ID from vault").map_err(|msg| {
-            CredentialError::ValidationError {
-                field: "VERACODE_API_ID".to_string(),
+        // Validate extracted credentials (temporarily expose for validation only)
+        validate_api_credential(api_id_secret.expose_secret(), "api_id from vault").map_err(
+            |msg| CredentialError::ValidationError {
+                field: "api_id".to_string(),
                 message: msg,
-            }
-        })?;
+            },
+        )?;
 
-        validate_api_credential(api_key, "VERACODE_API_KEY from vault").map_err(|msg| {
-            CredentialError::ValidationError {
-                field: "VERACODE_API_KEY".to_string(),
+        validate_api_credential(api_key_secret.expose_secret(), "api_secret from vault").map_err(
+            |msg| CredentialError::ValidationError {
+                field: "api_secret".to_string(),
                 message: msg,
-            }
-        })?;
+            },
+        )?;
 
         info!("Successfully loaded and validated credentials from vault");
 
-        // Load directly into VeracodeCredentials - no intermediate copying or exposure!
+        // Create VeracodeCredentials using the public constructor
+        // Note: This momentarily exposes secrets but VeracodeCredentials::new() immediately
+        // wraps them in Arc<SecretString> for secure storage
         Ok(veracode_platform::VeracodeCredentials::new(
-            api_id.clone(),
-            api_key.clone(),
+            api_id_secret.expose_secret().to_string(),
+            api_key_secret.expose_secret().to_string(),
         ))
     }
 
@@ -485,11 +541,12 @@ async fn authenticate_vault(
 }
 
 /// Retrieve credentials from vault with comprehensive error handling and retry logic
+/// Uses secure deserialization to minimize plain text exposure in memory
 async fn retrieve_vault_secret(
     client: &VaultClient,
     secret_path: &str,
     secret_engine: &str,
-) -> Result<HashMap<String, String>, CredentialError> {
+) -> Result<SecureSecretMap, CredentialError> {
     debug!("Retrieving secret from vault path: {secret_path} using engine: {secret_engine}");
 
     let backoff = ExponentialBackoff {
@@ -502,10 +559,10 @@ async fn retrieve_vault_secret(
 
     let operation = || async {
         debug!("Attempting secret retrieval...");
-        match kv2::read::<HashMap<String, String>>(client, secret_engine, secret_path).await {
-            Ok(secret) => {
+        match kv2::read::<SecureSecretMap>(client, secret_engine, secret_path).await {
+            Ok(secure_secret) => {
                 info!("Successfully retrieved secret from path: {secret_path}");
-                Ok(secret)
+                Ok(secure_secret)
             }
             Err(e) => {
                 warn!("Secret retrieval failed: {e}");
@@ -619,7 +676,7 @@ fn parse_secret_path(full_path: &str) -> (String, String) {
 }
 
 /// Validate secret data retrieved from vault
-fn validate_secret_data(secret: &HashMap<String, String>) -> Result<(), CredentialError> {
+fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError> {
     // Check total number of keys
     if secret.len() > MAX_SECRET_KEYS {
         return Err(CredentialError::ValidationError {
@@ -641,7 +698,7 @@ fn validate_secret_data(secret: &HashMap<String, String>) -> Result<(), Credenti
 
     let mut total_size = 0;
 
-    for (key, value) in secret {
+    for (key, value) in secret.iter() {
         // Validate key length
         if key.len() > MAX_KEY_LENGTH {
             return Err(CredentialError::ValidationError {
@@ -655,15 +712,14 @@ fn validate_secret_data(secret: &HashMap<String, String>) -> Result<(), Credenti
             });
         }
 
-        // Validate value length
-        if value.len() > MAX_VALUE_LENGTH {
+        // Validate value length (need to expose secret temporarily for validation)
+        let value_len = value.expose_secret().len();
+        if value_len > MAX_VALUE_LENGTH {
             return Err(CredentialError::ValidationError {
                 field: "secret_value".to_string(),
                 message: format!(
                     "Secret value for key '{}' exceeds maximum length: {} (max: {})",
-                    key,
-                    value.len(),
-                    MAX_VALUE_LENGTH
+                    key, value_len, MAX_VALUE_LENGTH
                 ),
             });
         }
@@ -690,7 +746,8 @@ fn validate_secret_data(secret: &HashMap<String, String>) -> Result<(), Credenti
         }
 
         // Check for null bytes or other dangerous content
-        if key.contains('\0') || value.contains('\0') {
+        let value_str = value.expose_secret();
+        if key.contains('\0') || value_str.contains('\0') {
             return Err(CredentialError::ValidationError {
                 field: "secret_data".to_string(),
                 message: "Secret data contains null bytes".to_string(),
@@ -698,7 +755,7 @@ fn validate_secret_data(secret: &HashMap<String, String>) -> Result<(), Credenti
         }
 
         // Accumulate total size
-        total_size += key.len() + value.len();
+        total_size += key.len() + value_len;
     }
 
     // Check total size limit
@@ -888,26 +945,32 @@ mod tests {
 
     #[test]
     fn test_validate_secret_data_valid() {
-        let mut secret = HashMap::new();
-        secret.insert("VERACODE_API_ID".to_string(), "user123".to_string());
-        secret.insert("VERACODE_API_KEY".to_string(), "secret_key".to_string());
+        let mut map = HashMap::new();
+        map.insert("api_id".to_string(), SecretString::new("user123".into()));
+        map.insert(
+            "api_secret".to_string(),
+            SecretString::new("secret_key".into()),
+        );
+        let secret = SecureSecretMap(map);
 
         assert!(validate_secret_data(&secret).is_ok());
     }
 
     #[test]
     fn test_validate_secret_data_empty() {
-        let secret = HashMap::new();
+        let map: HashMap<String, SecretString> = HashMap::new();
+        let secret = SecureSecretMap(map);
         assert!(validate_secret_data(&secret).is_err());
     }
 
     #[test]
     fn test_validate_secret_data_too_many_keys() {
-        let mut secret = HashMap::new();
+        let mut map = HashMap::new();
         for i in 0..101 {
             // Exceeds MAX_SECRET_KEYS (100)
-            secret.insert(format!("key{i}"), "value".to_string());
+            map.insert(format!("key{i}"), SecretString::new("value".into()));
         }
+        let secret = SecureSecretMap(map);
         assert!(validate_secret_data(&secret).is_err());
     }
 

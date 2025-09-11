@@ -54,8 +54,8 @@ The secret at `VAULT_CLI_SECRET_PATH` must contain the following keys:
 
 ```json
 {
-  "VERACODE_API_ID": "your-veracode-api-id",
-  "VERACODE_API_KEY": "your-veracode-api-key"
+  "api_id": "your-veracode-api-id",
+  "api_secret": "your-veracode-api-key"
 }
 ```
 
@@ -225,7 +225,7 @@ Log levels:
 
 1. Store existing credentials in Vault:
    ```bash
-   vault kv put secret/veracode/api VERACODE_API_ID="your-id" VERACODE_API_KEY="your-key"
+   vault kv put secret/veracode/api api_id="your-id" api_secret="your-key"
    ```
 
 2. Set Vault configuration:
@@ -269,7 +269,7 @@ For gradual deployment, keep both Vault and environment variables configured. Ve
 4. **"Failed to retrieve secret"**
    - Verify secret path exists in Vault
    - Check role has read permissions for the secret path
-   - Ensure secret contains VERACODE_API_ID and VERACODE_API_KEY keys
+   - Ensure secret contains api_id and api_secret keys
 
 ### Debug Commands
 
