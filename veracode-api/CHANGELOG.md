@@ -5,6 +5,28 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2025-09-19
+
+### Fixed
+- **Policy API Resilience**: Enhanced error handling for server failures in policy compliance checks
+  - **Server Error Retry**: Added 3 retries with 5-second delays for HTTP 500 errors in `get_summary_report_with_policy_retry()`
+  - **Enhanced Fallback Logic**: Extended automatic fallback to XML API (`getbuildinfo.do`) to include server errors (500), not just auth errors (401/403)
+  - **Robust Error Handling**: Policy compliance checks now gracefully handle temporary Veracode API outages
+  - **Assessment Scan Stability**: Prevents assessment scans from failing with exit code 1 due to transient server errors
+
+### Enhanced
+- **API Error Classification**: Improved distinction between permanent and temporary failures
+  - Server errors (500) now trigger retry and fallback mechanisms
+  - Authentication errors (401/403) immediately fallback to legacy XML API
+  - Other errors fail immediately to avoid unnecessary delays
+
+### Technical Details
+- **Modified Methods**:
+  - `PolicyApi::get_policy_status_with_fallback()` - Added `PolicyError::InternalServerError` to fallback conditions
+  - `PolicyApi::get_summary_report_with_policy_retry()` - Added retry logic for server errors before API fallback
+- **Error Flow**: Summary Report API (500) → 3 retries (5s each) → Fallback to XML API → Success
+- **Backward Compatible**: No breaking changes to existing API surface
+
 ## [0.5.3] - 2025-09-11
 
 ### Added
