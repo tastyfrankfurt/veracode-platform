@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.4] - 2025-09-19
+
+### Fixed
+- **Assessment Scan API Resilience**: Enhanced error handling for policy compliance checks
+  - **Retry Logic**: Added 3 retries with 5-second delays for summary report API server errors (HTTP 500)
+  - **Automatic Fallback**: Enhanced fallback to legacy XML API (`getbuildinfo.do`) for server errors, not just auth errors
+  - **Prevents Exit Code 1**: Assessment scans no longer fail with exit code 1 due to temporary Veracode API server issues
+  - **Improved Logging**: Better error messages distinguishing between server errors and access denied scenarios
+
+### Enhanced
+- **Policy API Error Handling**: More robust handling of transient API failures
+  - Summary report API failures now gracefully degrade to XML API instead of failing the entire scan
+  - Better resilience against temporary Veracode platform outages
+
 ## [0.5.3] - 2025-09-10
 
 ### Added
