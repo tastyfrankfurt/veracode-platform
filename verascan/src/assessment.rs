@@ -1,6 +1,5 @@
 use log::{debug, error, info};
 use std::borrow::Cow;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -1053,8 +1052,6 @@ impl AssessmentSubmitter {
                         "⏳ Prescan status: {}, waiting {} seconds...",
                         prescan_results.status, poll_interval
                     );
-                    print!(".");
-                    std::io::stdout().flush().unwrap();
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
                 }
@@ -1126,8 +1123,6 @@ impl AssessmentSubmitter {
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1148,8 +1143,6 @@ impl AssessmentSubmitter {
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1333,8 +1326,6 @@ impl AssessmentSubmitter {
                             {
                                 info!("⏳ Scan in progress, waiting {poll_interval} seconds...");
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1357,8 +1348,6 @@ impl AssessmentSubmitter {
                                     build_info.status, poll_interval
                                 );
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))

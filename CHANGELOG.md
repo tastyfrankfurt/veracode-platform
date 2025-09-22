@@ -5,9 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.4] - 2025-09-19
+## [0.5.4] - 2025-09-22
 
 ### Fixed
+- **Scan Monitoring Logging**: Removed problematic dot printing during runtime scan monitoring
+  - **Assessment Scans**: Removed dots from main scan monitoring, prescan monitoring, and build phase monitoring
+  - **Pipeline Scans**: Removed dots from pipeline scan progress monitoring
+  - **Clean Output**: Scan progress monitoring now uses proper info logging without interfering dot output
+  - **Visual Fix**: Resolves issue where dots appeared on incorrect output lines during scan monitoring
 - **Strict Sandbox Exit Code**: Fixed `--strict-sandbox` flag to correctly exit with code 4 for sandbox "Conditional Pass" status
   - **Correct Exit Code**: Sandbox scans with `--strict-sandbox` and "Conditional Pass" status now properly exit with code 4 instead of 0
   - **Maintains Report Generation**: Assessment reports are still generated and exported before exit code evaluation
