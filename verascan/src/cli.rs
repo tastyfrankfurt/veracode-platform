@@ -7,7 +7,7 @@ use serde_json;
 #[command(
     about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
 )]
-#[command(version = "0.5.3")]
+#[command(version = "0.5.4")]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,

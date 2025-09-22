@@ -1582,10 +1582,24 @@ impl AssessmentSubmitter {
                         if should_break_build {
                             use veracode_platform::policy::PolicyApi;
                             if !compliance_status.is_empty() {
-                                let exit_code =
-                                    PolicyApi::get_exit_code_for_status(&compliance_status);
+                                // Check for strict sandbox mode: use exit code 4 for Conditional Pass in sandbox scans
+                                let strict_sandbox_break = self.config.strict_sandbox
+                                    && matches!(self.config.scan_type, ScanType::Sandbox)
+                                    && compliance_status == "Conditional Pass";
+
+                                let exit_code = if strict_sandbox_break {
+                                    4 // Force exit code 4 for strict sandbox mode with Conditional Pass
+                                } else {
+                                    PolicyApi::get_exit_code_for_status(&compliance_status)
+                                };
+
                                 info!("\n❌ Platform policy compliance FAILED - breaking build");
                                 info!("   Status: {compliance_status}");
+                                if strict_sandbox_break {
+                                    info!(
+                                        "   Reason: Strict sandbox mode - treating 'Conditional Pass' as failure"
+                                    );
+                                }
                                 info!("   Exit code: {exit_code}");
                                 std::process::exit(exit_code);
                             }

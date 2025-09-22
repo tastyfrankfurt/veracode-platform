@@ -8,6 +8,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.4] - 2025-09-19
 
 ### Fixed
+- **Strict Sandbox Exit Code**: Fixed `--strict-sandbox` flag to correctly exit with code 4 for sandbox "Conditional Pass" status
+  - **Correct Exit Code**: Sandbox scans with `--strict-sandbox` and "Conditional Pass" status now properly exit with code 4 instead of 0
+  - **Maintains Report Generation**: Assessment reports are still generated and exported before exit code evaluation
+  - **Enhanced Logging**: Clear indication when strict sandbox mode causes build failure
+  - **Standard Compliance**: Aligns with documented behavior in CLI help text
 - **Assessment Scan API Resilience**: Enhanced error handling for policy compliance checks
   - **Retry Logic**: Added 3 retries with 5-second delays for summary report API server errors (HTTP 500)
   - **Automatic Fallback**: Enhanced fallback to legacy XML API (`getbuildinfo.do`) for server errors, not just auth errors
