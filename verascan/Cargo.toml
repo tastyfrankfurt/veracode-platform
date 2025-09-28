@@ -9,11 +9,10 @@ repository = "https://github.com/tastyfrankfurt/veracode-platform"
 license = "MIT OR Apache-2.0"
 keywords = ["veracode", "security", "platform", "static-analysis", "vulnerability"]
 categories = ["scanning", "web-programming::http-client", "development-tools"]
-readme = "README.md"
 
 [dependencies]
 # Veracode Platform client library
-veracode-platform = { path = "../veracode-api" }
+veracode-platform = { path = "../veracode-api", version = "0.5.5" }
 
 # CLI and utilities
 clap = { workspace = true, features = ["derive"] }

@@ -18,7 +18,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Local dependency
-veracode-platform = { path = "../veracode-api" }
+veracode-platform = { path = "../veracode-api", version = "0.5.5" }
 
 # Additional dependencies for CLI functionality
 env_logger = "0.11"
