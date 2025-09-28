@@ -5,6 +5,44 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.5] - 2025-09-22
+
+### Added
+- **Customer Managed Encryption Key (CMEK) Support**: Complete API support for managing application encryption
+  - **New Application Profile Fields**: Added `custom_kms_alias` field to `Profile`, `CreateApplicationProfile`, and `UpdateApplicationProfile` structs
+  - **CMEK Management Methods**:
+    - `enable_application_encryption(app_guid, kms_alias)` - Enable CMEK on an application
+    - `change_encryption_key(app_guid, new_kms_alias)` - Update encryption key for encrypted applications
+    - `get_application_encryption_status(app_guid)` - Check current encryption status
+  - **KMS Alias Validation**: Added `validate_kms_alias()` function with comprehensive validation rules
+    - Validates AWS KMS alias format (must start with "alias/")
+    - Enforces length requirements (8-256 characters)
+    - Prevents AWS reserved naming patterns
+    - Validates character set (alphanumeric, hyphens, underscores, forward slashes)
+  - **Backward Compatibility**: Optional CMEK fields with `skip_serializing_if = "Option::is_none"`
+  - **Comprehensive Testing**: Full test coverage for CMEK functionality including serialization, validation, and edge cases
+
+### Fixed
+- **Assessment Scan Output**: Removed problematic dot printing during scan monitoring
+  - **Clean Console Output**: Removed `print!(".")` statements from assessment and pipeline scan monitoring functions
+  - **Fixed Visual Issues**: Eliminated dots appearing on incorrect lines during runtime
+  - **Preserved Logging**: Maintained proper info logging with emojis and status messages
+  - **Affected Functions**: `wait_for_scan_completion`, `monitor_build_phase`, and `wait_for_prescan`
+  - **Better UX**: Ensures clean console output during scan progress monitoring
+
+- **Strict Sandbox Exit Codes**: Corrected exit code behavior for Conditional Pass status
+  - **Exit Code Fix**: Fixed `--strict-sandbox` flag to exit with code 4 instead of 0 for "Conditional Pass"
+  - **Special Logic**: Added dedicated exit code logic for strict_sandbox_break condition
+  - **Report Generation**: Maintains report generation before exit code evaluation
+  - **Informative Logging**: Added logging when strict sandbox mode triggers failure
+  - **Policy Resolution**: Fixed `PolicyApi::get_exit_code_for_status("Conditional Pass")` returning incorrect code
+
+### Technical Details
+- **Modified Files**: `verascan/src/assessment.rs`, `verascan/src/pipeline.rs`, `verascan/src/cli.rs`
+- **Exit Code Logic**: Strict sandbox mode now properly returns exit code 4 for Conditional Pass as documented
+- **Console Output**: Eliminated visual artifacts from progress monitoring functions
+- **Backward Compatible**: No breaking changes to existing API surface
+
 ## [0.5.4] - 2025-09-19
 
 ### Fixed

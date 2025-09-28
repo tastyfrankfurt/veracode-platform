@@ -1,9 +1,43 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to the Veracode Workspace will be documented in this file.
+
+This workspace contains three synchronized projects:
+- **veracode-api**: Core Veracode platform API library
+- **verascan**: CLI security scanning application
+- **veracmek**: CLI Customer Managed Encryption Key (CMEK) management tool
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+For detailed component-specific changes, see:
+- [veracode-api/CHANGELOG.md](veracode-api/CHANGELOG.md) - API library changes
+- [verascan/CHANGELOG.md](verascan/CHANGELOG.md) - Scanning CLI changes
+- [veracmek/CHANGELOG.md](veracmek/CHANGELOG.md) - CMEK CLI changes
+
+## [0.5.5] - 2025-09-26
+
+### Added
+- **🔐 Veracmek CLI Tool**: New Customer Managed Encryption Key (CMEK) management application
+  - Complete CLI for managing application encryption with AWS KMS keys
+  - Support for individual, bulk, and file-based CMEK operations
+  - HashiCorp Vault integration for secure credential management
+  - Comprehensive status reporting across application portfolios
+
+### Enhanced
+- **📚 Workspace Documentation**: Updated README and changelog structure for multi-project workspace
+  - Unified workspace overview with individual project documentation
+  - Synchronized versioning across all components (veracode-api, verascan, veracmek)
+  - Centralized changelog with links to component-specific changes
+
+### Fixed
+- **🛡️ Assessment Scan Output** (verascan): Removed problematic dot printing during scan monitoring
+- **🚨 Strict Sandbox Exit Codes** (verascan): Corrected exit code behavior for Conditional Pass status
+
+### Technical Details
+- **🔗 CMEK API Support** (veracode-api): Added comprehensive Customer Managed Encryption Key functionality
+- **🏗️ Synchronized Versioning**: All workspace components now use unified version 0.5.5
+- **📋 Documentation Structure**: Implemented workspace-level documentation with component-specific details
 
 ## [0.5.4] - 2025-09-22
 

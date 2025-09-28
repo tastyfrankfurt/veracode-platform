@@ -69,6 +69,9 @@ pub struct Profile {
     pub business_criticality: BusinessCriticality,
     /// Application Profile Settings
     pub settings: Option<Settings>,
+    /// Customer Managed Encryption Key (CMEK) alias for encrypting application data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_kms_alias: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -245,6 +248,9 @@ pub struct CreateApplicationProfile {
     /// Custom fields
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_fields: Option<Vec<CustomField>>,
+    /// Customer Managed Encryption Key (CMEK) alias for encrypting application data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_kms_alias: Option<String>,
 }
 
 /// Business criticality levels for applications
@@ -352,6 +358,9 @@ pub struct UpdateApplicationProfile {
     pub tags: Option<String>,
     /// Custom fields
     pub custom_fields: Option<Vec<CustomField>>,
+    /// Customer Managed Encryption Key (CMEK) alias for encrypting application data
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub custom_kms_alias: Option<String>,
 }
 
 /// Query parameters for filtering applications.
@@ -864,6 +873,7 @@ impl VeracodeClient {
                 teams,
                 tags: None,
                 custom_fields: None,
+                custom_kms_alias: None,
             },
         };
 
@@ -923,6 +933,7 @@ impl VeracodeClient {
                 teams,
                 tags: None,
                 custom_fields: None,
+                custom_kms_alias: None,
             },
         };
 
@@ -952,6 +963,196 @@ impl VeracodeClient {
         self.create_application_if_not_exists(name, business_criticality, description, None)
             .await
     }
+
+    /// Enable Customer Managed Encryption Key (CMEK) on an application
+    ///
+    /// This method updates an existing application to use a customer-managed encryption key.
+    /// The KMS alias must be properly formatted and the key must be accessible to Veracode.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - The GUID of the application to enable encryption on
+    /// * `kms_alias` - The AWS KMS alias to use for encryption (must start with "alias/")
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the updated application or an error.
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use veracode_platform::{VeracodeClient, VeracodeConfig};
+    /// # use std::sync::Arc;
+    /// # use secrecy::SecretString;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// let config = VeracodeConfig::from_arc_credentials(
+    ///     Arc::new(SecretString::from("api_id")),
+    ///     Arc::new(SecretString::from("api_key"))
+    /// );
+    /// let client = VeracodeClient::new(config)?;
+    ///
+    /// let app = client.enable_application_encryption(
+    ///     "app-guid-123",
+    ///     "alias/my-encryption-key"
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub async fn enable_application_encryption(
+        &self,
+        app_guid: &str,
+        kms_alias: &str,
+    ) -> Result<Application, VeracodeError> {
+        // Validate KMS alias format
+        validate_kms_alias(kms_alias).map_err(VeracodeError::InvalidConfig)?;
+
+        // Get current application to preserve existing settings
+        let current_app = self.get_application(app_guid).await?;
+
+        let profile = current_app
+            .profile
+            .ok_or_else(|| VeracodeError::NotFound("Application profile not found".to_string()))?;
+
+        // Create update request with CMEK enabled
+        let update_request = UpdateApplicationRequest {
+            profile: UpdateApplicationProfile {
+                name: Some(profile.name),
+                description: profile.description,
+                business_unit: profile.business_unit,
+                business_owners: profile.business_owners,
+                business_criticality: profile.business_criticality,
+                policies: profile.policies,
+                teams: profile.teams,
+                tags: profile.tags,
+                custom_fields: profile.custom_fields,
+                custom_kms_alias: Some(kms_alias.to_string()),
+            },
+        };
+
+        self.update_application(app_guid, &update_request).await
+    }
+
+    /// Change the encryption key for an application with CMEK enabled
+    ///
+    /// This method updates the KMS alias used for encrypting an application's data.
+    /// The application must already have CMEK enabled.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - The GUID of the application to update
+    /// * `new_kms_alias` - The new AWS KMS alias to use for encryption
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the updated application or an error.
+    pub async fn change_encryption_key(
+        &self,
+        app_guid: &str,
+        new_kms_alias: &str,
+    ) -> Result<Application, VeracodeError> {
+        // Validate new KMS alias format
+        validate_kms_alias(new_kms_alias).map_err(VeracodeError::InvalidConfig)?;
+
+        // Get current application
+        let current_app = self.get_application(app_guid).await?;
+
+        let profile = current_app
+            .profile
+            .ok_or_else(|| VeracodeError::NotFound("Application profile not found".to_string()))?;
+
+        // Create update request with new KMS alias
+        let update_request = UpdateApplicationRequest {
+            profile: UpdateApplicationProfile {
+                name: Some(profile.name),
+                description: profile.description,
+                business_unit: profile.business_unit,
+                business_owners: profile.business_owners,
+                business_criticality: profile.business_criticality,
+                policies: profile.policies,
+                teams: profile.teams,
+                tags: profile.tags,
+                custom_fields: profile.custom_fields,
+                custom_kms_alias: Some(new_kms_alias.to_string()),
+            },
+        };
+
+        self.update_application(app_guid, &update_request).await
+    }
+
+    /// Get the encryption status of an application
+    ///
+    /// This method retrieves the current CMEK configuration for an application.
+    ///
+    /// # Arguments
+    ///
+    /// * `app_guid` - The GUID of the application to check
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the KMS alias if CMEK is enabled, None if disabled, or an error.
+    pub async fn get_application_encryption_status(
+        &self,
+        app_guid: &str,
+    ) -> Result<Option<String>, VeracodeError> {
+        let app = self.get_application(app_guid).await?;
+
+        // CMEK is stored directly in the profile as custom_kms_alias, not in custom_fields
+        Ok(app.profile.and_then(|profile| profile.custom_kms_alias))
+    }
+}
+
+/// Validates an AWS KMS alias format
+///
+/// AWS KMS aliases must follow specific naming conventions:
+/// - Must be prefixed with "alias/"
+/// - Total length must be between 8-256 characters
+/// - Can contain alphanumeric characters, hyphens, underscores, and forward slashes
+/// - Cannot begin or end with "aws" (reserved by AWS)
+///
+/// # Examples
+///
+/// ```
+/// use veracode_platform::app::validate_kms_alias;
+///
+/// assert!(validate_kms_alias("alias/my-app-key").is_ok());
+/// assert!(validate_kms_alias("alias/my_app_key_2024").is_ok());
+/// assert!(validate_kms_alias("invalid-alias").is_err());
+/// assert!(validate_kms_alias("alias/aws-managed").is_err());
+/// ```
+pub fn validate_kms_alias(alias: &str) -> Result<(), String> {
+    // Check prefix
+    if !alias.starts_with("alias/") {
+        return Err("KMS alias must start with 'alias/'".to_string());
+    }
+
+    // Check length (including the "alias/" prefix) - minimum 8 characters for meaningful alias
+    if alias.len() < 8 || alias.len() > 256 {
+        return Err("KMS alias must be between 8 and 256 characters long".to_string());
+    }
+
+    // Extract the alias name part (after "alias/")
+    let alias_name = &alias[6..];
+
+    // Check for AWS reserved prefixes
+    if alias_name.starts_with("aws") || alias_name.ends_with("aws") {
+        return Err("KMS alias cannot begin or end with 'aws' (reserved by AWS)".to_string());
+    }
+
+    // Check valid characters: alphanumeric, hyphens, underscores, forward slashes
+    if !alias_name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/')
+    {
+        return Err("KMS alias can only contain alphanumeric characters, hyphens, underscores, and forward slashes".to_string());
+    }
+
+    // Check that it's not empty after prefix
+    if alias_name.is_empty() {
+        return Err("KMS alias name cannot be empty after 'alias/' prefix".to_string());
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1016,6 +1217,7 @@ mod tests {
                 teams: Some(teams.clone()),
                 tags: None,
                 custom_fields: None,
+                custom_kms_alias: None,
             },
         };
 
@@ -1062,6 +1264,7 @@ mod tests {
                 teams: Some(teams.clone()),
                 tags: None,
                 custom_fields: None,
+                custom_kms_alias: None,
             },
         };
 
@@ -1078,5 +1281,183 @@ mod tests {
         assert_eq!(request_teams[1].guid, Some("team-guid-2".to_string()));
         assert!(request_teams[0].team_name.is_none());
         assert!(request_teams[1].team_name.is_none());
+    }
+
+    #[test]
+    fn test_create_application_profile_cmek_serialization() {
+        // Test that custom_kms_alias is included when Some
+        let profile_with_cmek = CreateApplicationProfile {
+            name: "Test Application".to_string(),
+            business_criticality: BusinessCriticality::High,
+            description: None,
+            business_unit: None,
+            business_owners: None,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: Some("alias/my-app-key".to_string()),
+        };
+
+        let json = serde_json::to_string(&profile_with_cmek).unwrap();
+        assert!(json.contains("custom_kms_alias"));
+        assert!(json.contains("alias/my-app-key"));
+
+        // Test that custom_kms_alias is excluded when None
+        let profile_without_cmek = CreateApplicationProfile {
+            name: "Test Application".to_string(),
+            business_criticality: BusinessCriticality::High,
+            description: None,
+            business_unit: None,
+            business_owners: None,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: None,
+        };
+
+        let json = serde_json::to_string(&profile_without_cmek).unwrap();
+        assert!(!json.contains("custom_kms_alias"));
+    }
+
+    #[test]
+    fn test_update_application_profile_cmek_serialization() {
+        // Test that custom_kms_alias is included when Some
+        let profile_with_cmek = UpdateApplicationProfile {
+            name: Some("Updated Application".to_string()),
+            description: None,
+            business_unit: None,
+            business_owners: None,
+            business_criticality: BusinessCriticality::Medium,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: Some("alias/updated-key".to_string()),
+        };
+
+        let json = serde_json::to_string(&profile_with_cmek).unwrap();
+        assert!(json.contains("custom_kms_alias"));
+        assert!(json.contains("alias/updated-key"));
+
+        // Test that custom_kms_alias is excluded when None
+        let profile_without_cmek = UpdateApplicationProfile {
+            name: Some("Updated Application".to_string()),
+            description: None,
+            business_unit: None,
+            business_owners: None,
+            business_criticality: BusinessCriticality::Medium,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: None,
+        };
+
+        let json = serde_json::to_string(&profile_without_cmek).unwrap();
+        assert!(!json.contains("custom_kms_alias"));
+    }
+
+    #[test]
+    fn test_validate_kms_alias_valid_cases() {
+        // Valid aliases
+        assert!(validate_kms_alias("alias/my-app-key").is_ok());
+        assert!(validate_kms_alias("alias/my_app_key_2024").is_ok());
+        assert!(validate_kms_alias("alias/app/environment/key").is_ok());
+        assert!(validate_kms_alias("alias/123-test-key").is_ok());
+    }
+
+    #[test]
+    fn test_validate_kms_alias_invalid_cases() {
+        // Missing prefix
+        assert!(validate_kms_alias("my-app-key").is_err());
+        assert!(validate_kms_alias("invalid-alias").is_err());
+
+        // Wrong prefix
+        assert!(validate_kms_alias("arn:aws:kms:us-east-1:123456789:alias/my-key").is_err());
+
+        // AWS reserved names
+        assert!(validate_kms_alias("alias/aws-managed").is_err());
+        assert!(validate_kms_alias("alias/my-key-aws").is_err());
+
+        // Empty alias name
+        assert!(validate_kms_alias("alias/").is_err());
+
+        // Too short
+        assert!(validate_kms_alias("alias/a").is_err());
+
+        // Invalid characters
+        assert!(validate_kms_alias("alias/my@key").is_err());
+        assert!(validate_kms_alias("alias/my key").is_err());
+        assert!(validate_kms_alias("alias/my.key").is_err());
+
+        // Too long (over 256 characters)
+        let long_alias = format!("alias/{}", "a".repeat(251));
+        assert!(validate_kms_alias(&long_alias).is_err());
+    }
+
+    #[test]
+    fn test_cmek_backward_compatibility() {
+        // Test that existing application creation still works without CMEK field
+        let legacy_profile = CreateApplicationProfile {
+            name: "Legacy Application".to_string(),
+            business_criticality: BusinessCriticality::High,
+            description: Some("Legacy app without CMEK".to_string()),
+            business_unit: None,
+            business_owners: None,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: None,
+        };
+
+        let request = CreateApplicationRequest {
+            profile: legacy_profile,
+        };
+
+        // Should serialize successfully
+        let json = serde_json::to_string(&request).unwrap();
+
+        // Should not contain CMEK field
+        assert!(!json.contains("custom_kms_alias"));
+
+        // Should still contain required fields
+        assert!(json.contains("name"));
+        assert!(json.contains("business_criticality"));
+        assert!(json.contains("Legacy Application"));
+
+        // Should be able to deserialize back
+        let _deserialized: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+    }
+
+    #[test]
+    fn test_cmek_field_deserialization() {
+        // Test deserializing JSON with CMEK field
+        let json_with_cmek = r#"{
+            "profile": {
+                "name": "Test App",
+                "business_criticality": "HIGH",
+                "custom_kms_alias": "alias/test-key"
+            }
+        }"#;
+
+        let request: CreateApplicationRequest = serde_json::from_str(json_with_cmek).unwrap();
+        assert_eq!(
+            request.profile.custom_kms_alias,
+            Some("alias/test-key".to_string())
+        );
+
+        // Test deserializing JSON without CMEK field (backward compatibility)
+        let json_without_cmek = r#"{
+            "profile": {
+                "name": "Test App",
+                "business_criticality": "HIGH"
+            }
+        }"#;
+
+        let request: CreateApplicationRequest = serde_json::from_str(json_without_cmek).unwrap();
+        assert_eq!(request.profile.custom_kms_alias, None);
     }
 }
