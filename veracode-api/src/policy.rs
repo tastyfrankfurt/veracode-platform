@@ -975,9 +975,22 @@ impl<'a> PolicyApi<'a> {
                 debug!("Getting summary report...");
             }
 
-            let summary_report = self
+            let summary_report = match self
                 .get_summary_report(app_guid, build_id, sandbox_guid)
-                .await?;
+                .await
+            {
+                Ok(report) => report,
+                Err(PolicyError::InternalServerError) if attempts < 3 => {
+                    warn!(
+                        "Summary report API failed with server error (attempt {}/3), retrying in 5 seconds...",
+                        attempts + 1
+                    );
+                    sleep(Duration::from_secs(5)).await;
+                    attempts += 1;
+                    continue;
+                }
+                Err(e) => return Err(e),
+            };
 
             // If break_build is not enabled, return immediately with the report
             if !enable_break_build {
@@ -1259,8 +1272,17 @@ impl<'a> PolicyApi<'a> {
                     .unwrap_or_else(|| summary_report.policy_compliance_status.clone());
                 Ok((Some(summary_report), status, ApiSource::SummaryReport))
             }
-            Err(PolicyError::Unauthorized | PolicyError::PermissionDenied) => {
-                info!("Summary report access denied, falling back to getbuildinfo.do API");
+            Err(
+                ref e @ (PolicyError::Unauthorized
+                | PolicyError::PermissionDenied
+                | PolicyError::InternalServerError),
+            ) => {
+                match e {
+                    PolicyError::InternalServerError => info!(
+                        "Summary report API server error, falling back to getbuildinfo.do API"
+                    ),
+                    _ => info!("Summary report access denied, falling back to getbuildinfo.do API"),
+                }
                 let status = self
                     .evaluate_policy_compliance_via_buildinfo_with_retry(
                         app_id,

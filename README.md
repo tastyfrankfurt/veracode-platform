@@ -22,6 +22,12 @@ export VERACODE_API_KEY="your-api-key"
 
 # Run a basic assessment scan
 ./target/release/verascan assessment --filepath . --app-profile-name "MyApp"
+
+# Enable CMEK encryption on an application
+./target/release/veracmek enable --app "MyApp" --kms-alias "alias/my-encryption-key"
+
+# Check encryption status across all applications
+./target/release/veracmek status
 ```
 
 ## 📁 Project Structure
@@ -35,6 +41,8 @@ veracode-workspace/
 │   ├── src/               # Application source code
 │   ├── examples/          # CLI usage examples
 │   └── gitlab/            # GitLab integration samples
+├── veracmek/              # 🔐 CLI CMEK encryption management tool
+│   └── src/               # Application source code
 └── resources/             # 📦 Test files and samples
 ```
 
@@ -54,7 +62,11 @@ A comprehensive Rust client library for the Veracode security platform APIs:
 
 ### Verascan CLI Application (`verascan`)
 
-A powerful command-line application for security scanning and Veracode integration:
+A powerful command-line application for security scanning and Veracode integration.
+
+### Veracmek CLI Application (`veracmek`)
+
+A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles:
 
 ## ✨ Key Features
 

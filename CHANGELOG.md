@@ -1,9 +1,67 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to the Veracode Workspace will be documented in this file.
+
+This workspace contains three synchronized projects:
+- **veracode-api**: Core Veracode platform API library
+- **verascan**: CLI security scanning application
+- **veracmek**: CLI Customer Managed Encryption Key (CMEK) management tool
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+For detailed component-specific changes, see:
+- [veracode-api/CHANGELOG.md](veracode-api/CHANGELOG.md) - API library changes
+- [verascan/CHANGELOG.md](verascan/CHANGELOG.md) - Scanning CLI changes
+- [veracmek/CHANGELOG.md](veracmek/CHANGELOG.md) - CMEK CLI changes
+
+## [0.5.5] - 2025-10-10
+
+### Added
+- **🔐 Veracmek CLI Tool**: New Customer Managed Encryption Key (CMEK) management application
+  - Complete CLI for managing application encryption with AWS KMS keys
+  - Support for individual, bulk, and file-based CMEK operations
+  - HashiCorp Vault integration for secure credential management
+  - Comprehensive status reporting across application portfolios
+
+### Enhanced
+- **📚 Workspace Documentation**: Updated README and changelog structure for multi-project workspace
+  - Unified workspace overview with individual project documentation
+  - Synchronized versioning across all components (veracode-api, verascan, veracmek)
+  - Centralized changelog with links to component-specific changes
+
+### Fixed
+- **🛡️ Assessment Scan Output** (verascan): Removed problematic dot printing during scan monitoring
+- **🚨 Strict Sandbox Exit Codes** (verascan): Corrected exit code behavior for Conditional Pass status
+
+### Technical Details
+- **🔗 CMEK API Support** (veracode-api): Added comprehensive Customer Managed Encryption Key functionality
+- **🏗️ Synchronized Versioning**: All workspace components now use unified version 0.5.5
+- **📋 Documentation Structure**: Implemented workspace-level documentation with component-specific details
+
+## [0.5.4] - 2025-09-22
+
+### Fixed
+- **Scan Monitoring Logging**: Removed problematic dot printing during runtime scan monitoring
+  - **Assessment Scans**: Removed dots from main scan monitoring, prescan monitoring, and build phase monitoring
+  - **Pipeline Scans**: Removed dots from pipeline scan progress monitoring
+  - **Clean Output**: Scan progress monitoring now uses proper info logging without interfering dot output
+  - **Visual Fix**: Resolves issue where dots appeared on incorrect output lines during scan monitoring
+- **Strict Sandbox Exit Code**: Fixed `--strict-sandbox` flag to correctly exit with code 4 for sandbox "Conditional Pass" status
+  - **Correct Exit Code**: Sandbox scans with `--strict-sandbox` and "Conditional Pass" status now properly exit with code 4 instead of 0
+  - **Maintains Report Generation**: Assessment reports are still generated and exported before exit code evaluation
+  - **Enhanced Logging**: Clear indication when strict sandbox mode causes build failure
+  - **Standard Compliance**: Aligns with documented behavior in CLI help text
+- **Assessment Scan API Resilience**: Enhanced error handling for policy compliance checks
+  - **Retry Logic**: Added 3 retries with 5-second delays for summary report API server errors (HTTP 500)
+  - **Automatic Fallback**: Enhanced fallback to legacy XML API (`getbuildinfo.do`) for server errors, not just auth errors
+  - **Prevents Exit Code 1**: Assessment scans no longer fail with exit code 1 due to temporary Veracode API server issues
+  - **Improved Logging**: Better error messages distinguishing between server errors and access denied scenarios
+
+### Enhanced
+- **Policy API Error Handling**: More robust handling of transient API failures
+  - Summary report API failures now gracefully degrade to XML API instead of failing the entire scan
+  - Better resilience against temporary Veracode platform outages
 
 ## [0.5.3] - 2025-09-10
 

@@ -1,6 +1,6 @@
 [package]
 name = "veracode-platform"
-version = "0.5.3"
+version = "0.5.5"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client library for the Veracode platform (Applications, Identity, Pipeline Scan, Sandbox)"

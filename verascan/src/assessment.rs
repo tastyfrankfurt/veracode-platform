@@ -1,6 +1,5 @@
 use log::{debug, error, info};
 use std::borrow::Cow;
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::task::JoinSet;
@@ -653,7 +652,8 @@ impl AssessmentSubmitter {
                         // Create progress callback for large file uploads
                         let progress_callback =
                             |bytes_sent: u64, total_bytes: u64, progress: f64| {
-                                if progress > 0.0 && (progress * 100.0) as u64 % 25 == 0 {
+                                if progress > 0.0 && ((progress * 100.0) as u64).is_multiple_of(25)
+                                {
                                     info!(
                                         "   📈 {}: {:.0}% ({}/{})",
                                         file_name,
@@ -692,7 +692,7 @@ impl AssessmentSubmitter {
 
                     // Create progress callback for large file uploads
                     let progress_callback = |bytes_sent: u64, total_bytes: u64, progress: f64| {
-                        if progress > 0.0 && (progress * 100.0) as u64 % 25 == 0 {
+                        if progress > 0.0 && ((progress * 100.0) as u64).is_multiple_of(25) {
                             info!(
                                 "   📈 {}: {:.0}% ({}/{})",
                                 file_name,
@@ -1053,8 +1053,6 @@ impl AssessmentSubmitter {
                         "⏳ Prescan status: {}, waiting {} seconds...",
                         prescan_results.status, poll_interval
                     );
-                    print!(".");
-                    std::io::stdout().flush().unwrap();
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
                 }
@@ -1126,8 +1124,6 @@ impl AssessmentSubmitter {
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1148,8 +1144,6 @@ impl AssessmentSubmitter {
                                     "⏳ Scan status: {status}, waiting {poll_interval} seconds..."
                                 );
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1333,8 +1327,6 @@ impl AssessmentSubmitter {
                             {
                                 info!("⏳ Scan in progress, waiting {poll_interval} seconds...");
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1357,8 +1349,6 @@ impl AssessmentSubmitter {
                                     build_info.status, poll_interval
                                 );
                             }
-                            print!(".");
-                            std::io::stdout().flush().unwrap();
                             tokio::time::sleep(tokio::time::Duration::from_secs(
                                 poll_interval.into(),
                             ))
@@ -1582,10 +1572,24 @@ impl AssessmentSubmitter {
                         if should_break_build {
                             use veracode_platform::policy::PolicyApi;
                             if !compliance_status.is_empty() {
-                                let exit_code =
-                                    PolicyApi::get_exit_code_for_status(&compliance_status);
+                                // Check for strict sandbox mode: use exit code 4 for Conditional Pass in sandbox scans
+                                let strict_sandbox_break = self.config.strict_sandbox
+                                    && matches!(self.config.scan_type, ScanType::Sandbox)
+                                    && compliance_status == "Conditional Pass";
+
+                                let exit_code = if strict_sandbox_break {
+                                    4 // Force exit code 4 for strict sandbox mode with Conditional Pass
+                                } else {
+                                    PolicyApi::get_exit_code_for_status(&compliance_status)
+                                };
+
                                 info!("\n❌ Platform policy compliance FAILED - breaking build");
                                 info!("   Status: {compliance_status}");
+                                if strict_sandbox_break {
+                                    info!(
+                                        "   Reason: Strict sandbox mode - treating 'Conditional Pass' as failure"
+                                    );
+                                }
                                 info!("   Exit code: {exit_code}");
                                 std::process::exit(exit_code);
                             }
