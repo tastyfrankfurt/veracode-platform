@@ -36,6 +36,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             policies: None,
             teams: None,
             custom_fields: None,
+            custom_kms_alias: None,
             tags: None,
         },
     };

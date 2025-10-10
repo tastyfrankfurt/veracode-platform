@@ -316,8 +316,6 @@ impl PipelineSubmitter {
                         )));
                     } else if scan.scan_status.is_in_progress() {
                         debug!("⏳ Scan {scan_id} in progress, waiting {poll_interval} seconds...");
-                        print!(".");
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                             .await;
                     } else {
@@ -599,8 +597,6 @@ impl PipelineSubmitter {
                         )));
                     } else if scan.scan_status.is_in_progress() {
                         debug!("⏳ Scan {scan_id} in progress, waiting {poll_interval} seconds...");
-                        print!(".");
-                        std::io::Write::flush(&mut std::io::stdout()).unwrap_or(());
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                             .await;
                     } else {
