@@ -652,7 +652,8 @@ impl AssessmentSubmitter {
                         // Create progress callback for large file uploads
                         let progress_callback =
                             |bytes_sent: u64, total_bytes: u64, progress: f64| {
-                                if progress > 0.0 && (progress * 100.0) as u64 % 25 == 0 {
+                                if progress > 0.0 && ((progress * 100.0) as u64).is_multiple_of(25)
+                                {
                                     info!(
                                         "   📈 {}: {:.0}% ({}/{})",
                                         file_name,
@@ -691,7 +692,7 @@ impl AssessmentSubmitter {
 
                     // Create progress callback for large file uploads
                     let progress_callback = |bytes_sent: u64, total_bytes: u64, progress: f64| {
-                        if progress > 0.0 && (progress * 100.0) as u64 % 25 == 0 {
+                        if progress > 0.0 && ((progress * 100.0) as u64).is_multiple_of(25) {
                             info!(
                                 "   📈 {}: {:.0}% ({}/{})",
                                 file_name,
