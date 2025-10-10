@@ -466,14 +466,14 @@ fn validate_name_field(s: &str) -> Result<String, String> {
         return Err("Name cannot be empty".to_string());
     }
 
-    // Check for valid characters (alphanumeric, dash, underscore, space)
+    // Check for valid characters (alphanumeric, dash, underscore, space, forward slash)
     let is_valid = s
         .chars()
-        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ');
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == ' ' || c == '/');
 
     if !is_valid {
         return Err(format!(
-            "Name can only contain alphanumeric characters, dashes (-), underscores (_), and spaces. Got: '{s}'"
+            "Name can only contain alphanumeric characters, dashes (-), underscores (_), spaces, and forward slashes (/). Got: '{s}'"
         ));
     }
 

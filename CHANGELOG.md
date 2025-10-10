@@ -15,7 +15,7 @@ For detailed component-specific changes, see:
 - [verascan/CHANGELOG.md](verascan/CHANGELOG.md) - Scanning CLI changes
 - [veracmek/CHANGELOG.md](veracmek/CHANGELOG.md) - CMEK CLI changes
 
-## [0.5.5] - 2025-09-26
+## [0.5.5] - 2025-10-10
 
 ### Added
 - **🔐 Veracmek CLI Tool**: New Customer Managed Encryption Key (CMEK) management application
