@@ -209,6 +209,10 @@ pub enum Commands {
         #[arg(short = 'n', long = "app-profile-name", help = "Veracode application profile name for automatic app_id lookup (required)", value_parser = validate_name_field, required = true)]
         app_profile_name: String,
 
+        /// Build version for the assessment scan
+        #[arg(long = "build-version", help = "Custom build version for the assessment scan (if not specified, auto-generates timestamp like 'build-1234567890')", value_parser = validate_build_version)]
+        build_version: Option<String>,
+
         /// Timeout in minutes to wait for scan completion
         #[arg(
             short = 't',
@@ -803,6 +807,35 @@ fn validate_severity_filter(s: &str) -> Result<String, String> {
     }
 }
 
+/// Validate build version input
+fn validate_build_version(s: &str) -> Result<String, String> {
+    // Check length (reasonable limit matching Veracode API constraints)
+    if s.len() > 70 {
+        return Err(format!(
+            "Build version must be 70 characters or less, got: {} characters",
+            s.len()
+        ));
+    }
+
+    // Check if empty
+    if s.trim().is_empty() {
+        return Err("Build version cannot be empty".to_string());
+    }
+
+    // Check for valid characters (alphanumeric, dash, underscore, dot)
+    let is_valid = s
+        .chars()
+        .all(|c| c.is_alphanumeric() || c == '-' || c == '_' || c == '.');
+
+    if !is_valid {
+        return Err(format!(
+            "Build version can only contain alphanumeric characters, dashes (-), underscores (_), and dots (.). Got: '{s}'"
+        ));
+    }
+
+    Ok(s.to_string())
+}
+
 /// Parse business criticality string to BusinessCriticality enum
 #[must_use]
 pub fn parse_business_criticality(
@@ -1008,6 +1041,7 @@ mod tests {
                 recursive: true,
                 validate: true,
                 app_profile_name: "TestApp".to_string(),
+                build_version: None,
                 timeout: 60,
                 threads: 4,
                 export_results: "assessment-results.json".to_string(),

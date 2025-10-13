@@ -207,6 +207,8 @@ pub struct AssessmentScanConfig {
     pub force_buildinfo_api: bool,
     /// Break build on sandbox scans with Conditional Pass status
     pub strict_sandbox: bool,
+    /// Custom build version (if None, auto-generates timestamp)
+    pub build_version: Option<String>,
 }
 
 impl Default for AssessmentScanConfig {
@@ -228,6 +230,7 @@ impl Default for AssessmentScanConfig {
             policy_wait_retry_delay_seconds: 10, // 10 seconds between retries
             force_buildinfo_api: false, // Default to trying summary report first
             strict_sandbox: false,   // Default to not treating Conditional Pass as failure
+            build_version: None,     // Default to auto-generated timestamp
         }
     }
 }
@@ -340,7 +343,7 @@ impl AssessmentSubmitter {
             .ensure_build_exists_with_policy(
                 app_id,
                 sandbox_id,
-                None,
+                self.config.build_version.as_deref(),
                 self.config.deleteincompletescan,
             )
             .await
@@ -1629,6 +1632,11 @@ impl AssessmentSubmitter {
             info!("   Sandbox: {sandbox_name}");
         }
         info!("   Auto-recreate Sandbox: enabled");
+        if let Some(ref build_version) = self.config.build_version {
+            info!("   Build Version: {build_version}");
+        } else {
+            info!("   Build Version: auto-generated (timestamp)");
+        }
         info!(
             "   Autoscan: {}",
             if self.config.autoscan {
@@ -1690,6 +1698,7 @@ mod tests {
         assert_eq!(config.policy_wait_max_retries, 30);
         assert_eq!(config.policy_wait_retry_delay_seconds, 10);
         assert!(!config.strict_sandbox);
+        assert!(config.build_version.is_none());
     }
 
     #[test]
@@ -1720,6 +1729,7 @@ mod tests {
             policy_wait_retry_delay_seconds: 5, // Custom: 5 seconds between retries
             force_buildinfo_api: false,         // Test default value
             strict_sandbox: false,              // Test default value
+            build_version: Some("v1.2.3".to_string()), // Test custom build version
         };
 
         assert_eq!(config.threads, 8);
@@ -1732,6 +1742,7 @@ mod tests {
         assert!(!config.autoscan);
         assert_eq!(config.export_results_path, "custom-results.json");
         assert_eq!(config.deleteincompletescan, 2);
+        assert_eq!(config.build_version, Some("v1.2.3".to_string()));
     }
 
     #[test]

@@ -230,6 +230,17 @@ verascan assessment --filepath ./target \
   --break \
   --force-buildinfo-api \
   --export-results results.json
+
+# Assessment scan with custom build version
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --build-version "v2.1.0-release" \
+  --export-results results.json
+
+# Assessment scan with auto-generated build version (default behavior)
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --export-results results.json
 ```
 
 ### Export from Completed Scans
@@ -472,6 +483,7 @@ export VERASCAN_DISABLE_JITTER="true"
 | Option | Default | Description |
 |--------|---------|-------------|
 | `--app-profile-name <NAME>` | - | Veracode application profile name (required) |
+| `--build-version <VERSION>` | Auto-generated | Custom build version (max 70 chars, alphanumeric/dashes/underscores/dots only). If not specified, auto-generates timestamp like 'build-1234567890' |
 | `--sandbox-name <NAME>` | - | Sandbox name for sandbox assessment scans |
 | `--no-wait` | `false` | Submit scan and exit without waiting for completion |
 | `--modules <LIST>` | - | Specific modules to scan (comma-separated) |
