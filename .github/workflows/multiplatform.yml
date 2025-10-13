@@ -205,21 +205,20 @@ jobs:
 
     - name: Build release binary
       if: steps.check_package.outputs.skip != 'true'
-      run: |
-        cd ${{ matrix.package }}
-        cargo build --release --target ${{ matrix.target }}
+      run: cargo build --release --target ${{ matrix.target }} -p ${{ matrix.package }}
 
     - name: Create zip archive Windows
       if: matrix.os == 'windows-latest' && steps.check_package.outputs.skip != 'true'
+      shell: bash
       run: |
-        cd ${{ matrix.package }}/target/${{ matrix.target }}/release/
-        7z a ../../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
+        cd target/${{ matrix.target }}/release/
+        7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
 
     - name: Create zip archive Linux/Mac
       if: matrix.os != 'windows-latest' && steps.check_package.outputs.skip != 'true'
       run: |
-        cd ${{ matrix.package }}/target/${{ matrix.target }}/release/
-        zip ../../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
+        cd target/${{ matrix.target }}/release/
+        zip ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
 
     - name: Upload Release Asset
       if: steps.check_package.outputs.skip != 'true'
