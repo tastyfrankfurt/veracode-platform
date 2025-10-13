@@ -156,6 +156,7 @@ jobs:
     # Skip this build if package doesn't match the tag
     - name: Check package match
       id: check_package
+      shell: bash
       run: |
         if [[ "${{ matrix.package }}" != "${{ needs.create-release.outputs.package_name }}" ]]; then
           echo "Skipping build for ${{ matrix.package }} (tagged package is ${{ needs.create-release.outputs.package_name }})"
