@@ -1531,6 +1531,7 @@ pub fn execute_assessment_scan(
     if let Commands::Assessment {
         app_profile_name,
         sandbox_name,
+        build_version,
         timeout,
         threads,
         modules,
@@ -1590,6 +1591,7 @@ pub fn execute_assessment_scan(
             policy_wait_retry_delay_seconds: 10, // Default: 10 seconds between retries
             force_buildinfo_api: *force_buildinfo_api, // CLI flag for forcing buildinfo API
             strict_sandbox: *strict_sandbox, // CLI flag for treating Conditional Pass as failure for sandbox scans
+            build_version: build_version.clone(), // Custom build version (None = auto-generated)
         };
 
         let submitter = AssessmentSubmitter::new(veracode_config.clone(), assessment_config)

@@ -229,6 +229,8 @@ verascan [GLOBAL_OPTIONS] <COMMAND> [COMMAND_OPTIONS]
 ### Assessment Scan Options
 ```bash
 --app-profile-name <NAME>          # Veracode application profile (required)
+--build-version <VERSION>          # Custom build version (max 70 chars, alphanumeric/dashes/underscores/dots)
+                                   # If not specified, auto-generates timestamp like 'build-1234567890'
 --sandbox-name <NAME>              # Sandbox name for sandbox scans
 --no-wait                          # Submit scan and exit without waiting
 --break                            # Break build on platform policy compliance failure (conflicts with --no-wait)
@@ -555,6 +557,20 @@ verascan assessment --filepath ./release \
   --app-profile-name "MyApp-Production" \
   --break \
   --export-results production-assessment.json
+
+# Assessment scan with custom build version (correlates with CI/CD release version)
+verascan assessment --filepath ./release \
+  --app-profile-name "MyApp-Production" \
+  --build-version "v2.1.0-release" \
+  --export-results production-assessment.json
+
+# Assessment scan with pipeline-based build version
+verascan assessment --filepath ./build \
+  --app-profile-name "MyApp-CI" \
+  --sandbox-name "pipeline-$CI_PIPELINE_ID" \
+  --build-version "sprint-42.$CI_PIPELINE_ID" \
+  --no-wait \
+  --export-results ci-results.json
 ```
 
 ## CI/CD Integration
