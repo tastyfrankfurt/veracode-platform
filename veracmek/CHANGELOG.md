@@ -5,6 +5,22 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2025-10-14
+
+### Changed
+- **Open Source Licensing**: Updated to dual MIT OR Apache-2.0 licensing
+  - **License Field Added**: Added `license = "MIT OR Apache-2.0"` to Cargo.toml
+  - **Alignment with Workspace**: Matches licensing used by veracode-api and verascan packages
+  - **Rust Ecosystem Standard**: Follows standard dual-licensing practice in Rust community
+  - **User Choice**: Users can choose to use the software under either MIT or Apache-2.0 terms
+  - **Legal Compatibility**: Enhanced legal flexibility for commercial and open source integration
+  - **No Functional Changes**: This is purely a licensing update with no code modifications
+
+### Technical Details
+- **Modified Files**: `Cargo.toml` (added license field)
+- **License Files**: Project includes both `LICENSE-MIT` and `LICENSE-APACHE` at workspace root
+- **Documentation**: README.md contains dual licensing notice for user clarity
+
 ## [0.5.5] - 2025-10-10 - First Release
 
 ### Added

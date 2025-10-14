@@ -66,7 +66,16 @@ A powerful command-line application for security scanning and Veracode integrati
 
 ### Veracmek CLI Application (`veracmek`)
 
-A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles:
+A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles.
+
+**Key Capabilities:**
+- **🔐 CMEK Management** - Enable, change, and monitor encryption keys across applications
+- **🔄 Bulk Operations** - Process multiple applications with dry-run support
+- **📁 File-Based Configuration** - JSON-based batch processing for complex scenarios
+- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault
+- **📊 Multiple Output Formats** - Table and JSON output for different use cases
+- **🌍 Multi-Regional** - Support for all Veracode regions (Commercial, European, Federal)
+- **🛡️ Production Ready** - Robust error handling, retry logic, and comprehensive logging
 
 ## ✨ Key Features
 
@@ -158,7 +167,9 @@ cd veracode-workspace
 cargo build --release
 ```
 
-The `verascan` binary will be available at `target/release/verascan`.
+The binaries will be available at:
+- `target/release/verascan` - Security scanning CLI
+- `target/release/veracmek` - CMEK encryption management CLI
 
 ### Environment Setup
 
@@ -281,6 +292,12 @@ verascan export --app-profile-name "MyApplication" \
   --output gitlab-sast-report.json \
   --project-dir /path/to/project
 
+# Export with specific GitLab SAST schema version
+verascan export --app-profile-name "MyApplication" \
+  --format gitlab \
+  --gitlab-schema 15.2.2 \
+  --output gitlab-sast-report.json
+
 # Export with debug output
 verascan export --app-profile-name "MyApplication" \
   --output findings.json \
@@ -373,11 +390,137 @@ verascan assessment --filepath ./artifacts \
   --debug
 ```
 
+### CMEK Encryption Management
+
+Veracmek provides comprehensive Customer Managed Encryption Key (CMEK) management for Veracode applications.
+
+```bash
+# Enable CMEK on a single application (by name)
+veracmek enable --app "MyApplication" --kms-alias "alias/my-cmek-key"
+
+# Enable CMEK on a single application (by GUID)
+veracmek enable --app "12345678-1234-1234-1234-123456789012" --kms-alias "alias/my-cmek-key"
+
+# Change encryption key for an application
+veracmek change-key --app "MyApplication" --new-kms-alias "alias/new-cmek-key"
+
+# Check encryption status of a specific application
+veracmek status --app "MyApplication"
+
+# Check encryption status of all applications (table format)
+veracmek status
+
+# Check encryption status with JSON output
+veracmek status --output json
+```
+
+#### Bulk Operations
+
+```bash
+# Preview bulk encryption (dry run)
+veracmek bulk --kms-alias "alias/production-key" --dry-run
+
+# Enable CMEK on all applications
+veracmek bulk --kms-alias "alias/production-key"
+
+# Enable CMEK on all applications, skip already encrypted
+veracmek bulk --kms-alias "alias/production-key" --skip-encrypted
+
+# Bulk operation with JSON output
+veracmek bulk --kms-alias "alias/production-key" --output json
+```
+
+#### File-Based Configuration
+
+Create a JSON configuration file for batch processing:
+
+```json
+{
+  "applications": [
+    {
+      "app": "critical-app-1",
+      "kms_alias": "alias/critical-cmek-key",
+      "skip_if_encrypted": false
+    },
+    {
+      "app": "dev-app-1",
+      "kms_alias": "alias/dev-cmek-key",
+      "skip_if_encrypted": true
+    },
+    {
+      "app": "12345678-1234-1234-1234-123456789012",
+      "kms_alias": "alias/another-cmek-key",
+      "skip_if_encrypted": false
+    }
+  ]
+}
+```
+
+Process applications from file:
+
+```bash
+# Preview file-based processing (dry run)
+veracmek from-file --file apps.json --dry-run
+
+# Apply configuration from file
+veracmek from-file --file apps.json
+
+# File-based processing with JSON output
+veracmek from-file --file apps.json --output json
+```
+
+#### Multi-Region Support
+
+```bash
+# Enable CMEK in European region
+veracmek --region european enable --app "MyApp" --kms-alias "alias/eu-key"
+
+# Check status in Federal region
+veracmek --region federal status
+
+# Bulk operation in Commercial region (default)
+veracmek --region commercial bulk --kms-alias "alias/commercial-key" --dry-run
+```
+
+#### Vault Integration
+
+Use HashiCorp Vault for secure credential management:
+
+```bash
+# Set up Vault environment variables
+export VAULT_CLI_ADDR="https://vault.company.com"
+export VAULT_CLI_JWT="your_jwt_token"
+export VAULT_CLI_ROLE="veracode-role"
+export VAULT_CLI_SECRET_PATH="secret/veracode@kvv2"
+export VAULT_CLI_NAMESPACE="optional_namespace"
+
+# Commands automatically use Vault for credentials
+veracmek status
+veracmek enable --app "MyApp" --kms-alias "alias/my-key"
+
+# Get help on environment variables and configuration
+veracmek help-env
+```
+
+#### Development and Debugging
+
+```bash
+# Enable debug logging
+veracmek --log-level debug status
+
+# Use custom log levels (error, warn, info, debug, trace)
+veracmek --log-level trace enable --app "MyApp" --kms-alias "alias/my-key"
+
+# Development mode (disable certificate validation - use with caution)
+export VERACMEK_DISABLE_CERT_VALIDATION=true
+veracmek status
+```
+
 ## 🌍 Environment Variables
 
-Verascan supports comprehensive HTTP client configuration through VERASCAN_ prefixed environment variables. These variables provide unified configuration for network timeouts, retry behavior, and certificate validation across all Veracode API calls and GitLab integrations.
+### Shared Environment Variables (All Tools)
 
-### Authentication Variables
+#### Authentication Variables
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `VERACODE_API_ID` | ✅ | Your Veracode API ID credential |
@@ -387,6 +530,7 @@ Verascan supports comprehensive HTTP client configuration through VERASCAN_ pref
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `VERASCAN_FORCE_BUILDINFO_API` | - | Skip summary report API and use getbuildinfo.do XML API directly for break build evaluation (set any value) |
+| `VERASCAN_GITLAB_SCHEMA` | `15.2.1` | GitLab SAST report schema version (15.2.1, 15.2.2, or 15.2.3) |
 
 ### Network Configuration
 | Variable | Default | Description |
@@ -426,6 +570,9 @@ export VERACODE_API_KEY="your-api-key-here"
 # API configuration for restricted permissions
 export VERASCAN_FORCE_BUILDINFO_API="1"     # Force XML API usage for break build
 
+# GitLab SAST schema version (for GitLab integration)
+export VERASCAN_GITLAB_SCHEMA="15.2.2"      # Use GitLab SAST schema version 15.2.2
+
 # Network optimization for slow connections
 export VERASCAN_CONNECT_TIMEOUT="60"        # 60 second connection timeout
 export VERASCAN_REQUEST_TIMEOUT="900"       # 15 minute request timeout
@@ -448,6 +595,49 @@ export VERASCAN_DISABLE_JITTER="true"
 - **Development Support**: Disable certificate validation for local testing
 - **Reliability**: Configurable retry strategies with jitter support
 - **Security**: Automatic credential redaction in logs and debug output
+
+### Veracmek-Specific Environment Variables
+
+#### Vault Configuration (Optional - for secure credential management)
+
+| Variable | Description |
+|----------|-------------|
+| `VAULT_CLI_ADDR` | Vault server address (must use HTTPS) |
+| `VAULT_CLI_JWT` | JWT token for Vault authentication |
+| `VAULT_CLI_ROLE` | Vault role name for authentication |
+| `VAULT_CLI_SECRET_PATH` | Path to secret in Vault (e.g., `secret/veracode@kvv2`) |
+| `VAULT_CLI_NAMESPACE` | Vault namespace (optional) |
+| `VAULT_CLI_AUTH_PATH` | Vault auth path (optional, defaults to `auth/jwt`) |
+
+#### Development Configuration
+
+| Variable | Description |
+|----------|-------------|
+| `VERACMEK_DISABLE_CERT_VALIDATION` | Disable TLS certificate validation (affects both Veracode API and Vault) - **Development only!** |
+| `RUST_LOG` | Set logging level (error, warn, info, debug, trace) |
+
+#### Example Veracmek Configuration
+
+```bash
+# Standard authentication (environment variables)
+export VERACODE_API_ID="your-api-id"
+export VERACODE_API_KEY="your-api-key"
+
+# Using Vault for secure credential management
+export VAULT_CLI_ADDR="https://vault.company.com"
+export VAULT_CLI_JWT="$(cat /var/run/secrets/kubernetes.io/serviceaccount/token)"
+export VAULT_CLI_ROLE="veracode-role"
+export VAULT_CLI_SECRET_PATH="secret/veracode@kvv2"
+export VAULT_CLI_NAMESPACE="my-namespace"
+
+# Enable debug logging
+export RUST_LOG=debug
+
+# Development mode (disable certificate validation - use with caution!)
+export VERACMEK_DISABLE_CERT_VALIDATION=true
+```
+
+**Note**: When Vault environment variables are detected, veracmek automatically uses Vault for credential retrieval instead of environment variables or CLI arguments.
 
 ## 🎛️ Command Reference
 
@@ -505,6 +695,7 @@ export VERASCAN_DISABLE_JITTER="true"
 | `--format <FORMAT>` | `gitlab` | Export format (gitlab/json/csv/all) |
 | `--min-severity <LEVEL>` | - | Filter by minimum severity (informational/very-low/low/medium/high/very-high) |
 | `--project-dir <DIR>` | `.` | Project directory for file path resolution in GitLab reports |
+| `--gitlab-schema <VERSION>` | `15.2.1` | GitLab SAST report schema version (15.2.1, 15.2.2, or 15.2.3) - applies to gitlab format exports (global option) |
 | `--debug` | `false` | Enable detailed diagnostic output (global option) |
 
 ### Export & Display Options
@@ -727,6 +918,7 @@ cargo build --release
 # Build specific package
 cargo build -p veracode-api
 cargo build -p verascan
+cargo build -p veracmek
 ```
 
 ### Running Tests
@@ -738,6 +930,7 @@ cargo test
 # Run tests for specific package
 cargo test -p veracode-api
 cargo test -p verascan
+cargo test -p veracmek
 
 # Run with output
 cargo test -- --nocapture
