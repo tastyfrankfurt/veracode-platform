@@ -2,7 +2,11 @@ name: Multi-Platform Release
 
 on:
   push:
-    tags: ['v*']
+    tags:
+      - 'verascan/v*'
+      - 'veracmek/v*'
+      - 'veracode-api/v*'
+
 permissions:
   contents: write
   packages: write
@@ -11,38 +15,93 @@ permissions:
 jobs:
   create-release:
     runs-on: ubuntu-latest
-    
+    outputs:
+      package_name: ${{ steps.parse_tag.outputs.package_name }}
+      version: ${{ steps.parse_tag.outputs.version }}
+      is_binary: ${{ steps.parse_tag.outputs.is_binary }}
+
     steps:
     - uses: actions/checkout@v4
-    
+
+    - name: Parse tag
+      id: parse_tag
+      run: |
+        TAG_NAME=${GITHUB_REF#refs/tags/}
+        echo "Full tag: $TAG_NAME"
+
+        # Extract package name and version
+        PACKAGE_NAME=$(echo "$TAG_NAME" | cut -d'/' -f1)
+        VERSION=$(echo "$TAG_NAME" | cut -d'/' -f2)
+
+        echo "package_name=$PACKAGE_NAME" >> $GITHUB_OUTPUT
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+
+        # Determine if this is a binary package
+        if [[ "$PACKAGE_NAME" == "verascan" || "$PACKAGE_NAME" == "veracmek" ]]; then
+          echo "is_binary=true" >> $GITHUB_OUTPUT
+        else
+          echo "is_binary=false" >> $GITHUB_OUTPUT
+        fi
+
     - name: Create Release
       id: create_release
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
         TAG_NAME=${GITHUB_REF#refs/tags/}
-        RELEASE_NAME="Release $TAG_NAME"
-        BODY="## Multi-Platform Release
+        PACKAGE_NAME="${{ steps.parse_tag.outputs.package_name }}"
+        VERSION="${{ steps.parse_tag.outputs.version }}"
+        IS_BINARY="${{ steps.parse_tag.outputs.is_binary }}"
 
-        This release includes binaries for both verascan and veracmek:
+        # Create package-specific release notes
+        if [[ "$PACKAGE_NAME" == "verascan" ]]; then
+          RELEASE_NAME="verascan $VERSION"
+          BODY="## verascan $VERSION
+
+        CLI security scanning application for Veracode platform.
+
+        **Multi-platform binaries:**
         - Linux (x86_64 glibc)
         - Linux (x86_64 musl)
         - Windows (x86_64)
         - macOS (ARM64)
 
-        **Tools included:**
-        - **verascan**: CLI security scanning application
-        - **veracmek**: CLI Customer Managed Encryption Key (CMEK) management tool
+        Download the appropriate binary for your platform below."
 
-        Download the appropriate binary for your platform."
-        
+        elif [[ "$PACKAGE_NAME" == "veracmek" ]]; then
+          RELEASE_NAME="veracmek $VERSION"
+          BODY="## veracmek $VERSION
+
+        CLI Customer Managed Encryption Key (CMEK) management tool for Veracode.
+
+        **Multi-platform binaries:**
+        - Linux (x86_64 glibc)
+        - Linux (x86_64 musl)
+        - Windows (x86_64)
+        - macOS (ARM64)
+
+        Download the appropriate binary for your platform below."
+
+        elif [[ "$PACKAGE_NAME" == "veracode-api" ]]; then
+          RELEASE_NAME="veracode-api $VERSION"
+          BODY="## veracode-api $VERSION
+
+        Rust client library for the Veracode platform.
+
+        **Published to crates.io:** \`veracode-platform = \"${VERSION#v}\"\`
+
+        This is a library release with no binary artifacts."
+        fi
+
         gh release create "$TAG_NAME" \
           --title "$RELEASE_NAME" \
-          --notes "$BODY" \
-          --latest
+          --notes "$BODY"
 
   build:
     needs: create-release
+    # Only run for binary packages and matching package name
+    if: |
+      needs.create-release.outputs.is_binary == 'true'
     permissions:
       contents: write
     strategy:
@@ -51,91 +110,118 @@ jobs:
           # verascan builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            package: verascan
             binary_name: verascan
             asset_name: verascan-linux-gnu-amd64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            package: verascan
             binary_name: verascan
             asset_name: verascan-linux-musl-amd64
           - os: windows-latest
             target: x86_64-pc-windows-gnu
+            package: verascan
             binary_name: verascan.exe
             asset_name: verascan-windows-gnu-amd64.exe
           - os: macos-latest
             target: aarch64-apple-darwin
+            package: verascan
             binary_name: verascan
             asset_name: verascan-macos-arm64
           # veracmek builds
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
+            package: veracmek
             binary_name: veracmek
             asset_name: veracmek-linux-gnu-amd64
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
+            package: veracmek
             binary_name: veracmek
             asset_name: veracmek-linux-musl-amd64
           - os: windows-latest
             target: x86_64-pc-windows-gnu
+            package: veracmek
             binary_name: veracmek.exe
             asset_name: veracmek-windows-gnu-amd64.exe
           - os: macos-latest
             target: aarch64-apple-darwin
+            package: veracmek
             binary_name: veracmek
             asset_name: veracmek-macos-arm64
-    
+
     runs-on: ${{ matrix.os }}
-    
+
     steps:
+    # Skip this build if package doesn't match the tag
+    - name: Check package match
+      id: check_package
+      shell: bash
+      run: |
+        if [[ "${{ matrix.package }}" != "${{ needs.create-release.outputs.package_name }}" ]]; then
+          echo "Skipping build for ${{ matrix.package }} (tagged package is ${{ needs.create-release.outputs.package_name }})"
+          echo "skip=true" >> $GITHUB_OUTPUT
+        else
+          echo "Building ${{ matrix.package }}"
+          echo "skip=false" >> $GITHUB_OUTPUT
+        fi
+
     - uses: actions/checkout@v4
+      if: steps.check_package.outputs.skip != 'true'
     
     - name: Install Linux dependencies
-      if: matrix.os == 'ubuntu-latest'
+      if: matrix.os == 'ubuntu-latest' && steps.check_package.outputs.skip != 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential ca-certificates
-        
+
     - name: Install musl tools for musl target
-      if: matrix.target == 'x86_64-unknown-linux-musl'
+      if: matrix.target == 'x86_64-unknown-linux-musl' && steps.check_package.outputs.skip != 'true'
       run: |
         sudo apt-get install -y musl-tools musl-dev
-    
+
     - name: Setup Rust
+      if: steps.check_package.outputs.skip != 'true'
       uses: actions-rs/toolchain@v1
       with:
         toolchain: stable
         override: true
-        
+
     - name: Add target
+      if: steps.check_package.outputs.skip != 'true'
       run: rustup target add ${{ matrix.target }}
 
     - name: Install build-essential for glibc Linux
-      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      if: matrix.target == 'x86_64-unknown-linux-gnu' && steps.check_package.outputs.skip != 'true'
       run: |
         sudo apt-get update
         sudo apt-get install -y build-essential libssl-dev pkg-config libc6-dev libssl3
 
     - name: Install mingw-w64 for Windows GNU target
-      if: matrix.os == 'windows-latest'
+      if: matrix.os == 'windows-latest' && steps.check_package.outputs.skip != 'true'
       run: |
         # Install mingw-w64 via chocolatey
         choco install mingw
-    
+
     - name: Build release binary
-      run: cargo build --release --target ${{ matrix.target }}
-    
+      if: steps.check_package.outputs.skip != 'true'
+      run: cargo build --release --target ${{ matrix.target }} -p ${{ matrix.package }}
+
     - name: Create zip archive Windows
-      if: matrix.os == 'windows-latest'
+      if: matrix.os == 'windows-latest' && steps.check_package.outputs.skip != 'true'
+      shell: bash
       run: |
         cd target/${{ matrix.target }}/release/
         7z a ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
 
     - name: Create zip archive Linux/Mac
-      if: matrix.os != 'windows-latest'
+      if: matrix.os != 'windows-latest' && steps.check_package.outputs.skip != 'true'
       run: |
         cd target/${{ matrix.target }}/release/
         zip ../../../${{ matrix.asset_name }}.zip ${{ matrix.binary_name }}
-    
+
     - name: Upload Release Asset
+      if: steps.check_package.outputs.skip != 'true'
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       shell: bash
@@ -143,3 +229,60 @@ jobs:
         TAG_NAME=${GITHUB_REF#refs/tags/}
         gh release upload "$TAG_NAME" \
           ${{ matrix.asset_name }}.zip
+
+  publish-crate:
+    needs: create-release
+    # Only run for library packages
+    if: needs.create-release.outputs.is_binary == 'false'
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Setup Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        override: true
+
+    - name: Verify package version matches tag
+      run: |
+        PACKAGE_NAME="${{ needs.create-release.outputs.package_name }}"
+        VERSION="${{ needs.create-release.outputs.version }}"
+        VERSION_NO_V="${VERSION#v}"
+
+        # Map package name to crate directory
+        if [[ "$PACKAGE_NAME" == "veracode-api" ]]; then
+          CRATE_DIR="veracode-api"
+        else
+          echo "Unknown package: $PACKAGE_NAME"
+          exit 1
+        fi
+
+        # Get version from Cargo.toml
+        CARGO_VERSION=$(grep -m1 '^version = ' "$CRATE_DIR/Cargo.toml" | sed 's/version = "\(.*\)"/\1/')
+
+        echo "Tag version: $VERSION_NO_V"
+        echo "Cargo.toml version: $CARGO_VERSION"
+
+        if [[ "$VERSION_NO_V" != "$CARGO_VERSION" ]]; then
+          echo "ERROR: Version mismatch! Tag is $VERSION_NO_V but Cargo.toml has $CARGO_VERSION"
+          exit 1
+        fi
+
+    - name: Publish to crates.io
+      env:
+        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+      run: |
+        PACKAGE_NAME="${{ needs.create-release.outputs.package_name }}"
+
+        # Map package name to crate directory
+        if [[ "$PACKAGE_NAME" == "veracode-api" ]]; then
+          CRATE_DIR="veracode-api"
+        else
+          echo "Unknown package: $PACKAGE_NAME"
+          exit 1
+        fi
+
+        cd "$CRATE_DIR"
+        cargo publish --token "$CARGO_REGISTRY_TOKEN"

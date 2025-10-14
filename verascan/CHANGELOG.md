@@ -5,6 +5,24 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2025-10-13
+
+### Added
+- **Build Version Control**: Added optional `--build-version` parameter for assessment scans
+  - **Custom Versioning**: Users can now specify custom build versions (e.g., "v2.1.0-release", "sprint-42")
+  - **Auto-generation**: When not specified, automatically generates timestamp-based versions (e.g., "build-1234567890")
+  - **Input Validation**: Enforces Veracode API constraints (max 70 characters, alphanumeric plus dashes/underscores/dots)
+  - **Backward Compatible**: Maintains existing auto-generation behavior when parameter is omitted
+  - **Build Lifecycle**: Version is displayed in scan configuration output and passed through to Veracode API
+  - **Use Cases**: Enables correlation with CI/CD pipeline versions, release tags, or custom versioning schemes
+
+### Technical Details
+- **Modified Files**: `src/cli.rs`, `src/assessment.rs`, `src/scan.rs`
+- **Validation**: Added `validate_build_version()` function with character and length constraints
+- **Configuration Flow**: Build version flows from CLI → AssessmentScanConfig → ensure_build_exists API call
+- **Display Enhancement**: Updated `display_config()` method to show custom or auto-generated version status
+- **Test Coverage**: Updated unit tests to verify build version handling
+
 ## [0.5.5] - 2025-10-10
 
 ### Fixed
