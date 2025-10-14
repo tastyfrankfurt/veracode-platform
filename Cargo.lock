@@ -2052,7 +2052,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.5.5"
+version = "0.5.6"
 dependencies = [
  "backoff",
  "chrono",
