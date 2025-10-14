@@ -36,9 +36,10 @@ pub struct ExportConfig<'a> {
     pub output_path: Cow<'a, str>,
     /// Project directory for GitLab file path resolution
     pub project_dir: Option<PathBuf>,
-    /// Enable debug logging
     /// Minimum severity filter (0-5, optional)
     pub min_severity: Option<u32>,
+    /// GitLab SAST schema version (15.2.1, 15.2.2, 15.2.3)
+    pub schema_version: Cow<'a, str>,
 }
 
 /// Export workflow errors
@@ -609,7 +610,10 @@ impl ExportWorkflow {
         output_path: &Path,
     ) -> Result<(), ExportError> {
         let gitlab_path = self.ensure_extension(output_path, "json");
-        let gitlab_config = GitLabExportConfig::default();
+        let gitlab_config = GitLabExportConfig {
+            schema_version: self.config.schema_version.to_string(),
+            ..Default::default()
+        };
 
         let gitlab_exporter = if let Some(ref project_dir) = self.config.project_dir {
             GitLabExporter::new(gitlab_config).with_project_dir(project_dir)
@@ -731,6 +735,7 @@ mod tests {
             output_path: Cow::Borrowed("/tmp/test_output"),
             project_dir: None,
             min_severity: Some(3),
+            schema_version: Cow::Borrowed("15.2.1"),
         };
 
         assert_eq!(config.app_profile_name, "Test Application");
@@ -766,6 +771,7 @@ mod tests {
             output_path: Cow::Borrowed("/tmp/test"),
             project_dir: None,
             min_severity: None,
+            schema_version: Cow::Borrowed("15.2.1"),
         };
 
         let workflow = ExportWorkflow {
@@ -785,6 +791,7 @@ mod tests {
             output_path: Cow::Borrowed("/tmp/test"),
             project_dir: None,
             min_severity: None,
+            schema_version: Cow::Borrowed("15.2.1"),
         };
 
         let workflow_policy = ExportWorkflow {
@@ -808,6 +815,7 @@ mod tests {
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
                 min_severity: None,
+                schema_version: Cow::Borrowed("15.2.1"),
             },
         };
 
@@ -835,6 +843,7 @@ mod tests {
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
                 min_severity: None,
+                schema_version: Cow::Borrowed("15.2.1"),
             },
         };
 
@@ -859,6 +868,7 @@ mod tests {
             output_path: Cow::Borrowed("/tmp/test.json"),
             project_dir: None,
             min_severity: None,
+            schema_version: Cow::Borrowed("15.2.1"),
         };
 
         let workflow = ExportWorkflow {
@@ -878,6 +888,7 @@ mod tests {
             output_path: Cow::Borrowed("/tmp/test.json"),
             project_dir: None,
             min_severity: None,
+            schema_version: Cow::Borrowed("15.2.1"),
         };
 
         let workflow_invalid = ExportWorkflow {
@@ -1004,6 +1015,7 @@ mod tests {
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
                 min_severity: None,
+                schema_version: Cow::Borrowed("15.2.1"),
             },
         };
 
@@ -1068,6 +1080,7 @@ mod tests {
                 output_path: Cow::Borrowed("/tmp/test"),
                 project_dir: None,
                 min_severity: None,
+                schema_version: Cow::Borrowed("15.2.1"),
             },
         };
 
@@ -1097,6 +1110,7 @@ mod tests {
             output_path: Cow::Borrowed("/path/to/output.json"),
             project_dir: Some(std::path::PathBuf::from("/project")),
             min_severity: Some(4), // High severity
+            schema_version: Cow::Borrowed("15.2.1"),
         };
 
         // Verify all fields are set correctly

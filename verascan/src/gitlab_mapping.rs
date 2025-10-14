@@ -593,26 +593,42 @@ impl GitLabFieldMapper for PipelineScanMapper {
     ) -> Option<crate::gitlab_report::GitLabDetails> {
         let mut details = std::collections::HashMap::new();
 
-        // Add exploitability if available
+        // Add exploitability if available (using GitLab schema-compliant format)
         if let Some(exploitability) = data.get_exploitability() {
             details.insert(
                 "exploitability".to_string(),
-                serde_json::Value::Number(exploitability.into()),
+                serde_json::json!({
+                    "name": "Exploitability Score",
+                    "type": "value",
+                    "value": exploitability
+                }),
             );
             details.insert(
                 "exploitability_text".to_string(),
-                serde_json::Value::String(exploitability_to_string(exploitability).to_string()),
+                serde_json::json!({
+                    "name": "Exploitability Level",
+                    "type": "text",
+                    "value": exploitability_to_string(exploitability)
+                }),
             );
         }
 
-        // Add Veracode-specific metadata
+        // Add Veracode-specific metadata (using GitLab schema-compliant format)
         details.insert(
             "veracode_issue_id".to_string(),
-            serde_json::Value::Number(data.get_issue_id().into()),
+            serde_json::json!({
+                "name": "Veracode Issue ID",
+                "type": "value",
+                "value": data.get_issue_id()
+            }),
         );
         details.insert(
             "scan_id".to_string(),
-            serde_json::Value::String(data.get_scan_id()),
+            serde_json::json!({
+                "name": "Scan ID",
+                "type": "text",
+                "value": data.get_scan_id()
+            }),
         );
 
         if details.is_empty() {
@@ -810,39 +826,63 @@ impl GitLabFieldMapper for PolicyScanMapper {
     ) -> Option<crate::gitlab_report::GitLabDetails> {
         let mut details = std::collections::HashMap::new();
 
-        // Add exploitability if available
+        // Add exploitability if available (using GitLab schema-compliant format)
         if let Some(exploitability) = data.get_exploitability() {
             details.insert(
                 "exploitability".to_string(),
-                serde_json::Value::Number(exploitability.into()),
+                serde_json::json!({
+                    "name": "Exploitability Score",
+                    "type": "value",
+                    "value": exploitability
+                }),
             );
             details.insert(
                 "exploitability_text".to_string(),
-                serde_json::Value::String(exploitability_to_string(exploitability).to_string()),
+                serde_json::json!({
+                    "name": "Exploitability Level",
+                    "type": "text",
+                    "value": exploitability_to_string(exploitability)
+                }),
             );
         }
 
-        // Add Veracode-specific metadata
+        // Add Veracode-specific metadata (using GitLab schema-compliant format)
         details.insert(
             "veracode_issue_id".to_string(),
-            serde_json::Value::Number(data.get_issue_id().into()),
+            serde_json::json!({
+                "name": "Veracode Issue ID",
+                "type": "value",
+                "value": data.get_issue_id()
+            }),
         );
         details.insert(
             "scan_id".to_string(),
-            serde_json::Value::String(data.get_scan_id()),
+            serde_json::json!({
+                "name": "Scan ID",
+                "type": "text",
+                "value": data.get_scan_id()
+            }),
         );
 
-        // Add finding category information
+        // Add finding category information (using GitLab schema-compliant format)
         if let Some(category_id) = data.get_finding_category_id() {
             details.insert(
                 "finding_category_id".to_string(),
-                serde_json::Value::Number(category_id.into()),
+                serde_json::json!({
+                    "name": "Finding Category ID",
+                    "type": "value",
+                    "value": category_id
+                }),
             );
         }
         if let Some(category_name) = data.get_finding_category_name() {
             details.insert(
                 "finding_category_name".to_string(),
-                serde_json::Value::String(category_name),
+                serde_json::json!({
+                    "name": "Finding Category",
+                    "type": "text",
+                    "value": category_name
+                }),
             );
         }
 
@@ -1609,10 +1649,10 @@ mod tests {
 
         // Check exploitability value
         let exploitability = details.items.get("exploitability").unwrap();
-        assert_eq!(exploitability.as_u64(), Some(1));
+        assert_eq!(exploitability["value"].as_u64(), Some(1));
 
         let exploitability_text = details.items.get("exploitability_text").unwrap();
-        assert_eq!(exploitability_text.as_str(), Some("Low"));
+        assert_eq!(exploitability_text["value"].as_str(), Some("Low"));
     }
 
     #[test]
@@ -1636,7 +1676,7 @@ mod tests {
 
         // Check that issue ID is correct
         let issue_id = details.items.get("veracode_issue_id").unwrap();
-        assert_eq!(issue_id.as_u64(), Some(123));
+        assert_eq!(issue_id["value"].as_u64(), Some(123));
     }
 
     #[test]
