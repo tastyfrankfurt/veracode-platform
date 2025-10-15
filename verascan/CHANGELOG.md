@@ -5,6 +5,43 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2025-10-14
+
+### Added
+- **GitLab SAST Schema Version Selection**: New CLI parameter for GitLab schema version control
+  - **Schema Version Parameter**: Added `--gitlab-schema` global parameter supporting versions 15.2.1, 15.2.2, and 15.2.3
+  - **Environment Variable Support**: Can be configured via `VERASCAN_GITLAB_SCHEMA` environment variable
+  - **Backward Compatible**: Defaults to version 15.2.1 when not specified
+  - **Input Validation**: Enforces valid schema version selection with clear error messages
+  - **Use Cases**: Enables compatibility with different GitLab instances and enterprise deployments
+
+- **GitLab SAST Details Field Schema Compliance**: Restructured details field format for GitLab schema compliance
+  - **Schema-Compliant Format**: Details fields now use structured objects with `name`, `type`, and `value` properties
+  - **Field Type Support**: Properly distinguishes between `value` (numeric) and `text` (string) field types
+  - **Metadata Enhancement**: Exploitability, issue IDs, scan IDs, and finding categories now include descriptive names
+  - **Validation Ready**: Details structure validates against official GitLab SAST schema specifications
+  - **Improved Readability**: GitLab UI displays details with proper labels and type formatting
+
+- **GitLab SAST Schema Validation Test**: Comprehensive test suite for GitLab SAST report format compliance
+  - **Schema Validation**: Automated validation of GitLab SAST reports against official GitLab schemas
+  - **Test Integration**: Uses `jsonschema` crate (v0.33.0) for JSON Schema validation in Rust
+  - **Real Conversion Testing**: Tests actual Veracode → GitLab SAST format conversion pipeline
+  - **Detailed Error Reporting**: Provides clear validation error messages with instance and schema paths
+  - **Quality Assurance**: Ensures GitLab integration compatibility and catches schema compliance issues early
+
+### Changed
+- **CLI Version Display**: Updated version command to use Cargo.toml version automatically (removed hardcoded version)
+- **Export Configuration**: Added `schema_version` parameter to `ExportConfig` for schema version propagation
+- **GitLab Exporter**: Report version field now uses configured schema version instead of hardcoded value
+
+### Technical Details
+- **Modified Files**: `src/cli.rs`, `src/export.rs`, `src/gitlab_mapping.rs`, `src/gitlab_report.rs`, `Cargo.toml`
+- **CLI Validation**: Added `validate_gitlab_schema_version()` function in `src/cli.rs:437`
+- **Details Mapping**: Updated `PipelineScanMapper::map_details()` and `PolicyScanMapper::map_details()` in `src/gitlab_mapping.rs`
+- **Test Function**: `test_gitlab_sast_report_schema_validation()` at `src/gitlab_report.rs:646`
+- **Schema Integration**: GitLab report version field now reflects selected schema version
+- **Environment Variables**: Updated help text to document `VERASCAN_GITLAB_SCHEMA` environment variable
+
 ## [0.5.6] - 2025-10-13
 
 ### Added

@@ -749,7 +749,10 @@ async fn handle_findings_export(
                 "gitlab" => match ensure_extension(export_path, "json") {
                     Ok(gitlab_path) => {
                         if let Commands::Pipeline { project_dir, .. } = &args.command {
-                            let gitlab_config = GitLabExportConfig::default();
+                            let gitlab_config = GitLabExportConfig {
+                                schema_version: args.gitlab_schema_version.clone(),
+                                ..Default::default()
+                            };
                             let gitlab_exporter =
                                 GitLabExporter::new(gitlab_config).with_project_dir(project_dir);
                             if let Err(e) = gitlab_exporter
@@ -797,7 +800,10 @@ async fn handle_findings_export(
                                 path
                             };
                             if let Commands::Pipeline { project_dir, .. } = &args.command {
-                                let gitlab_config = GitLabExportConfig::default();
+                                let gitlab_config = GitLabExportConfig {
+                                    schema_version: args.gitlab_schema_version.clone(),
+                                    ..Default::default()
+                                };
                                 let gitlab_exporter = GitLabExporter::new(gitlab_config)
                                     .with_project_dir(project_dir);
                                 if let Err(e) = gitlab_exporter
@@ -1810,6 +1816,7 @@ mod tests {
                 fail_on_cwe: None,
             },
             region: "commercial".to_string(),
+            gitlab_schema_version: "15.2.1".to_string(),
             api_id: None,
             api_key: None,
             debug: false,
@@ -1847,6 +1854,7 @@ mod tests {
                 fail_on_cwe: None,
             },
             region: "commercial".to_string(),
+            gitlab_schema_version: "15.2.1".to_string(),
             api_id: None,
             api_key: None,
             debug: false,
