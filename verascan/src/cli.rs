@@ -7,7 +7,7 @@ use serde_json;
 #[command(
     about = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
 )]
-#[command(version = "0.5.5")]
+#[command(version)]
 pub struct Args {
     #[command(subcommand)]
     pub command: Commands,
@@ -24,6 +24,10 @@ pub struct Args {
     /// Veracode region (commercial, european, federal)
     #[arg(long = "region", help = "Veracode regions (commercial, european, federal)", default_value = "commercial", value_parser = validate_region, global = true)]
     pub region: String,
+
+    /// GitLab SAST schema version (set VERASCAN_GITLAB_SCHEMA env var)
+    #[arg(long = "gitlab-schema", help = "GitLab SAST report schema version (15.2.1, 15.2.2, 15.2.3)", default_value = "15.2.1", value_parser = validate_gitlab_schema_version, global = true)]
+    pub gitlab_schema_version: String,
 
     /// Veracode API ID (set VERACODE_API_ID env var)
     #[arg(skip)]
@@ -426,6 +430,19 @@ fn validate_region(s: &str) -> Result<String, String> {
     } else {
         Err(format!(
             "Invalid region '{s}'. Valid options are: commercial, european, federal"
+        ))
+    }
+}
+
+/// Validate GitLab SAST schema version input
+fn validate_gitlab_schema_version(s: &str) -> Result<String, String> {
+    const VALID_VERSIONS: &[&str] = &["15.2.1", "15.2.2", "15.2.3"];
+
+    if VALID_VERSIONS.contains(&s) {
+        Ok(s.to_string())
+    } else {
+        Err(format!(
+            "Invalid GitLab SAST schema version '{s}'. Valid options are: 15.2.1, 15.2.2, 15.2.3"
         ))
     }
 }
@@ -904,11 +921,16 @@ pub fn print_environment_variables() {
     println!();
 
     println!("🦊 GITLAB INTEGRATION");
-    println!("  PRIVATE_TOKEN         - GitLab API token for issue creation and repository access");
-    println!("  CI_TOKEN              - GitLab CI token (alternative to PRIVATE_TOKEN)");
-    println!("  GITLAB_TOKEN          - GitLab API token (alternative to PRIVATE_TOKEN)");
-    println!("  CI_PROJECT_ID         - GitLab project ID for issue creation");
-    println!("  GITLAB_URL            - GitLab instance URL (default: https://gitlab.com)");
+    println!(
+        "  VERASCAN_GITLAB_SCHEMA - GitLab SAST schema version (15.2.1, 15.2.2, 15.2.3; default: 15.2.1)"
+    );
+    println!(
+        "  PRIVATE_TOKEN              - GitLab API token for issue creation and repository access"
+    );
+    println!("  CI_TOKEN                   - GitLab CI token (alternative to PRIVATE_TOKEN)");
+    println!("  GITLAB_TOKEN               - GitLab API token (alternative to PRIVATE_TOKEN)");
+    println!("  CI_PROJECT_ID              - GitLab project ID for issue creation");
+    println!("  GITLAB_URL                 - GitLab instance URL (default: https://gitlab.com)");
     println!();
 
     println!("📖 EXAMPLES");
@@ -976,6 +998,7 @@ mod tests {
                 fail_on_cwe: None,
             },
             region: "commercial".to_string(),
+            gitlab_schema_version: "15.2.1".to_string(),
             api_id: None,
             api_key: None,
             debug: false,
@@ -1018,6 +1041,7 @@ mod tests {
                 fail_on_cwe: None,
             },
             region: "commercial".to_string(),
+            gitlab_schema_version: "15.2.1".to_string(),
             api_id: None,
             api_key: None,
             debug: false,
@@ -1056,6 +1080,7 @@ mod tests {
                 strict_sandbox: false,
             },
             region: "commercial".to_string(),
+            gitlab_schema_version: "15.2.1".to_string(),
             api_id: None,
             api_key: None,
             debug: false,

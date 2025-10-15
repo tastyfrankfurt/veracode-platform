@@ -113,6 +113,7 @@ pub async fn execute_findings_export(
         output_path: Cow::Borrowed(output_path),
         project_dir: Some(PathBuf::from(project_dir)),
         min_severity: min_severity_numeric,
+        schema_version: Cow::Borrowed(&args.gitlab_schema_version),
     };
 
     // Convert to 'static lifetime for ExportWorkflow
@@ -124,6 +125,7 @@ pub async fn execute_findings_export(
         output_path: Cow::Owned(config.output_path.into_owned()),
         project_dir: config.project_dir,
         min_severity: config.min_severity,
+        schema_version: Cow::Owned(config.schema_version.into_owned()),
     };
 
     // Execute export workflow
