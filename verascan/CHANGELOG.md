@@ -5,6 +5,38 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2025-10-15
+
+### Added
+- **HTTP/HTTPS Proxy Support**: Full proxy support for corporate network environments
+  - **Standard Environment Variables**: Supports `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, and `https_proxy`
+  - **Proxy Authentication**: Optional username/password authentication via `PROXY_USERNAME` and `PROXY_PASSWORD`
+  - **Automatic Detection**: Automatically configures proxy from environment variables
+  - **Non-Authenticated Proxies**: Full support for proxies without authentication
+  - **Certificate Validation**: Proxy configuration preserves existing TLS certificate trust behavior
+  - **Backward Compatible**: No breaking changes to existing configuration
+
+- **Vault Proxy Integration**: Comprehensive proxy support for Vault-stored credentials
+  - **Vault Proxy Configuration**: Proxy credentials can be stored in Vault secrets (`proxy_url`, `proxy_username`, `proxy_password`)
+  - **Credential Hierarchy**: Vault proxy credentials take precedence over environment variables
+  - **Combined Loading**: New `load_credentials_and_proxy_from_vault()` function retrieves both API credentials and proxy settings
+  - **Automatic Detection**: Automatically configures proxy from Vault or falls back to environment variables
+  - **Backward Compatible**: Works seamlessly with existing Vault credential workflows
+  - **Security First**: Proxy credentials stored securely in Vault alongside API credentials
+
+### Technical Details
+- **Modified Files**: `src/http_client.rs`, `src/vault_client.rs`, `src/credentials.rs`, `src/scan.rs`, `src/main.rs`, `src/lib.rs`
+- **HTTP Client Updates**: Added proxy configuration to `HttpClientConfig` and `RobustHttpClient`
+- **Builder Methods**: New `with_proxy()` and `with_proxy_auth()` builder methods for programmatic configuration
+- **Environment Loading**: Added `with_env_proxy()` method to `HttpClientConfigBuilder` for automatic environment variable loading
+- **Reqwest Integration**: Uses reqwest's built-in proxy support with `Proxy::all()` for HTTP/HTTPS traffic
+- **Vault Integration**:
+  - New `get_proxy_credentials()` method in `VaultCredentialClient` for proxy credential retrieval
+  - New `load_credentials_and_proxy_from_vault()` function for combined credential loading
+  - New `create_veracode_config_with_proxy()` function for applying proxy credentials from Vault
+  - Updated `configure_veracode_with_env_vars()` to support conditional proxy loading
+- **Priority System**: Vault proxy config → Environment variables → Direct connection
+
 ## [0.5.7] - 2025-10-14
 
 ### Added

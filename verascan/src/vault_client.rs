@@ -163,6 +163,39 @@ impl VaultCredentialClient {
         ))
     }
 
+    /// Retrieve optional proxy credentials from vault
+    /// Returns (proxy_url, proxy_username, proxy_password) as optional values
+    pub async fn get_proxy_credentials(
+        &self,
+        secret_path: &str,
+    ) -> Result<(Option<String>, Option<String>, Option<String>), CredentialError> {
+        let (parsed_secret_path, secret_engine) = parse_secret_path(secret_path);
+        let secret_data =
+            retrieve_vault_secret(&self.client, &parsed_secret_path, &secret_engine).await?;
+
+        // Validate the secret data before processing
+        validate_secret_data(&secret_data)?;
+
+        // Extract optional proxy credentials from vault secret
+        let proxy_url = secret_data
+            .get("proxy_url")
+            .map(|s| s.expose_secret().to_string());
+
+        let proxy_username = secret_data
+            .get("proxy_username")
+            .map(|s| s.expose_secret().to_string());
+
+        let proxy_password = secret_data
+            .get("proxy_password")
+            .map(|s| s.expose_secret().to_string());
+
+        if proxy_url.is_some() {
+            info!("Proxy configuration found in vault secret");
+        }
+
+        Ok((proxy_url, proxy_username, proxy_password))
+    }
+
     /// Revoke the vault token after use
     pub async fn revoke_token(&self) -> Result<(), CredentialError> {
         revoke_vault_token(&self.client).await
@@ -257,6 +290,55 @@ pub async fn load_veracode_credentials_with_vault()
 
     // Priority 2: Fallback to environment variables
     crate::credentials::load_veracode_credentials_from_env()
+}
+
+/// Load VeracodeCredentials and proxy configuration from Vault with environment fallback
+/// Returns (credentials, proxy_url, proxy_username, proxy_password)
+pub async fn load_credentials_and_proxy_from_vault() -> Result<
+    (
+        veracode_platform::VeracodeCredentials,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    CredentialError,
+> {
+    // Priority 1: Try vault configuration
+    match load_vault_config_from_env() {
+        Ok(vault_config) => {
+            info!("Vault configuration found, attempting vault credential and proxy retrieval");
+
+            let vault_client = VaultCredentialClient::new(&vault_config).await?;
+
+            // Load credentials
+            let credentials = vault_client
+                .get_veracode_credentials(&vault_config.secret_path)
+                .await?;
+
+            // Load optional proxy credentials
+            let (proxy_url, proxy_username, proxy_password) = vault_client
+                .get_proxy_credentials(&vault_config.secret_path)
+                .await?;
+
+            // Revoke the token after successful credential retrieval for security
+            if let Err(e) = vault_client.revoke_token().await {
+                warn!("Token revocation failed, but credential retrieval was successful: {e}");
+            } else {
+                debug!("Vault token revoked successfully after credential retrieval");
+            }
+
+            info!("Successfully loaded credentials and proxy configuration from vault");
+            return Ok((credentials, proxy_url, proxy_username, proxy_password));
+        }
+        Err(e) => {
+            info!("Vault configuration not available: {e}");
+            debug!("Using environment variable fallback");
+        }
+    }
+
+    // Priority 2: Fallback to environment variables
+    let credentials = crate::credentials::load_veracode_credentials_from_env()?;
+    Ok((credentials, None, None, None))
 }
 
 /// Validate vault configuration with comprehensive input sanitization
@@ -1007,5 +1089,109 @@ mod tests {
         let result = validate_auth_path(&long_path);
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("exceed"));
+    }
+
+    #[test]
+    fn test_validate_secret_data_with_proxy_credentials() {
+        let mut map = HashMap::new();
+        map.insert("api_id".to_string(), SecretString::new("user123".into()));
+        map.insert(
+            "api_secret".to_string(),
+            SecretString::new("secret_key".into()),
+        );
+        map.insert(
+            "proxy_url".to_string(),
+            SecretString::new("http://proxy.example.com:8080".into()),
+        );
+        map.insert(
+            "proxy_username".to_string(),
+            SecretString::new("proxy_user".into()),
+        );
+        map.insert(
+            "proxy_password".to_string(),
+            SecretString::new("proxy_pass".into()),
+        );
+        let secret = SecureSecretMap(map);
+
+        assert!(validate_secret_data(&secret).is_ok());
+    }
+
+    #[test]
+    fn test_validate_secret_data_with_partial_proxy() {
+        let mut map = HashMap::new();
+        map.insert("api_id".to_string(), SecretString::new("user123".into()));
+        map.insert(
+            "api_secret".to_string(),
+            SecretString::new("secret_key".into()),
+        );
+        map.insert(
+            "proxy_url".to_string(),
+            SecretString::new("http://proxy.example.com:8080".into()),
+        );
+        // No proxy_username or proxy_password - this is valid for non-authenticated proxies
+        let secret = SecureSecretMap(map);
+
+        assert!(validate_secret_data(&secret).is_ok());
+    }
+
+    #[test]
+    fn test_secure_secret_map_get_existing_key() {
+        let mut map = HashMap::new();
+        map.insert(
+            "test_key".to_string(),
+            SecretString::new("test_value".into()),
+        );
+        let secret = SecureSecretMap(map);
+
+        let value = secret.get("test_key");
+        assert!(value.is_some());
+        assert_eq!(value.unwrap().expose_secret(), "test_value");
+    }
+
+    #[test]
+    fn test_secure_secret_map_get_missing_key() {
+        let map: HashMap<String, SecretString> = HashMap::new();
+        let secret = SecureSecretMap(map);
+
+        let value = secret.get("nonexistent");
+        assert!(value.is_none());
+    }
+
+    #[test]
+    fn test_secure_secret_map_len() {
+        let mut map = HashMap::new();
+        map.insert("key1".to_string(), SecretString::new("value1".into()));
+        map.insert("key2".to_string(), SecretString::new("value2".into()));
+        let secret = SecureSecretMap(map);
+
+        assert_eq!(secret.len(), 2);
+        assert!(!secret.is_empty());
+    }
+
+    #[test]
+    fn test_secure_secret_map_empty() {
+        let map: HashMap<String, SecretString> = HashMap::new();
+        let secret = SecureSecretMap(map);
+
+        assert_eq!(secret.len(), 0);
+        assert!(secret.is_empty());
+    }
+
+    #[test]
+    fn test_secure_secret_map_remove() {
+        let mut map = HashMap::new();
+        map.insert("key1".to_string(), SecretString::new("value1".into()));
+        map.insert("key2".to_string(), SecretString::new("value2".into()));
+        let mut secret = SecureSecretMap(map);
+
+        assert_eq!(secret.len(), 2);
+
+        let removed = secret.remove("key1");
+        assert!(removed.is_some());
+        assert_eq!(removed.unwrap().expose_secret(), "value1");
+        assert_eq!(secret.len(), 1);
+
+        let missing = secret.remove("nonexistent");
+        assert!(missing.is_none());
     }
 }

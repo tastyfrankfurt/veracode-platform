@@ -301,6 +301,45 @@ pub fn create_veracode_config_from_credentials(
     Ok(crate::scan::configure_veracode_with_env_vars(base_config))
 }
 
+/// Create VeracodeConfig with Vault proxy credentials
+///
+/// This function creates a VeracodeConfig and applies optional proxy credentials from Vault.
+/// Vault proxy configuration takes precedence over environment variables.
+pub fn create_veracode_config_with_proxy(
+    credentials: VeracodeCredentials,
+    region_str: &str,
+    proxy_url: Option<String>,
+    proxy_username: Option<String>,
+    proxy_password: Option<String>,
+) -> Result<VeracodeConfig, i32> {
+    let region = parse_region_from_str(region_str)?;
+
+    // Use ARC-based credentials for optimal memory sharing
+    debug!("🔗 Creating VeracodeConfig with credentials and proxy configuration");
+    let mut base_config =
+        VeracodeConfig::from_arc_credentials(credentials.api_id_ptr(), credentials.api_key_ptr())
+            .with_region(region);
+
+    // Apply proxy configuration from Vault if provided (takes priority)
+    let has_vault_proxy = proxy_url.is_some();
+    if let Some(url) = proxy_url {
+        debug!("🔒 Applying proxy configuration from Vault: {}", url);
+        base_config = base_config.with_proxy(&url);
+
+        if let (Some(u), Some(p)) = (proxy_username, proxy_password) {
+            debug!("🔐 Applying proxy authentication from Vault");
+            base_config = base_config.with_proxy_auth(&u, &p);
+        }
+    }
+
+    // Apply environment variable configuration
+    // If Vault proxy config exists, skip env var proxy config
+    Ok(crate::scan::configure_veracode_with_env_vars_conditional(
+        base_config,
+        !has_vault_proxy,
+    ))
+}
+
 /// Centralized function to create a configured VeracodeConfig from Args
 ///
 /// This function loads credentials directly into VeracodeCredentials and creates
@@ -431,5 +470,132 @@ mod tests {
         let cloned_result = cloned_creds.extract_credentials().unwrap();
 
         assert_eq!(original_result, cloned_result);
+    }
+
+    #[test]
+    fn test_create_veracode_config_with_proxy_full() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+
+        let result = create_veracode_config_with_proxy(
+            credentials,
+            "commercial",
+            Some("http://proxy.example.com:8080".to_string()),
+            Some("proxy_user".to_string()),
+            Some("proxy_pass".to_string()),
+        );
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+
+        // Verify region is set
+        assert_eq!(config.region, VeracodeRegion::Commercial);
+
+        // Verify proxy URL is set
+        assert!(config.proxy_url.is_some());
+        assert_eq!(
+            config.proxy_url.as_ref().unwrap(),
+            "http://proxy.example.com:8080"
+        );
+
+        // Proxy auth should be set (verified through config structure)
+        assert!(config.proxy_username.is_some());
+        assert!(config.proxy_password.is_some());
+    }
+
+    #[test]
+    fn test_create_veracode_config_with_proxy_no_auth() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+
+        let result = create_veracode_config_with_proxy(
+            credentials,
+            "european",
+            Some("http://proxy.example.com:8080".to_string()),
+            None,
+            None,
+        );
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+
+        // Verify region is set
+        assert_eq!(config.region, VeracodeRegion::European);
+
+        // Verify proxy URL is set
+        assert!(config.proxy_url.is_some());
+        assert_eq!(
+            config.proxy_url.as_ref().unwrap(),
+            "http://proxy.example.com:8080"
+        );
+
+        // Proxy auth should not be set
+        assert!(config.proxy_username.is_none());
+        assert!(config.proxy_password.is_none());
+    }
+
+    #[test]
+    fn test_create_veracode_config_with_no_proxy() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+
+        let result = create_veracode_config_with_proxy(credentials, "federal", None, None, None);
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+
+        // Verify region is set
+        assert_eq!(config.region, VeracodeRegion::Federal);
+
+        // Verify no proxy is set
+        assert!(config.proxy_url.is_none());
+        assert!(config.proxy_username.is_none());
+        assert!(config.proxy_password.is_none());
+    }
+
+    #[test]
+    fn test_create_veracode_config_from_credentials_no_proxy() {
+        let credentials = VeracodeCredentials::new(
+            "test_api_id_123".to_string(),
+            "test_api_key_456".to_string(),
+        );
+
+        let result = create_veracode_config_from_credentials(credentials, "commercial");
+
+        assert!(result.is_ok());
+        let config = result.unwrap();
+
+        // Verify region is set
+        assert_eq!(config.region, VeracodeRegion::Commercial);
+
+        // Verify credentials are set (ARC pointers exist)
+        // api_id_arc() and api_key_arc() return Arc directly, not Option
+        assert!(!config.api_id_arc().expose_secret().is_empty());
+        assert!(!config.api_key_arc().expose_secret().is_empty());
+    }
+
+    #[test]
+    fn test_parse_region_from_str() {
+        let commercial = parse_region_from_str("commercial").unwrap();
+        assert_eq!(commercial, VeracodeRegion::Commercial);
+
+        let commercial_upper = parse_region_from_str("COMMERCIAL").unwrap();
+        assert_eq!(commercial_upper, VeracodeRegion::Commercial);
+
+        let european = parse_region_from_str("european").unwrap();
+        assert_eq!(european, VeracodeRegion::European);
+
+        let federal = parse_region_from_str("federal").unwrap();
+        assert_eq!(federal, VeracodeRegion::Federal);
+
+        // Invalid region defaults to commercial
+        let invalid = parse_region_from_str("invalid").unwrap();
+        assert_eq!(invalid, VeracodeRegion::Commercial);
     }
 }

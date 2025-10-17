@@ -11,6 +11,7 @@ A comprehensive Rust client library for the Veracode security platform, providin
 
 - 🔐 **HMAC Authentication** - Built-in Veracode API credential support with automatic signature generation
 - 🛡️ **Secure Credential Handling** - All API credentials are securely wrapped to prevent accidental exposure in logs
+- 🌐 **HTTP Proxy Support** - Configurable HTTP/HTTPS proxy with secure credential handling for corporate networks
 - 🌍 **Multi-Regional Support** - Automatic endpoint routing for Commercial, European, and Federal regions
 - 🔄 **Smart API Routing** - Automatically uses REST or XML APIs based on operation requirements
 - 📱 **Applications API** - Complete application lifecycle management via REST API
@@ -376,6 +377,40 @@ Or in code:
 let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
     .with_certificate_validation_disabled(); // Only for development!
 ```
+
+### HTTP Proxy Configuration
+For corporate network environments requiring proxy access, configure HTTP/HTTPS proxy settings:
+
+```rust
+use veracode_platform::VeracodeConfig;
+
+// Proxy without authentication
+let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
+    .with_proxy("http://proxy.example.com:8080");
+
+// Proxy with authentication (recommended approach)
+let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
+    .with_proxy("http://proxy.example.com:8080")
+    .with_proxy_auth("proxy_username", "proxy_password");
+
+// Proxy with embedded credentials (less secure)
+let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
+    .with_proxy("http://user:pass@proxy.example.com:8080");
+
+// Combine with other configuration
+let config = VeracodeConfig::new("api_id".to_string(), "api_key".to_string())
+    .with_region(VeracodeRegion::Commercial)
+    .with_proxy("http://proxy.example.com:8080")
+    .with_proxy_auth("username", "password")
+    .with_timeouts(60, 600);
+```
+
+**Security Notes:**
+- Proxy credentials are stored using `SecretString` for secure handling
+- Credentials are automatically redacted in debug output
+- Use `with_proxy_auth()` instead of embedded credentials for better security
+- Both HTTP and HTTPS proxy protocols are supported
+- All Veracode API requests will route through the configured proxy
 
 ### HashiCorp Vault Integration
 For enhanced security in production environments, you can retrieve Veracode credentials from HashiCorp Vault using JWT/OIDC authentication:

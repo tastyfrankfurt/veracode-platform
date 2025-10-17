@@ -30,8 +30,8 @@ pub use cli::{Args, Commands};
 pub use credentials::{
     CredentialError, CredentialSource, SecureApiCredentials, VaultConfig,
     check_pipeline_credentials, create_veracode_config_from_args,
-    create_veracode_config_from_credentials, load_api_credentials,
-    load_veracode_credentials_from_args, validate_api_credential,
+    create_veracode_config_from_credentials, create_veracode_config_with_proxy,
+    load_api_credentials, load_veracode_credentials_from_args, validate_api_credential,
 };
 pub use export::{ExportConfig, ExportError, ExportWorkflow};
 pub use filefinder::FileFinder;
@@ -61,7 +61,8 @@ pub use pipeline::{PipelineError, PipelineScanConfig, PipelineSubmitter};
 pub use policy::execute_policy_download;
 pub use scan::{execute_assessment_scan, execute_pipeline_scan};
 pub use vault_client::{
-    VaultCredentialClient, load_vault_config_from_env, load_veracode_credentials_with_vault,
+    VaultCredentialClient, load_credentials_and_proxy_from_vault, load_vault_config_from_env,
+    load_veracode_credentials_with_vault,
 };
 
 use log::error;
