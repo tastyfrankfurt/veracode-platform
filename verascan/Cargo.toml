@@ -1,6 +1,6 @@
 [package]
 name = "verascan"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
@@ -64,3 +64,5 @@ backoff = { version = "0.4", features = ["futures", "tokio"] }
 [dev-dependencies]
 tempfile = "3.20"
 jsonschema = "0.33.0"
+wiremock = "0.6"
+tokio-test = "0.4"

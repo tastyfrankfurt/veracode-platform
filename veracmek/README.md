@@ -68,6 +68,29 @@ The Vault secret should contain:
 - `api_id`: Your Veracode API ID
 - `api_secret`: Your Veracode API Key
 
+Optional proxy configuration fields in Vault secret:
+- `proxy_url`: HTTP/HTTPS proxy URL (e.g., `http://proxy.company.com:8080`)
+- `proxy_username`: Proxy authentication username (optional)
+- `proxy_password`: Proxy authentication password (optional)
+
+**Note**: Proxy configuration in Vault takes precedence over environment variables.
+
+### Proxy Configuration
+
+For corporate network environments requiring proxy access:
+
+```bash
+# Standard proxy configuration (environment variables)
+export HTTPS_PROXY="http://proxy.company.com:8080"
+export HTTP_PROXY="http://proxy.company.com:8080"
+
+# Optional proxy authentication
+export PROXY_USERNAME="proxy-user"
+export PROXY_PASSWORD="proxy-password"
+```
+
+**Priority**: Vault proxy config → Environment variables → Direct connection
+
 ### Region Configuration
 
 Specify the Veracode region:
@@ -252,9 +275,38 @@ export VAULT_CLI_SECRET_PATH="secret/veracode@kvv2"
 veracmek status
 ```
 
+**Vault Secret with Proxy Configuration** (optional):
+
+```json
+{
+  "api_id": "your-veracode-api-id",
+  "api_secret": "your-veracode-api-secret",
+  "proxy_url": "http://proxy.company.com:8080",
+  "proxy_username": "proxy-user",
+  "proxy_password": "proxy-password"
+}
+```
+
+### Using with Proxy (Environment Variables)
+
+```bash
+# Set proxy configuration
+export HTTPS_PROXY="http://proxy.company.com:8080"
+export PROXY_USERNAME="proxy-user"        # Optional: for authenticated proxies
+export PROXY_PASSWORD="proxy-password"    # Optional: for authenticated proxies
+
+# Run commands normally - proxy is automatically used
+veracmek status
+veracmek enable --app "MyApp" --kms-alias "alias/my-key"
+```
+
 ## Security Considerations
 
 - **Credential Storage**: Use Vault integration for production environments
+- **Proxy Security**: Proxy credentials can be stored securely in Vault or environment variables
+  - Vault proxy configuration takes precedence over environment variables
+  - Proxy authentication credentials are handled securely and not exposed in logs
+  - Supports both authenticated and non-authenticated proxies
 - **KMS Permissions**: Ensure your AWS credentials have appropriate KMS permissions
 - **Network Security**: Always use HTTPS for Vault connections
 - **Audit Logging**: Enable appropriate logging levels for audit trails

@@ -139,6 +139,39 @@ impl VaultCredentialClient {
         ))
     }
 
+    /// Retrieve optional proxy credentials from vault
+    /// Returns (proxy_url, proxy_username, proxy_password) as optional values
+    pub async fn get_proxy_credentials(
+        &self,
+        secret_path: &str,
+    ) -> Result<(Option<String>, Option<String>, Option<String>), CredentialError> {
+        let (parsed_secret_path, secret_engine) = parse_secret_path(secret_path);
+        let secret_data =
+            retrieve_vault_secret(&self.client, &parsed_secret_path, &secret_engine).await?;
+
+        // Validate the secret data before processing
+        validate_secret_data(&secret_data)?;
+
+        // Extract optional proxy credentials from vault secret
+        let proxy_url = secret_data
+            .get("proxy_url")
+            .map(|s| s.expose_secret().to_string());
+
+        let proxy_username = secret_data
+            .get("proxy_username")
+            .map(|s| s.expose_secret().to_string());
+
+        let proxy_password = secret_data
+            .get("proxy_password")
+            .map(|s| s.expose_secret().to_string());
+
+        if proxy_url.is_some() {
+            info!("Proxy configuration found in vault secret");
+        }
+
+        Ok((proxy_url, proxy_username, proxy_password))
+    }
+
     /// Revoke the vault token after use
     pub async fn revoke_token(&self) -> Result<(), CredentialError> {
         revoke_vault_token(&self.client).await
@@ -185,45 +218,43 @@ pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
     })
 }
 
-/// Load credentials from vault directly into VeracodeCredentials
-pub async fn load_veracode_credentials_from_vault(
-    config: VaultConfig,
-) -> Result<veracode_platform::VeracodeCredentials, CredentialError> {
-    info!("Loading credentials from vault at: {}", config.addr);
-
-    let vault_client = VaultCredentialClient::new(&config).await?;
-    let credentials = vault_client
-        .get_veracode_credentials(&config.secret_path)
-        .await?;
-
-    // Revoke the token after successful credential retrieval for security
-    if let Err(e) = vault_client.revoke_token().await {
-        warn!("Token revocation failed, but credential retrieval was successful: {e}");
-        // Continue - token revocation failure shouldn't prevent successful completion
-    } else {
-        debug!("Vault token revoked successfully after credential retrieval");
-    }
-
-    Ok(credentials)
-}
-
-/// Load VeracodeCredentials with vault support and environment fallback
-pub async fn load_veracode_credentials_with_vault()
--> Result<veracode_platform::VeracodeCredentials, CredentialError> {
+/// Load VeracodeCredentials and proxy configuration from Vault with environment fallback
+/// Returns (credentials, proxy_url, proxy_username, proxy_password)
+pub async fn load_credentials_and_proxy_from_vault() -> Result<
+    (
+        veracode_platform::VeracodeCredentials,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    CredentialError,
+> {
     // Priority 1: Try vault configuration
     match load_vault_config_from_env() {
         Ok(vault_config) => {
-            info!("Vault configuration found, attempting vault credential retrieval");
-            match load_veracode_credentials_from_vault(vault_config).await {
-                Ok(credentials) => {
-                    info!("Successfully loaded credentials from vault");
-                    return Ok(credentials);
-                }
-                Err(e) => {
-                    warn!("Vault credential loading failed: {e}");
-                    info!("Falling back to environment variables");
-                }
+            info!("Vault configuration found, attempting vault credential and proxy retrieval");
+
+            let vault_client = VaultCredentialClient::new(&vault_config).await?;
+
+            // Load credentials
+            let credentials = vault_client
+                .get_veracode_credentials(&vault_config.secret_path)
+                .await?;
+
+            // Load optional proxy credentials
+            let (proxy_url, proxy_username, proxy_password) = vault_client
+                .get_proxy_credentials(&vault_config.secret_path)
+                .await?;
+
+            // Revoke the token after successful credential retrieval for security
+            if let Err(e) = vault_client.revoke_token().await {
+                warn!("Token revocation failed, but credential retrieval was successful: {e}");
+            } else {
+                debug!("Vault token revoked successfully after credential retrieval");
             }
+
+            info!("Successfully loaded credentials and proxy configuration from vault");
+            return Ok((credentials, proxy_url, proxy_username, proxy_password));
         }
         Err(e) => {
             info!("Vault configuration not available: {e}");
@@ -232,7 +263,8 @@ pub async fn load_veracode_credentials_with_vault()
     }
 
     // Priority 2: Fallback to environment variables
-    crate::credentials::load_veracode_credentials_from_env()
+    let credentials = crate::credentials::load_veracode_credentials_from_env()?;
+    Ok((credentials, None, None, None))
 }
 
 /// Validate vault configuration with comprehensive input sanitization
