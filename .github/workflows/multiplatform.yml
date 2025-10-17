@@ -270,19 +270,19 @@ jobs:
           exit 1
         fi
 
-    - name: Publish to crates.io
-      env:
-        CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
-      run: |
-        PACKAGE_NAME="${{ needs.create-release.outputs.package_name }}"
-
-        # Map package name to crate directory
-        if [[ "$PACKAGE_NAME" == "veracode-api" ]]; then
-          CRATE_DIR="veracode-api"
-        else
-          echo "Unknown package: $PACKAGE_NAME"
-          exit 1
-        fi
-
-        cd "$CRATE_DIR"
-        cargo publish --token "$CARGO_REGISTRY_TOKEN"
+    #- name: Publish to crates.io
+    #  env:
+    #    CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    #  run: |
+    #    PACKAGE_NAME="${{ needs.create-release.outputs.package_name }}"
+#
+    #    # Map package name to crate directory
+    #    if [[ "$PACKAGE_NAME" == "veracode-api" ]]; then
+    #      CRATE_DIR="veracode-api"
+    #    else
+    #      echo "Unknown package: $PACKAGE_NAME"
+    #      exit 1
+    #    fi
+#
+    #    cd "$CRATE_DIR"
+    #    cargo publish --token "$CARGO_REGISTRY_TOKEN"
