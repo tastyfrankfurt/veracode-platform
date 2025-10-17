@@ -5,6 +5,27 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2025-10-15
+
+### Added
+- **HTTP/HTTPS Proxy Support**: Comprehensive proxy support for corporate network environments
+  - **Standard Environment Variables**: Supports `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy`, and `https_proxy`
+  - **Proxy Authentication**: Optional username/password authentication via `PROXY_USERNAME` and `PROXY_PASSWORD`
+  - **Vault Integration**: Proxy credentials can be stored in Vault secrets (`proxy_url`, `proxy_username`, `proxy_password`)
+  - **Credential Hierarchy**: Vault credentials take precedence over environment variables
+  - **Automatic Detection**: Automatically configures proxy from Vault or environment variables
+  - **Non-Authenticated Proxies**: Full support for proxies without authentication
+  - **Certificate Validation**: Proxy configuration preserves existing TLS certificate trust behavior
+  - **Backward Compatible**: No breaking changes to existing configuration
+
+### Technical Details
+- **Modified Files**: `src/credentials.rs`, `src/vault_client.rs`
+- **Credential Loading**: New `load_credentials_and_proxy_from_vault()` function for combined credential retrieval
+- **Configuration Methods**: New `create_veracode_config_with_proxy()` function for applying proxy credentials
+- **Environment Variables**: Updated `configure_veracode_with_env_vars()` to load proxy configuration
+- **Vault Secret Fields**: Added support for optional `proxy_url`, `proxy_username`, and `proxy_password` in Vault secrets
+- **Priority System**: Vault proxy config → Environment variables → Direct connection
+
 ## [0.5.6] - 2025-10-14
 
 ### Changed

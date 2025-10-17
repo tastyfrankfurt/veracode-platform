@@ -908,6 +908,15 @@ pub fn print_environment_variables() {
     println!("  VERASCAN_REQUEST_TIMEOUT         - HTTP request timeout in seconds (default: 30)");
     println!();
 
+    println!("🔀 PROXY CONFIGURATION");
+    println!("  HTTPS_PROXY                      - HTTPS proxy URL (e.g., 'http://proxy:8080')");
+    println!("  HTTP_PROXY                       - HTTP proxy URL (HTTPS_PROXY takes precedence)");
+    println!("  PROXY_USERNAME                   - Proxy username for authentication (optional)");
+    println!("  PROXY_PASSWORD                   - Proxy password for authentication (optional)");
+    println!();
+    println!("  Note: Proxy configuration from Vault takes precedence over environment variables");
+    println!();
+
     println!("🔄 RETRY CONFIGURATION");
     println!("  VERASCAN_MAX_RETRIES             - Maximum retry attempts (default: 3)");
     println!(
@@ -963,6 +972,20 @@ pub fn print_environment_variables() {
     println!("  {{");
     println!("    \"api_id\": \"your-veracode-api-id\",");
     println!("    \"api_secret\": \"your-veracode-api-secret\"");
+    println!("  }}");
+    println!();
+    println!("Proxy configuration:");
+    println!("  export HTTPS_PROXY=\"http://proxy.example.com:8080\"");
+    println!("  export PROXY_USERNAME=\"myuser\"");
+    println!("  export PROXY_PASSWORD=\"mypassword\"");
+    println!();
+    println!("Vault with proxy (in Vault secret JSON):");
+    println!("  {{");
+    println!("    \"api_id\": \"your-veracode-api-id\",");
+    println!("    \"api_secret\": \"your-veracode-api-secret\",");
+    println!("    \"proxy_url\": \"http://proxy.example.com:8080\",");
+    println!("    \"proxy_username\": \"myuser\",");
+    println!("    \"proxy_password\": \"mypassword\"");
     println!("  }}");
 }
 

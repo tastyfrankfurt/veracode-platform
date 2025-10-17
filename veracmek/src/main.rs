@@ -17,8 +17,8 @@ use veracode_platform::{
 mod credentials;
 mod vault_client;
 
-use credentials::create_veracode_config_from_credentials;
-use vault_client::load_veracode_credentials_with_vault;
+use credentials::{create_veracode_config_from_credentials, create_veracode_config_with_proxy};
+use vault_client::load_credentials_and_proxy_from_vault;
 
 /// CLI for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles
 #[derive(Parser)]
@@ -230,11 +230,17 @@ async fn create_client(cli: &Cli) -> AppResult<VeracodeClient> {
     // Create VeracodeConfig directly from credentials
     let veracode_config = match std::env::var("VAULT_CLI_ADDR") {
         Ok(_) => {
-            debug!("Vault configuration detected, attempting Vault credential loading");
-            match load_veracode_credentials_with_vault().await {
-                Ok(credentials) => {
-                    // Create config directly from credentials - no args copying!
-                    match create_veracode_config_from_credentials(credentials, &cli.region) {
+            debug!("Vault configuration detected, attempting Vault credential and proxy loading");
+            match load_credentials_and_proxy_from_vault().await {
+                Ok((credentials, proxy_url, proxy_username, proxy_password)) => {
+                    // Create config with proxy credentials from Vault
+                    match create_veracode_config_with_proxy(
+                        credentials,
+                        &cli.region,
+                        proxy_url,
+                        proxy_username,
+                        proxy_password,
+                    ) {
                         Ok(config) => config,
                         Err(_code) => {
                             return Err(AppError::Config(
@@ -960,6 +966,15 @@ fn print_environment_variables() {
     println!("   VAULT_CLI_AUTH_PATH      - Vault auth path (optional, defaults to 'auth/jwt')");
     println!();
 
+    println!("🌐 HTTP/HTTPS Proxy Configuration:");
+    println!("   HTTPS_PROXY              - HTTPS proxy URL (e.g., 'http://proxy:8080')");
+    println!("   HTTP_PROXY               - HTTP proxy URL (HTTPS_PROXY takes precedence)");
+    println!("   PROXY_USERNAME           - Proxy username for authentication (optional)");
+    println!("   PROXY_PASSWORD           - Proxy password for authentication (optional)");
+    println!();
+    println!("   Note: Proxy configuration from Vault takes precedence over environment variables");
+    println!();
+
     println!("🔒 Security Configuration (Development Only):");
     println!("   VERACMEK_DISABLE_CERT_VALIDATION - Set to 'true' to disable TLS cert validation");
     println!(
@@ -997,8 +1012,24 @@ fn print_environment_variables() {
     println!();
 
     println!("💡 Examples:");
+    println!();
+    println!("Basic usage:");
     println!("   veracmek from-file --file apps.json");
     println!("   veracmek from-file --file apps.json --dry-run");
     println!("   veracmek enable --app my-app --kms-alias alias/my-key");
     println!("   veracmek bulk --kms-alias alias/my-key --dry-run --skip-encrypted");
+    println!();
+    println!("Proxy configuration:");
+    println!("   export HTTPS_PROXY=\"http://proxy.example.com:8080\"");
+    println!("   export PROXY_USERNAME=\"myuser\"");
+    println!("   export PROXY_PASSWORD=\"mypassword\"");
+    println!();
+    println!("Vault with proxy (in Vault secret JSON):");
+    println!("   {{");
+    println!("     \"api_id\": \"your-veracode-api-id\",");
+    println!("     \"api_secret\": \"your-veracode-api-secret\",");
+    println!("     \"proxy_url\": \"http://proxy.example.com:8080\",");
+    println!("     \"proxy_username\": \"myuser\",");
+    println!("     \"proxy_password\": \"mypassword\"");
+    println!("   }}");
 }

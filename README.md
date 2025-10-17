@@ -539,6 +539,16 @@ veracmek status
 | `VERASCAN_REQUEST_TIMEOUT` | `300` | HTTP request timeout in seconds (5 minutes) |
 | `VERASCAN_DISABLE_CERT_VALIDATION` | - | Disable TLS certificate validation (set any value) |
 
+### Proxy Configuration
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HTTP_PROXY` or `http_proxy` | - | HTTP proxy URL (e.g., `http://proxy.company.com:8080`) |
+| `HTTPS_PROXY` or `https_proxy` | - | HTTPS proxy URL (e.g., `http://proxy.company.com:8080`) |
+| `PROXY_USERNAME` or `proxy_username` | - | Proxy authentication username (optional) |
+| `PROXY_PASSWORD` or `proxy_password` | - | Proxy authentication password (optional) |
+
+**Note**: Proxy configuration supports both authenticated and non-authenticated proxies. When using Vault (veracmek only), proxy credentials can also be stored in Vault secrets as `proxy_url`, `proxy_username`, and `proxy_password` fields. Vault proxy configuration takes precedence over environment variables.
+
 ### Retry Configuration  
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -587,6 +597,11 @@ export VERASCAN_DISABLE_CERT_VALIDATION="true"
 
 # Disable jitter for predictable timing in tests
 export VERASCAN_DISABLE_JITTER="true"
+
+# Proxy configuration (for corporate environments)
+export HTTPS_PROXY="http://proxy.company.com:8080"
+export PROXY_USERNAME="proxy-user"              # Optional: for authenticated proxies
+export PROXY_PASSWORD="proxy-password"          # Optional: for authenticated proxies
 ```
 
 ### Benefits
@@ -635,9 +650,14 @@ export RUST_LOG=debug
 
 # Development mode (disable certificate validation - use with caution!)
 export VERACMEK_DISABLE_CERT_VALIDATION=true
+
+# Alternatively, use proxy configuration from environment (Vault takes precedence)
+export HTTPS_PROXY="http://proxy.company.com:8080"
+export PROXY_USERNAME="proxy-user"
+export PROXY_PASSWORD="proxy-password"
 ```
 
-**Note**: When Vault environment variables are detected, veracmek automatically uses Vault for credential retrieval instead of environment variables or CLI arguments.
+**Note**: When Vault environment variables are detected, veracmek automatically uses Vault for credential retrieval instead of environment variables or CLI arguments. Vault secrets can include optional proxy configuration fields (`proxy_url`, `proxy_username`, `proxy_password`) which take precedence over environment variables.
 
 ## 🎛️ Command Reference
 

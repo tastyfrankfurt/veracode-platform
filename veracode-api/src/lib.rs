@@ -610,11 +610,35 @@ pub struct VeracodeConfig {
     pub connect_timeout: u64,
     /// HTTP request timeout in seconds (default: 300)
     pub request_timeout: u64,
+    /// HTTP/HTTPS proxy URL (optional)
+    pub proxy_url: Option<String>,
+    /// Proxy authentication username (optional)
+    pub proxy_username: Option<SecretString>,
+    /// Proxy authentication password (optional)
+    pub proxy_password: Option<SecretString>,
 }
 
 /// Custom Debug implementation for VeracodeConfig that redacts sensitive information
 impl std::fmt::Debug for VeracodeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Redact proxy URL if it contains credentials
+        let proxy_url_redacted = self.proxy_url.as_ref().map(|url| {
+            if url.contains('@') {
+                // URL contains credentials, redact them
+                if let Some(at_pos) = url.rfind('@') {
+                    if let Some(proto_end) = url.find("://") {
+                        format!("{}://[REDACTED]@{}", &url[..proto_end], &url[at_pos + 1..])
+                    } else {
+                        "[REDACTED]".to_string()
+                    }
+                } else {
+                    "[REDACTED]".to_string()
+                }
+            } else {
+                url.clone()
+            }
+        });
+
         f.debug_struct("VeracodeConfig")
             .field("credentials", &self.credentials)
             .field("base_url", &self.base_url)
@@ -625,6 +649,15 @@ impl std::fmt::Debug for VeracodeConfig {
             .field("retry_config", &self.retry_config)
             .field("connect_timeout", &self.connect_timeout)
             .field("request_timeout", &self.request_timeout)
+            .field("proxy_url", &proxy_url_redacted)
+            .field(
+                "proxy_username",
+                &self.proxy_username.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field(
+                "proxy_password",
+                &self.proxy_password.as_ref().map(|_| "[REDACTED]"),
+            )
             .finish()
     }
 }
@@ -680,6 +713,9 @@ impl VeracodeConfig {
             retry_config: RetryConfig::default(),
             connect_timeout: 30,  // Default: 30 seconds
             request_timeout: 300, // Default: 5 minutes
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
         }
     }
 
@@ -701,6 +737,9 @@ impl VeracodeConfig {
             retry_config: RetryConfig::default(),
             connect_timeout: 30,
             request_timeout: 300,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
         }
     }
 
@@ -845,6 +884,74 @@ impl VeracodeConfig {
     #[must_use]
     pub fn api_key_arc(&self) -> Arc<SecretString> {
         self.credentials.api_key_ptr()
+    }
+
+    /// Set the HTTP/HTTPS proxy URL.
+    ///
+    /// Configures an HTTP or HTTPS proxy for all requests. The proxy URL should include
+    /// the protocol (http:// or https://). Credentials can be embedded in the URL or
+    /// set separately using `with_proxy_auth()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `proxy_url` - The proxy URL (e.g., "<http://proxy.example.com:8080>")
+    ///
+    /// # Returns
+    ///
+    /// The updated configuration instance (for method chaining).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use veracode_platform::VeracodeConfig;
+    ///
+    /// // Without authentication
+    /// let config = VeracodeConfig::new("api_id", "api_key")
+    ///     .with_proxy("http://proxy.example.com:8080");
+    ///
+    /// // With embedded credentials (less secure)
+    /// let config = VeracodeConfig::new("api_id", "api_key")
+    ///     .with_proxy("http://user:pass@proxy.example.com:8080");
+    /// ```
+    #[must_use]
+    pub fn with_proxy(mut self, proxy_url: impl Into<String>) -> Self {
+        self.proxy_url = Some(proxy_url.into());
+        self
+    }
+
+    /// Set proxy authentication credentials.
+    ///
+    /// Configures username and password for proxy authentication using HTTP Basic Auth.
+    /// This is more secure than embedding credentials in the proxy URL as the credentials
+    /// are stored using SecretString and properly redacted in debug output.
+    ///
+    /// # Arguments
+    ///
+    /// * `username` - The proxy username
+    /// * `password` - The proxy password
+    ///
+    /// # Returns
+    ///
+    /// The updated configuration instance (for method chaining).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// use veracode_platform::VeracodeConfig;
+    ///
+    /// let config = VeracodeConfig::new("api_id", "api_key")
+    ///     .with_proxy("http://proxy.example.com:8080")
+    ///     .with_proxy_auth("username", "password");
+    /// ```
+    #[must_use]
+    pub fn with_proxy_auth(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.proxy_username = Some(SecretString::new(username.into().into()));
+        self.proxy_password = Some(SecretString::new(password.into().into()));
+        self
     }
 }
 
