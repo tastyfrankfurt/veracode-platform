@@ -1,6 +1,6 @@
 [package]
 name = "veracmek"
-version = "0.5.6"
+version = "0.5.7"
 edition = "2024"
 description = "CLI tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles"
 authors = ["Veracode API Team"]

@@ -20,7 +20,19 @@ use veracode_platform::{RetryConfig, VeracodeConfig, VeracodeRegion};
 /// This function applies the same environment variables used by GitLab HTTP client
 /// to the VeracodeConfig for consistent configuration across the application.
 #[must_use]
-pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig) -> VeracodeConfig {
+pub fn configure_veracode_with_env_vars(config: VeracodeConfig) -> VeracodeConfig {
+    configure_veracode_with_env_vars_conditional(config, true)
+}
+
+/// Configure VeracodeConfig with environment variables (with conditional proxy loading)
+///
+/// This function applies various environment variable settings to the VeracodeConfig.
+/// If `include_proxy` is false, proxy configuration from env vars is skipped.
+#[must_use]
+pub fn configure_veracode_with_env_vars_conditional(
+    mut config: VeracodeConfig,
+    include_proxy: bool,
+) -> VeracodeConfig {
     use std::env;
 
     // Certificate validation
@@ -104,6 +116,34 @@ pub fn configure_veracode_with_env_vars(mut config: VeracodeConfig) -> VeracodeC
 
     if retry_modified {
         config = config.with_retry_config(retry_config);
+    }
+
+    // Proxy configuration from environment variables (if enabled)
+    if include_proxy {
+        let proxy_url = env::var("HTTPS_PROXY")
+            .or_else(|_| env::var("https_proxy"))
+            .or_else(|_| env::var("HTTP_PROXY"))
+            .or_else(|_| env::var("http_proxy"))
+            .ok();
+
+        if let Some(url) = proxy_url {
+            debug!("🔒 Proxy configuration detected from environment: {}", url);
+            config = config.with_proxy(&url);
+
+            // Try to load proxy authentication credentials
+            let username = env::var("PROXY_USERNAME")
+                .or_else(|_| env::var("proxy_username"))
+                .ok();
+
+            let password = env::var("PROXY_PASSWORD")
+                .or_else(|_| env::var("proxy_password"))
+                .ok();
+
+            if let (Some(u), Some(p)) = (username, password) {
+                debug!("🔐 Proxy authentication credentials found in environment");
+                config = config.with_proxy_auth(&u, &p);
+            }
+        }
     }
 
     config

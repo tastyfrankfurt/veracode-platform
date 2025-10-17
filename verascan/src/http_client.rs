@@ -105,6 +105,12 @@ pub struct HttpClientConfig {
     pub timeouts: HttpTimeouts,
     pub retry_config: RetryConfig,
     pub disable_cert_validation: bool,
+    /// HTTP/HTTPS proxy URL (optional)
+    pub proxy_url: Option<String>,
+    /// Proxy authentication username (optional)
+    pub proxy_username: Option<String>,
+    /// Proxy authentication password (optional)
+    pub proxy_password: Option<String>,
 }
 
 impl HttpClientConfig {
@@ -116,6 +122,9 @@ impl HttpClientConfig {
             timeouts: HttpTimeouts::default(),
             retry_config: RetryConfig::default(),
             disable_cert_validation: false,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
         }
     }
 
@@ -140,6 +149,25 @@ impl HttpClientConfig {
     #[must_use]
     pub fn with_cert_validation(mut self, validate: bool) -> Self {
         self.disable_cert_validation = !validate;
+        self
+    }
+
+    /// Set HTTP/HTTPS proxy URL
+    #[must_use]
+    pub fn with_proxy(mut self, proxy_url: impl Into<String>) -> Self {
+        self.proxy_url = Some(proxy_url.into());
+        self
+    }
+
+    /// Set proxy authentication credentials
+    #[must_use]
+    pub fn with_proxy_auth(
+        mut self,
+        username: impl Into<String>,
+        password: impl Into<String>,
+    ) -> Self {
+        self.proxy_username = Some(username.into());
+        self.proxy_password = Some(password.into());
         self
     }
 }
@@ -236,6 +264,23 @@ impl RobustHttpClient {
             client_builder = client_builder
                 .danger_accept_invalid_certs(true)
                 .danger_accept_invalid_hostnames(true);
+        }
+
+        // Configure proxy if specified
+        if let Some(proxy_url) = &config.proxy_url {
+            let mut proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                HttpClientError::ConfigurationError(format!("Invalid proxy URL: {e}"))
+            })?;
+
+            // Add basic authentication if credentials are provided
+            if let (Some(username), Some(password)) =
+                (&config.proxy_username, &config.proxy_password)
+            {
+                proxy = proxy.basic_auth(username, password);
+            }
+
+            client_builder = client_builder.proxy(proxy);
+            debug!("🔒 HTTP proxy configured: {}", proxy_url);
         }
 
         let client = client_builder
@@ -633,6 +678,65 @@ impl HttpClientConfigBuilder {
 
         self.config.disable_cert_validation =
             env::var(format!("{prefix}_DISABLE_CERT_VALIDATION")).is_ok();
+        self
+    }
+
+    /// Load proxy configuration from environment variables
+    ///
+    /// Checks for standard HTTP_PROXY/HTTPS_PROXY variables first,
+    /// then falls back to prefixed variables if provided.
+    /// Also loads proxy authentication credentials if available.
+    #[must_use]
+    pub fn with_env_proxy(mut self, prefix: Option<&str>) -> Self {
+        use std::env;
+
+        // Try standard environment variables first
+        let proxy_url = env::var("HTTPS_PROXY")
+            .or_else(|_| env::var("https_proxy"))
+            .or_else(|_| env::var("HTTP_PROXY"))
+            .or_else(|_| env::var("http_proxy"))
+            .or_else(|_| {
+                // Try prefixed variables if prefix is provided
+                if let Some(prefix) = prefix {
+                    env::var(format!("{prefix}_PROXY_URL"))
+                } else {
+                    Err(env::VarError::NotPresent)
+                }
+            })
+            .ok();
+
+        if let Some(url) = proxy_url {
+            self.config.proxy_url = Some(url);
+
+            // Try to load proxy authentication credentials
+            let username = env::var("PROXY_USERNAME")
+                .or_else(|_| env::var("proxy_username"))
+                .or_else(|_| {
+                    if let Some(prefix) = prefix {
+                        env::var(format!("{prefix}_PROXY_USERNAME"))
+                    } else {
+                        Err(env::VarError::NotPresent)
+                    }
+                })
+                .ok();
+
+            let password = env::var("PROXY_PASSWORD")
+                .or_else(|_| env::var("proxy_password"))
+                .or_else(|_| {
+                    if let Some(prefix) = prefix {
+                        env::var(format!("{prefix}_PROXY_PASSWORD"))
+                    } else {
+                        Err(env::VarError::NotPresent)
+                    }
+                })
+                .ok();
+
+            if let (Some(u), Some(p)) = (username, password) {
+                self.config.proxy_username = Some(u);
+                self.config.proxy_password = Some(p);
+            }
+        }
+
         self
     }
 

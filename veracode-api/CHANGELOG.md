@@ -5,6 +5,57 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.6] - 2025-10-15
+
+### Added
+- **HTTP Proxy Support**: Comprehensive proxy configuration for corporate network environments
+  - **New Configuration Fields**: Added `proxy_url`, `proxy_username`, and `proxy_password` to `VeracodeConfig`
+  - **Proxy Configuration Methods**:
+    - `with_proxy(proxy_url)` - Configure HTTP/HTTPS proxy URL
+    - `with_proxy_auth(username, password)` - Set proxy authentication credentials
+  - **Secure Credential Handling**: Proxy credentials stored using `SecretString` with automatic redaction in debug output
+  - **Flexible Authentication**: Supports both embedded credentials in URL and separate username/password configuration
+  - **Protocol Support**: Compatible with both HTTP and HTTPS proxy servers
+  - **Method Chaining**: Fluent API design consistent with other configuration methods
+
+### Enhanced
+- **Debug Safety**: Extended `VeracodeConfig` Debug implementation to redact proxy credentials
+  - Proxy URLs with embedded credentials show as `[REDACTED]`
+  - Proxy username and password fields are redacted in debug output
+  - Non-authenticated proxy URLs are displayed normally for debugging
+
+### Security
+- **Credential Protection**: All proxy authentication credentials use `secrecy` crate for secure handling
+  - Prevents accidental credential exposure in logs and debug output
+  - Uses `ExposeSecret` trait for controlled access to sensitive data
+  - Maintains consistency with existing Veracode API credential handling
+
+### Usage Examples
+
+```rust
+use veracode_platform::VeracodeConfig;
+
+// Proxy without authentication
+let config = VeracodeConfig::new("api_id", "api_key")
+    .with_proxy("http://proxy.example.com:8080");
+
+// Proxy with authentication (recommended approach)
+let config = VeracodeConfig::new("api_id", "api_key")
+    .with_proxy("http://proxy.example.com:8080")
+    .with_proxy_auth("username", "password");
+
+// Proxy with embedded credentials (less secure)
+let config = VeracodeConfig::new("api_id", "api_key")
+    .with_proxy("http://user:pass@proxy.example.com:8080");
+
+// Combine with other configuration
+let config = VeracodeConfig::new("api_id", "api_key")
+    .with_region(VeracodeRegion::Commercial)
+    .with_proxy("http://proxy.example.com:8080")
+    .with_proxy_auth("username", "password")
+    .with_timeouts(60, 600);
+```
+
 ## [0.5.5] - 2025-10-10
 
 ### Added

@@ -7,6 +7,7 @@ use hex;
 use hmac::{Hmac, Mac};
 use log::{info, warn};
 use reqwest::{Client, multipart};
+use secrecy::ExposeSecret;
 use serde::Serialize;
 use sha2::Sha256;
 use std::borrow::Cow;
@@ -87,6 +88,21 @@ impl VeracodeClient {
         client_builder = client_builder
             .connect_timeout(Duration::from_secs(config.connect_timeout))
             .timeout(Duration::from_secs(config.request_timeout));
+
+        // Configure proxy if specified
+        if let Some(proxy_url) = &config.proxy_url {
+            let mut proxy = reqwest::Proxy::all(proxy_url)
+                .map_err(|e| VeracodeError::InvalidConfig(format!("Invalid proxy URL: {e}")))?;
+
+            // Add basic authentication if credentials are provided
+            if let (Some(username), Some(password)) =
+                (&config.proxy_username, &config.proxy_password)
+            {
+                proxy = proxy.basic_auth(username.expose_secret(), password.expose_secret());
+            }
+
+            client_builder = client_builder.proxy(proxy);
+        }
 
         let client = client_builder.build().map_err(VeracodeError::Http)?;
         Ok(Self { config, client })

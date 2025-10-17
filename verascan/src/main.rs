@@ -3,9 +3,9 @@ use log::{LevelFilter, debug, error};
 use verascan::cli::print_environment_variables;
 use verascan::credentials::load_veracode_credentials_from_env;
 use verascan::{
-    Args, Commands, create_veracode_config_from_credentials, execute_assessment_scan,
-    execute_file_search, execute_findings_export, execute_pipeline_scan, execute_policy_download,
-    load_veracode_credentials_with_vault,
+    Args, Commands, create_veracode_config_from_credentials, create_veracode_config_with_proxy,
+    execute_assessment_scan, execute_file_search, execute_findings_export, execute_pipeline_scan,
+    execute_policy_download, load_credentials_and_proxy_from_vault,
 };
 
 fn main() {
@@ -48,13 +48,19 @@ fn main() {
     // Load credentials directly into VeracodeCredentials - no args exposure!
     let veracode_config = match std::env::var("VAULT_CLI_ADDR") {
         Ok(_) => {
-            debug!("Vault configuration detected, attempting Vault credential loading");
+            debug!("Vault configuration detected, attempting Vault credential and proxy loading");
             // Create runtime only for vault credential loading
             let runtime = tokio::runtime::Runtime::new().unwrap();
-            match runtime.block_on(load_veracode_credentials_with_vault()) {
-                Ok(credentials) => {
-                    // Create config directly from credentials - no args copying!
-                    match create_veracode_config_from_credentials(credentials, &args.region) {
+            match runtime.block_on(load_credentials_and_proxy_from_vault()) {
+                Ok((credentials, proxy_url, proxy_username, proxy_password)) => {
+                    // Create config with credentials and proxy - Vault proxy takes precedence!
+                    match create_veracode_config_with_proxy(
+                        credentials,
+                        &args.region,
+                        proxy_url,
+                        proxy_username,
+                        proxy_password,
+                    ) {
                         Ok(config) => config,
                         Err(code) => {
                             error!("❌ Failed to create Veracode configuration");
@@ -63,7 +69,7 @@ fn main() {
                     }
                 }
                 Err(e) => {
-                    error!("❌ Failed to load credentials from vault: {e}");
+                    error!("❌ Failed to load credentials and proxy from vault: {e}");
                     std::process::exit(1);
                 }
             }
