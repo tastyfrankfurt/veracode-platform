@@ -243,6 +243,7 @@ impl VeracodeWorkflow {
                             config.business_criticality,
                             config.app_description,
                             None, // No teams specified
+                            None, // No repo URL specified
                         )
                         .await
                     {

@@ -5,6 +5,33 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2025-10-18
+
+### Added
+- **Repository URL Support**: Added support for associating Git repository URLs with Veracode applications
+  - **New CLI Parameter**: Added `--repo-url` parameter for assessment scans to specify repository URL
+  - **Auto-detection**: Automatically detects Git repository URL from local repository if not specified via CLI
+  - **URL Validation**: Added `validate_project_url` function to ensure repository URLs are properly formatted
+  - **Profile Integration**: Repository URL is passed to application profile creation for improved traceability
+  - **Manual Override**: CLI parameter takes precedence over auto-detected repository URL
+  - **Debug Logging**: Added comprehensive logging showing repository URL resolution (manual vs auto-detected)
+  - **Use Cases**: Enables automatic correlation between Veracode applications and source code repositories (GitHub, GitLab, Bitbucket, etc.)
+
+### Enhanced
+- **Assessment Scan Configuration**: Enhanced application creation workflow to include repository URL
+  - **Automatic Detection**: Uses `resolve_git_project_url()` to auto-detect repository URL from Git remote configuration
+  - **Fallback Handling**: Gracefully handles cases where Git repository is not available or remote is not configured
+  - **Clear Feedback**: Debug output indicates whether repository URL was provided via CLI, auto-detected, or not available
+  - **Integration**: Repository URL flows through to `create_application_if_not_exists()` API call
+
+### Technical Details
+- **Modified Files**: `src/cli.rs`, `src/scan.rs`
+- **CLI Integration**: Added `repo_url: Option<String>` field to assessment scan command arguments
+- **Validation**: Repository URL validation uses `validate_project_url()` for input sanitization
+- **Resolution Priority**: CLI argument → Auto-detection from Git → None
+- **API Integration**: Leverages enhanced veracode-api v0.5.7+ with repository URL support
+- **Test Coverage**: Updated unit tests to include repo_url field handling
+
 ## [0.5.8] - 2025-10-15
 
 ### Added
