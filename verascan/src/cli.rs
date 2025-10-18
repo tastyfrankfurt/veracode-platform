@@ -254,6 +254,10 @@ pub enum Commands {
         #[arg(long = "bus-cri", help = "Business criticality level for application creation (very-high, high, medium, low, very-low)", default_value = "very-high", value_parser = validate_business_criticality)]
         bus_cri: String,
 
+        /// Repository URL for the application (e.g., Git repository URL)
+        #[arg(long = "repo-url", help = "Git repository URL to associate with the application profile (e.g., 'https://github.com/user/repo')", value_parser = validate_project_url)]
+        repo_url: Option<String>,
+
         /// Submit scan and exit without waiting for completion
         #[arg(
             long = "no-wait",
@@ -1097,6 +1101,7 @@ mod tests {
                 no_wait: false,
                 teamname: None,
                 bus_cri: "very-high".to_string(),
+                repo_url: None,
                 deleteincompletescan: 1,
                 break_build: false,
                 force_buildinfo_api: false,

@@ -101,6 +101,7 @@ async fn test_application_operations(
                     BusinessCriticality::Low, // Use low criticality for testing
                     Some("Rust API validation test application".to_string()),
                     None, // No teams specified
+                    None, // No repo URL specified
                 )
                 .await?;
 

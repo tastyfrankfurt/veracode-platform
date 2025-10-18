@@ -14,7 +14,7 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - 🌐 **HTTP Proxy Support** - Configurable HTTP/HTTPS proxy with secure credential handling for corporate networks
 - 🌍 **Multi-Regional Support** - Automatic endpoint routing for Commercial, European, and Federal regions
 - 🔄 **Smart API Routing** - Automatically uses REST or XML APIs based on operation requirements
-- 📱 **Applications API** - Complete application lifecycle management via REST API
+- 📱 **Applications API** - Complete application lifecycle management via REST API with Git repository URL tracking
 - 👥 **Identity API** - User and team management via REST API
 - 🔍 **Pipeline Scan API** - CI/CD security scanning via REST API
 - 🧪 **Sandbox API** - Development sandbox management via REST API
@@ -38,7 +38,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.5.3"
+veracode-platform = "0.5.7"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -126,13 +126,24 @@ let create_request = CreateApplicationRequest {
 };
 let new_app = client.create_application(create_request).await?;
 
-// Create application with team assignment (new in 0.5.1)
+// Create application with team assignment (new in 0.5.3)
 // Teams are automatically resolved from names to GUIDs
 let app_with_teams = client.create_application_if_not_exists(
     "My Team App",
     BusinessCriticality::High,
     Some("App with team assignment".to_string()),
-    Some(vec!["Security Team".to_string(), "Development Team".to_string()])
+    Some(vec!["Security Team".to_string(), "Development Team".to_string()]),
+    None, // No repository URL
+).await?;
+
+// Create application with repository URL tracking (new in 0.5.7)
+// Associates a Git repository URL with the application profile
+let app_with_repo = client.create_application_if_not_exists(
+    "My Git Project",
+    BusinessCriticality::High,
+    Some("Application with Git repository tracking".to_string()),
+    Some(vec!["Development Team".to_string()]),
+    Some("https://github.com/user/my-project".to_string()), // Git repository URL
 ).await?;
 ```
 
