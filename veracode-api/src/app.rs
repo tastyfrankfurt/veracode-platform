@@ -72,6 +72,9 @@ pub struct Profile {
     /// Customer Managed Encryption Key (CMEK) alias for encrypting application data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_kms_alias: Option<String>,
+    /// Repository URL for the application (e.g., Git repository URL)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -251,6 +254,9 @@ pub struct CreateApplicationProfile {
     /// Customer Managed Encryption Key (CMEK) alias for encrypting application data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_kms_alias: Option<String>,
+    /// Repository URL for the application (e.g., Git repository URL)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
 }
 
 /// Business criticality levels for applications
@@ -361,6 +367,9 @@ pub struct UpdateApplicationProfile {
     /// Customer Managed Encryption Key (CMEK) alias for encrypting application data
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_kms_alias: Option<String>,
+    /// Repository URL for the application (e.g., Git repository URL)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
 }
 
 /// Query parameters for filtering applications.
@@ -809,6 +818,7 @@ impl VeracodeClient {
     /// * `business_criticality` - Business criticality level (required for creation)
     /// * `description` - Optional description for new applications
     /// * `team_names` - Optional list of team names to assign to the application
+    /// * `repo_url` - Optional repository URL for the application (e.g., Git repository URL)
     ///
     /// # Returns
     ///
@@ -819,6 +829,7 @@ impl VeracodeClient {
         business_criticality: BusinessCriticality,
         description: Option<String>,
         team_names: Option<Vec<String>>,
+        repo_url: Option<String>,
     ) -> Result<Application, VeracodeError> {
         // First, check if application already exists
         if let Some(existing_app) = self.get_application_by_name(name).await? {
@@ -874,6 +885,7 @@ impl VeracodeClient {
                 tags: None,
                 custom_fields: None,
                 custom_kms_alias: None,
+                repo_url,
             },
         };
 
@@ -934,6 +946,7 @@ impl VeracodeClient {
                 tags: None,
                 custom_fields: None,
                 custom_kms_alias: None,
+                repo_url: None,
             },
         };
 
@@ -960,7 +973,7 @@ impl VeracodeClient {
         business_criticality: BusinessCriticality,
         description: Option<String>,
     ) -> Result<Application, VeracodeError> {
-        self.create_application_if_not_exists(name, business_criticality, description, None)
+        self.create_application_if_not_exists(name, business_criticality, description, None, None)
             .await
     }
 
@@ -1027,6 +1040,7 @@ impl VeracodeClient {
                 tags: profile.tags,
                 custom_fields: profile.custom_fields,
                 custom_kms_alias: Some(kms_alias.to_string()),
+                repo_url: profile.repo_url,
             },
         };
 
@@ -1074,6 +1088,7 @@ impl VeracodeClient {
                 tags: profile.tags,
                 custom_fields: profile.custom_fields,
                 custom_kms_alias: Some(new_kms_alias.to_string()),
+                repo_url: profile.repo_url,
             },
         };
 
@@ -1218,6 +1233,7 @@ mod tests {
                 tags: None,
                 custom_fields: None,
                 custom_kms_alias: None,
+                repo_url: None,
             },
         };
 
@@ -1265,6 +1281,7 @@ mod tests {
                 tags: None,
                 custom_fields: None,
                 custom_kms_alias: None,
+                repo_url: None,
             },
         };
 
@@ -1297,6 +1314,7 @@ mod tests {
             tags: None,
             custom_fields: None,
             custom_kms_alias: Some("alias/my-app-key".to_string()),
+            repo_url: None,
         };
 
         let json = serde_json::to_string(&profile_with_cmek).unwrap();
@@ -1315,6 +1333,7 @@ mod tests {
             tags: None,
             custom_fields: None,
             custom_kms_alias: None,
+            repo_url: None,
         };
 
         let json = serde_json::to_string(&profile_without_cmek).unwrap();
@@ -1335,6 +1354,7 @@ mod tests {
             tags: None,
             custom_fields: None,
             custom_kms_alias: Some("alias/updated-key".to_string()),
+            repo_url: None,
         };
 
         let json = serde_json::to_string(&profile_with_cmek).unwrap();
@@ -1353,6 +1373,7 @@ mod tests {
             tags: None,
             custom_fields: None,
             custom_kms_alias: None,
+            repo_url: None,
         };
 
         let json = serde_json::to_string(&profile_without_cmek).unwrap();
@@ -1411,6 +1432,7 @@ mod tests {
             tags: None,
             custom_fields: None,
             custom_kms_alias: None,
+            repo_url: None,
         };
 
         let request = CreateApplicationRequest {

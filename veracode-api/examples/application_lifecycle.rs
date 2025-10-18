@@ -38,6 +38,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tags: Some("test,lifecycle,rust-api".to_string()),
             custom_fields: None,
             custom_kms_alias: None,
+            repo_url: None,
         },
     };
 
@@ -84,6 +85,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             tags: Some("test,lifecycle,rust-api,updated".to_string()),
             custom_fields: None,
             custom_kms_alias: None,
+            repo_url: None,
         },
     };
 

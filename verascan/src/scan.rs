@@ -1680,6 +1680,7 @@ async fn execute_assessment_scan_async(
         app_profile_name,
         teamname,
         bus_cri,
+        repo_url,
         ..
     } = &args.command
     {
@@ -1701,6 +1702,18 @@ async fn execute_assessment_scan_async(
             // Team validation is now handled during application creation with clear error messages
         }
 
+        // Resolve repository URL: use CLI arg if provided, otherwise auto-detect from git
+        let resolved_repo_url = repo_url
+            .as_ref()
+            .map(|s| s.to_string())
+            .or_else(resolve_git_project_url);
+
+        if let Some(ref url) = resolved_repo_url {
+            debug!("   Repository URL: {}", url);
+        } else {
+            debug!("   Repository URL: Not provided and auto-detection failed");
+        }
+
         let app_id = match submitter
             .client
             .create_application_if_not_exists(
@@ -1708,6 +1721,7 @@ async fn execute_assessment_scan_async(
                 crate::cli::parse_business_criticality(bus_cri),
                 Some("Application created for assessment scanning".to_string()),
                 team_names,
+                resolved_repo_url,
             )
             .await
         {

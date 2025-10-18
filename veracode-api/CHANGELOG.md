@@ -5,6 +5,36 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.7] - 2025-10-18
+
+### Added
+- **Repository URL Field**: Added support for tracking Git repository URLs in application profiles
+  - **New Profile Field**: Added `repo_url` field to `Profile`, `CreateApplicationProfile`, and `UpdateApplicationProfile` structs
+  - **Enhanced Application Creation**: Updated `create_application_if_not_exists()` method to accept optional `repo_url` parameter
+  - **Git Integration**: Enables tracking of source code repository URLs (e.g., GitHub, GitLab, Bitbucket URLs)
+  - **Backward Compatible**: Optional field with `skip_serializing_if = "Option::is_none"` - no breaking changes
+  - **Documentation**: Added comprehensive documentation for repository URL parameter usage
+  - **Use Cases**: Enables correlation between Veracode applications and source code repositories for improved traceability
+
+### Changed
+- **API Method Signatures**: Updated application creation methods to include repository URL support
+  - `create_application_if_not_exists(name, business_criticality, description, team_names, repo_url)` - Added repo_url parameter
+  - All existing callers updated to pass `None` for repo_url to maintain compatibility
+  - Convenience method `create_application_simple()` continues to work unchanged by passing `None` internally
+
+### Updated
+- **Dependencies**: Updated to latest stable versions
+  - `cfg-if`: 1.0.3 → 1.0.4
+  - `mio`: 1.0.4 → 1.1.0
+  - `rustls`: 0.23.32 → 0.23.33
+  - `rustls-native-certs`: 0.8.1 → 0.8.2
+
+### Technical Details
+- **Modified Structs**: Enhanced `Profile`, `CreateApplicationProfile`, and `UpdateApplicationProfile` with `repo_url: Option<String>`
+- **Serialization**: Repository URL field uses `#[serde(skip_serializing_if = "Option::is_none")]` for clean JSON output
+- **Test Coverage**: Updated all unit tests and examples to include repo_url field
+- **Examples Updated**: All example files (`application_lifecycle.rs`, `sandbox_scan_lifecycle.rs`, `team_lookup_example.rs`, `xml_api_workflow_validation.rs`) updated with repo_url support
+
 ## [0.5.6] - 2025-10-15
 
 ### Added
