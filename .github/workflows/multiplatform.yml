@@ -5,6 +5,7 @@ on:
     tags:
       - 'verascan/v*'
       - 'veracmek/v*'
+      - 'veraaudit/v*'
       - 'veracode-api/v*'
 
 permissions:
@@ -37,7 +38,7 @@ jobs:
         echo "version=$VERSION" >> $GITHUB_OUTPUT
 
         # Determine if this is a binary package
-        if [[ "$PACKAGE_NAME" == "verascan" || "$PACKAGE_NAME" == "veracmek" ]]; then
+        if [[ "$PACKAGE_NAME" == "verascan" || "$PACKAGE_NAME" == "veracmek" || "$PACKAGE_NAME" == "veraaudit" ]]; then
           echo "is_binary=true" >> $GITHUB_OUTPUT
         else
           echo "is_binary=false" >> $GITHUB_OUTPUT
@@ -73,6 +74,20 @@ jobs:
           BODY="## veracmek $VERSION
 
         CLI Customer Managed Encryption Key (CMEK) management tool for Veracode.
+
+        **Multi-platform binaries:**
+        - Linux (x86_64 glibc)
+        - Linux (x86_64 musl)
+        - Windows (x86_64)
+        - macOS (ARM64)
+
+        Download the appropriate binary for your platform below."
+
+        elif [[ "$PACKAGE_NAME" == "veraaudit" ]]; then
+          RELEASE_NAME="veraaudit $VERSION"
+          BODY="## veraaudit $VERSION
+
+        CLI audit log retrieval and archiving tool for Veracode using the Reporting REST API.
 
         **Multi-platform binaries:**
         - Linux (x86_64 glibc)
@@ -149,6 +164,27 @@ jobs:
             package: veracmek
             binary_name: veracmek
             asset_name: veracmek-macos-arm64
+          # veraaudit builds
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            package: veraaudit
+            binary_name: veraaudit
+            asset_name: veraaudit-linux-gnu-amd64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+            package: veraaudit
+            binary_name: veraaudit
+            asset_name: veraaudit-linux-musl-amd64
+          - os: windows-latest
+            target: x86_64-pc-windows-gnu
+            package: veraaudit
+            binary_name: veraaudit.exe
+            asset_name: veraaudit-windows-gnu-amd64.exe
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            package: veraaudit
+            binary_name: veraaudit
+            asset_name: veraaudit-macos-arm64
 
     runs-on: ${{ matrix.os }}
 
