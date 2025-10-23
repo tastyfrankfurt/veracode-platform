@@ -1,13 +1,13 @@
 [package]
-name = "veracmek"
+name = "veraaudit"
 version = "0.5.7"
 edition = "2024"
-description = "CLI tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles"
+description = "CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API"
 authors = ["Veracode API Team"]
 license = "MIT OR Apache-2.0"
 
 [[bin]]
-name = "veracmek"
+name = "veraaudit"
 path = "src/main.rs"
 
 [dependencies]
@@ -19,7 +19,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Local dependency
-veracode-platform = { path = "../veracode-api", version = "0.5.6" }
+veracode-platform = { path = "../veracode-api", version = "0.5.7" }
 
 # Additional dependencies for CLI functionality
 env_logger = "0.11"
@@ -31,3 +31,12 @@ anyhow = "1.0"
 vaultrs = "0.7"
 backoff = { version = "0.4", features = ["futures", "tokio"] }
 url = "2.5"
+
+# Date/time handling for timestamps and date ranges
+chrono = "0.4"
+
+# Service mode scheduling
+tokio-cron-scheduler = "0.15"
+
+[dev-dependencies]
+tempfile = "3.8"

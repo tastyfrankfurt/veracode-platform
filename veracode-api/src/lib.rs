@@ -95,6 +95,7 @@ pub mod findings;
 pub mod identity;
 pub mod pipeline;
 pub mod policy;
+pub mod reporting;
 pub mod sandbox;
 pub mod scan;
 pub mod workflow;
@@ -132,6 +133,7 @@ pub use policy::{
     ApiSource, PolicyApi, PolicyComplianceResult, PolicyComplianceStatus, PolicyError, PolicyRule,
     PolicyScanRequest, PolicyScanResult, PolicyThresholds, ScanType, SecurityPolicy, SummaryReport,
 };
+pub use reporting::{AuditReportRequest, GenerateReportResponse, ReportingApi, ReportingError};
 pub use sandbox::{
     ApiError, ApiErrorResponse, CreateSandboxRequest, Sandbox, SandboxApi, SandboxError,
     SandboxListParams, SandboxScan, UpdateSandboxRequest,
@@ -442,6 +444,13 @@ impl VeracodeClient {
     #[must_use]
     pub fn findings_api(&self) -> FindingsApi {
         FindingsApi::new(self.clone())
+    }
+
+    /// Get a reporting API instance.
+    /// Uses REST API (api.veracode.*).
+    #[must_use]
+    pub fn reporting_api(&self) -> reporting::ReportingApi {
+        reporting::ReportingApi::new(self.clone())
     }
 
     /// Get a scan API instance.

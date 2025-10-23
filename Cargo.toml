@@ -1,6 +1,8 @@
 [workspace]
 resolver = "2"
-members = [ "veracmek",
+members = [
+    "veraaudit",
+    "veracmek",
     "veracode-api",
     "verascan"
 ]
