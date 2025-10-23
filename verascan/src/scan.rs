@@ -1696,8 +1696,7 @@ async fn execute_assessment_scan_async(
         });
 
         if let Some(ref teams) = team_names {
-            debug!("   Teams to assign: {}", teams.join(", "));
-            debug!("   Team names as Vec<String>: {:?}", teams);
+            debug!("   Teams to assign: [{}]", teams.join(", "));
 
             // Team validation is now handled during application creation with clear error messages
         }

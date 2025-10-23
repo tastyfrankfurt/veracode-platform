@@ -810,19 +810,84 @@ impl VeracodeClient {
     /// Create application if it doesn't exist, or return existing application.
     ///
     /// This method implements the "check and create" pattern commonly needed
-    /// for automated workflows.
+    /// for automated workflows. It intelligently updates missing fields on existing
+    /// applications without overriding any existing values.
+    ///
+    /// # Behavior
+    ///
+    /// - **If application doesn't exist**: Creates it with all provided parameters
+    /// - **If application exists**:
+    ///   - Updates `repo_url` if current value is None/empty and parameter is provided
+    ///   - Updates `description` if current value is None/empty and parameter is provided
+    ///   - Never modifies `business_criticality` or `teams` on existing applications
+    ///   - All other existing profile settings are preserved
+    ///
+    /// This "fill in blanks" strategy ensures safe automation without overriding
+    /// intentional configuration changes made through other workflows.
     ///
     /// # Arguments
     ///
     /// * `name` - The name of the application
-    /// * `business_criticality` - Business criticality level (required for creation)
-    /// * `description` - Optional description for new applications
-    /// * `team_names` - Optional list of team names to assign to the application
-    /// * `repo_url` - Optional repository URL for the application (e.g., Git repository URL)
+    /// * `business_criticality` - Business criticality level (required for creation, ignored for existing apps)
+    /// * `description` - Optional description (sets on creation, updates if missing on existing apps)
+    /// * `team_names` - Optional list of team names (sets on creation, ignored for existing apps)
+    /// * `repo_url` - Optional repository URL (sets on creation, updates if missing on existing apps)
     ///
     /// # Returns
     ///
-    /// A `Result` containing the application (existing or newly created).
+    /// A `Result` containing the application (existing, updated, or newly created).
+    ///
+    /// # Examples
+    ///
+    /// ```no_run
+    /// # use veracode_platform::{VeracodeClient, VeracodeConfig, app::BusinessCriticality};
+    /// # use std::sync::Arc;
+    /// # use secrecy::SecretString;
+    /// # #[tokio::main]
+    /// # async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    /// # let config = VeracodeConfig::from_arc_credentials(
+    /// #     Arc::new(SecretString::from("api_id")),
+    /// #     Arc::new(SecretString::from("api_key"))
+    /// # );
+    /// # let client = VeracodeClient::new(config)?;
+    /// // First call: Creates application with repo_url
+    /// let app = client.create_application_if_not_exists(
+    ///     "My Application",
+    ///     BusinessCriticality::High,
+    ///     Some("My app description".to_string()),
+    ///     None,
+    ///     Some("https://github.com/user/repo".to_string()),
+    /// ).await?;
+    ///
+    /// // Second call: Returns existing app, no updates (all fields populated)
+    /// let same_app = client.create_application_if_not_exists(
+    ///     "My Application",
+    ///     BusinessCriticality::Medium, // Ignored - won't change existing HIGH
+    ///     Some("Different description".to_string()), // Ignored - existing has value
+    ///     None,
+    ///     Some("https://github.com/user/repo".to_string()), // Ignored - existing has value
+    /// ).await?;
+    ///
+    /// // Application created without repo_url, then updated later
+    /// let app_v1 = client.create_application_if_not_exists(
+    ///     "Another App",
+    ///     BusinessCriticality::Medium,
+    ///     None,
+    ///     None,
+    ///     None, // No repo_url initially
+    /// ).await?;
+    ///
+    /// // Later: Adds repo_url to existing application (because it was missing)
+    /// let app_v2 = client.create_application_if_not_exists(
+    ///     "Another App",
+    ///     BusinessCriticality::High, // Ignored - won't change
+    ///     Some("Adding description".to_string()), // Updates (was None)
+    ///     None,
+    ///     Some("https://github.com/user/another".to_string()), // Updates (was None)
+    /// ).await?;
+    /// # Ok(())
+    /// # }
+    /// ```
     pub async fn create_application_if_not_exists(
         &self,
         name: &str,
@@ -833,6 +898,83 @@ impl VeracodeClient {
     ) -> Result<Application, VeracodeError> {
         // First, check if application already exists
         if let Some(existing_app) = self.get_application_by_name(name).await? {
+            // Check if we need to update any missing fields
+            let mut needs_update = false;
+            let mut update_repo_url = false;
+            let mut update_description = false;
+
+            if let Some(ref profile) = existing_app.profile {
+                // Check repo_url: update if we have one AND existing is None/empty
+                if repo_url.is_some()
+                    && (profile.repo_url.is_none()
+                        || profile
+                            .repo_url
+                            .as_ref()
+                            .is_some_and(|u| u.trim().is_empty()))
+                {
+                    update_repo_url = true;
+                    needs_update = true;
+                }
+
+                // Check description: update if we have one AND existing is None/empty
+                if description.is_some()
+                    && (profile.description.is_none()
+                        || profile
+                            .description
+                            .as_ref()
+                            .is_some_and(|d| d.trim().is_empty()))
+                {
+                    update_description = true;
+                    needs_update = true;
+                }
+            }
+
+            if needs_update {
+                log::debug!("🔄 Updating fields for existing application '{}'", name);
+                if update_repo_url {
+                    log::debug!(
+                        "   Setting repo_url: {}",
+                        repo_url.as_deref().unwrap_or("None")
+                    );
+                }
+                if update_description {
+                    log::debug!(
+                        "   Setting description: {}",
+                        description.as_deref().unwrap_or("None")
+                    );
+                }
+
+                // Build update request preserving all existing values
+                let profile = existing_app.profile.as_ref().unwrap();
+                let update_request = UpdateApplicationRequest {
+                    profile: UpdateApplicationProfile {
+                        name: Some(profile.name.clone()),
+                        description: if update_description {
+                            description
+                        } else {
+                            profile.description.clone()
+                        },
+                        business_unit: profile.business_unit.clone(),
+                        business_owners: profile.business_owners.clone(),
+                        business_criticality: profile.business_criticality, // Keep existing
+                        policies: profile.policies.clone(),
+                        teams: profile.teams.clone(), // Keep existing
+                        tags: profile.tags.clone(),
+                        custom_fields: profile.custom_fields.clone(),
+                        custom_kms_alias: profile.custom_kms_alias.clone(),
+                        repo_url: if update_repo_url {
+                            repo_url
+                        } else {
+                            profile.repo_url.clone()
+                        },
+                    },
+                };
+
+                return self
+                    .update_application(&existing_app.guid, &update_request)
+                    .await;
+            }
+
             return Ok(existing_app);
         }
 

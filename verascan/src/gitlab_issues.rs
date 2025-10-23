@@ -326,17 +326,17 @@ impl GitLabIssuesClient {
         debug!("   Project ID: {}", config.project_id);
         debug!("   GitLab URL: {}", config.gitlab_url);
         debug!(
-            "   Connect timeout: {:?}",
-            config.http_timeouts.connect_timeout
+            "   Connect timeout: {}s",
+            config.http_timeouts.connect_timeout.as_secs()
         );
         debug!(
-            "   Request timeout: {:?}",
-            config.http_timeouts.request_timeout
+            "   Request timeout: {}s",
+            config.http_timeouts.request_timeout.as_secs()
         );
         debug!("   Max retries: {}", config.retry_config.max_retries);
         debug!(
-            "   Initial retry delay: {:?}",
-            config.retry_config.initial_delay
+            "   Initial retry delay: {}ms",
+            config.retry_config.initial_delay.as_millis()
         );
         if let Some(ref pipeline_id) = config.pipeline_id {
             debug!("   Pipeline ID: {pipeline_id}");

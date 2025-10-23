@@ -165,8 +165,11 @@ impl PipelineSubmitter {
 
         debug!("📊 Scan Configuration:");
         debug!("   Project Name: {}", scan_request.project_name);
-        debug!("   Project URI: {:?}", scan_request.project_uri);
-        debug!("   Dev Stage: {:?}", scan_request.dev_stage);
+        debug!(
+            "   Project URI: {}",
+            scan_request.project_uri.as_deref().unwrap_or("None")
+        );
+        debug!("   Dev Stage: {}", scan_request.dev_stage);
         match scan_request.scan_timeout {
             Some(timeout) => debug!("   Timeout: {timeout} minutes"),
             None => debug!("   Timeout: Default"),
@@ -205,7 +208,12 @@ impl PipelineSubmitter {
 
                 if let Some(upload_uri) = &scan_result.upload_uri {
                     debug!("🔍 Upload URI: {upload_uri}");
-                    debug!("🔍 Expected segments: {:?}", scan_result.expected_segments);
+                    debug!(
+                        "🔍 Expected segments: {}",
+                        scan_result
+                            .expected_segments
+                            .map_or("None".to_string(), |s| s.to_string())
+                    );
 
                     // Upload the file using proper segmented upload
                     debug!("📤 Uploading file...");
@@ -311,7 +319,7 @@ impl PipelineSubmitter {
                             .map_err(PipelineError::from);
                     } else if scan.scan_status.is_failed() {
                         return Err(PipelineError::ScanError(format!(
-                            "Scan {} failed with status: {:?}",
+                            "Scan {} failed with status: {}",
                             scan_id, scan.scan_status
                         )));
                     } else if scan.scan_status.is_in_progress() {
@@ -320,7 +328,7 @@ impl PipelineSubmitter {
                             .await;
                     } else {
                         debug!(
-                            "❓ Scan {} unknown status: {:?}, continuing to wait...",
+                            "❓ Scan {} unknown status: {}, continuing to wait...",
                             scan_id, scan.scan_status
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
@@ -592,7 +600,7 @@ impl PipelineSubmitter {
                             .map_err(PipelineError::from);
                     } else if scan.scan_status.is_failed() {
                         return Err(PipelineError::ScanError(format!(
-                            "Scan {} failed with status: {:?}",
+                            "Scan {} failed with status: {}",
                             scan_id, scan.scan_status
                         )));
                     } else if scan.scan_status.is_in_progress() {
@@ -601,7 +609,7 @@ impl PipelineSubmitter {
                             .await;
                     } else {
                         debug!(
-                            "❓ Scan {} unknown status: {:?}, continuing to wait...",
+                            "❓ Scan {} unknown status: {}, continuing to wait...",
                             scan_id, scan.scan_status
                         );
                         tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))

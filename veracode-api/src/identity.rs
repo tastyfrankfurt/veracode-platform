@@ -742,8 +742,9 @@ impl<'a> IdentityApi<'a> {
                     // API users can only be assigned roles where is_api is true
                     if role.is_api != Some(true) {
                         return Err(IdentityError::InvalidInput(format!(
-                            "Role '{}' (is_api: {:?}) cannot be assigned to API users. API users can only be assigned API roles.",
-                            role.role_name, role.is_api
+                            "Role '{}' (is_api: {}) cannot be assigned to API users. API users can only be assigned API roles.",
+                            role.role_name,
+                            role.is_api.map_or("None".to_string(), |b| b.to_string())
                         )));
                     }
                 }
@@ -1325,8 +1326,12 @@ impl<'a> IdentityApi<'a> {
 
         log::debug!("🔍 Team lookup request - endpoint: {}", endpoint);
         log::debug!(
-            "🔍 Team lookup request - query parameters: {:?}",
+            "🔍 Team lookup request - query parameters: [{}]",
             query_params
+                .iter()
+                .map(|(k, v)| format!("{}={}", k, v))
+                .collect::<Vec<_>>()
+                .join(", ")
         );
         log::debug!(
             "🔍 Team lookup request - searching for team: '{}'",

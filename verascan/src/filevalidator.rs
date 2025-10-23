@@ -127,10 +127,13 @@ impl FileValidator {
             .and_then(|ext| ext.to_str())
             .map(str::to_lowercase);
 
-        debug!("🔍 DEBUG: File extension: {file_extension:?}");
         debug!(
-            "🔍 DEBUG: Infer detected type: {:?}",
-            file_type.as_ref().map(|t| t.mime_type())
+            "🔍 DEBUG: File extension: {}",
+            file_extension.as_deref().unwrap_or("None")
+        );
+        debug!(
+            "🔍 DEBUG: Infer detected type: {}",
+            file_type.as_ref().map(|t| t.mime_type()).unwrap_or("None")
         );
 
         match file_type {

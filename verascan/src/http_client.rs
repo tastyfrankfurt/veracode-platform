@@ -289,12 +289,18 @@ impl RobustHttpClient {
 
         debug!("🔧 HTTP Client initialized");
         debug!("   Base URL: {}", config.base_url);
-        debug!("   Connect timeout: {:?}", config.timeouts.connect_timeout);
-        debug!("   Request timeout: {:?}", config.timeouts.request_timeout);
+        debug!(
+            "   Connect timeout: {}s",
+            config.timeouts.connect_timeout.as_secs()
+        );
+        debug!(
+            "   Request timeout: {}s",
+            config.timeouts.request_timeout.as_secs()
+        );
         debug!("   Max retries: {}", config.retry_config.max_retries);
         debug!(
-            "   Initial retry delay: {:?}",
-            config.retry_config.initial_delay
+            "   Initial retry delay: {}ms",
+            config.retry_config.initial_delay.as_millis()
         );
 
         Ok(Self { client, config })

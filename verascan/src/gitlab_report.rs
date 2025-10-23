@@ -945,7 +945,7 @@ mod tests {
                 eprintln!("\nValidation error:");
                 eprintln!("  {}", error);
                 eprintln!("  Instance path: {}", error.instance_path);
-                eprintln!("  Schema path: {:?}\n", error.schema_path);
+                eprintln!("  Schema path: {}\n", error.schema_path);
                 Err(format!(
                     "Schema validation failed for version {}",
                     schema_version

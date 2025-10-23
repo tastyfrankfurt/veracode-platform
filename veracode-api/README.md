@@ -177,7 +177,7 @@ println!("Created scan: {}", scan_result.scan_id);
 
 // Monitor scan status
 let scan_info = pipeline.get_scan(&scan_result.scan_id).await?;
-println!("Scan status: {:?}", scan_info.status);
+println!("Scan status: {}", scan_info.status);
 
 // Get findings when complete
 if scan_info.status == ScanStatus::Complete {

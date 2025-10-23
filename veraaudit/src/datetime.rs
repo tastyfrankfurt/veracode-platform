@@ -1,6 +1,8 @@
 //! DateTime validation and handling for audit log retrieval
 use crate::error::{AuditError, Result};
+use crate::validation::Region;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
+use chrono_tz::Europe::Berlin;
 
 /// Supported datetime formats for the Veracode API
 const FORMAT_DATE: &str = "%Y-%m-%d";
@@ -9,14 +11,15 @@ const FORMAT_DATETIME_SECOND: &str = "%Y-%m-%d %H:%M:%S";
 /// Maximum date range allowed by Veracode API (6 months)
 const MAX_RANGE_DAYS: i64 = 180;
 
-/// Convert a datetime string from local timezone to UTC
+/// Convert a datetime string from local/regional timezone to UTC
 ///
-/// This function parses the datetime string in the system's local timezone
-/// and converts it to UTC. It supports all three datetime formats.
+/// This function parses the datetime string in the appropriate timezone based on the region
+/// and converts it to UTC. It supports all datetime formats.
 ///
 /// # Arguments
 ///
-/// * `datetime_str` - The datetime string in local timezone
+/// * `datetime_str` - The datetime string in local/regional timezone
+/// * `region` - The Veracode region (determines timezone)
 ///
 /// # Returns
 ///
@@ -30,15 +33,16 @@ const MAX_RANGE_DAYS: i64 = 180;
 ///
 /// ```no_run
 /// use veraaudit::datetime::convert_local_to_utc;
+/// use veraaudit::validation::Region;
 ///
-/// // System timezone is EST (UTC-5)
-/// let utc_str = convert_local_to_utc("2025-01-15 10:00:00").unwrap();
-/// // Returns: "2025-01-15 15:00:00" (on systems in EST timezone)
+/// // European region uses Europe/Berlin (CET/CEST)
+/// let utc_str = convert_local_to_utc("2025-01-15 10:00:00", &Region::European).unwrap();
+/// // Returns: "2025-01-15 09:00:00" (CET is UTC+1)
+///
+/// // Federal region uses system's local timezone
+/// let utc_str = convert_local_to_utc("2025-01-15 10:00:00", &Region::Federal).unwrap();
 /// ```
-///
-/// Note: The actual output depends on your system's timezone.
-/// This example assumes EST (UTC-5) timezone.
-pub fn convert_local_to_utc(datetime_str: &str) -> Result<String> {
+pub fn convert_local_to_utc(datetime_str: &str, region: &Region) -> Result<String> {
     // Determine which format was used
     let (naive_dt, format) =
         if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_str, FORMAT_DATETIME_SECOND) {
@@ -55,19 +59,35 @@ pub fn convert_local_to_utc(datetime_str: &str) -> Result<String> {
             )));
         };
 
-    // Convert from local timezone to UTC
-    let local_time: DateTime<Local> =
-        Local
-            .from_local_datetime(&naive_dt)
-            .single()
-            .ok_or_else(|| {
-                AuditError::InvalidDateTimeFormat(format!(
-                    "Ambiguous datetime (DST transition?): {}",
-                    datetime_str
-                ))
-            })?;
-
-    let utc_time = local_time.with_timezone(&Utc);
+    // Convert from regional timezone to UTC based on region
+    let utc_time = match region {
+        Region::European => {
+            // Use Europe/Berlin timezone (eu-central-1)
+            let local_time = Berlin
+                .from_local_datetime(&naive_dt)
+                .single()
+                .ok_or_else(|| {
+                    AuditError::InvalidDateTimeFormat(format!(
+                        "Ambiguous datetime (DST transition?): {}",
+                        datetime_str
+                    ))
+                })?;
+            local_time.with_timezone(&Utc)
+        }
+        Region::Federal | Region::Commercial => {
+            // Use system's local timezone
+            let local_time: DateTime<Local> = Local
+                .from_local_datetime(&naive_dt)
+                .single()
+                .ok_or_else(|| {
+                    AuditError::InvalidDateTimeFormat(format!(
+                        "Ambiguous datetime (DST transition?): {}",
+                        datetime_str
+                    ))
+                })?;
+            local_time.with_timezone(&Utc)
+        }
+    };
 
     // Format back using the same format as input
     match format {
@@ -87,7 +107,8 @@ pub fn convert_local_to_utc(datetime_str: &str) -> Result<String> {
 ///
 /// * `datetime_str` - The datetime string to validate
 /// * `field_name` - Name of the field (for error messages)
-/// * `utc_mode` - If false, interpret as local timezone and convert to UTC; if true, treat as UTC
+/// * `utc_mode` - If false, interpret as local/regional timezone and convert to UTC; if true, treat as UTC
+/// * `region` - The Veracode region (determines timezone conversion)
 ///
 /// # Returns
 ///
@@ -100,12 +121,13 @@ pub fn validate_datetime_format(
     datetime_str: &str,
     field_name: &str,
     utc_mode: bool,
+    region: &Region,
 ) -> Result<String> {
     // Convert to UTC if not in UTC mode
     let utc_datetime_str = if utc_mode {
         datetime_str.to_string()
     } else {
-        convert_local_to_utc(datetime_str)?
+        convert_local_to_utc(datetime_str, region)?
     };
 
     // Try to parse in order of specificity (most specific first)
@@ -157,7 +179,8 @@ fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
 ///
 /// * `start` - Start datetime string
 /// * `end` - End datetime string
-/// * `utc_mode` - If false, interpret as local timezone and convert to UTC; if true, treat as UTC
+/// * `utc_mode` - If false, interpret as local/regional timezone and convert to UTC; if true, treat as UTC
+/// * `region` - The Veracode region (determines timezone conversion)
 ///
 /// # Returns
 ///
@@ -166,10 +189,15 @@ fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
 /// # Errors
 ///
 /// Returns error if validation fails
-pub fn validate_date_range(start: &str, end: &str, utc_mode: bool) -> Result<(String, String)> {
+pub fn validate_date_range(
+    start: &str,
+    end: &str,
+    utc_mode: bool,
+    region: &Region,
+) -> Result<(String, String)> {
     // Validate individual formats (this handles timezone conversion)
-    let start_validated = validate_datetime_format(start, "Start datetime", utc_mode)?;
-    let end_validated = validate_datetime_format(end, "End datetime", utc_mode)?;
+    let start_validated = validate_datetime_format(start, "Start datetime", utc_mode, region)?;
+    let end_validated = validate_datetime_format(end, "End datetime", utc_mode, region)?;
 
     // Parse for range validation (both are now in UTC)
     let start_dt = try_parse_datetime(&start_validated)?;
@@ -333,45 +361,48 @@ mod tests {
 
     #[test]
     fn test_validate_datetime_format_date_only() {
-        let result = validate_datetime_format("2025-01-15", "test", true);
+        let result = validate_datetime_format("2025-01-15", "test", true, &Region::Commercial);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "2025-01-15");
     }
 
     #[test]
     fn test_validate_datetime_format_with_seconds() {
-        let result = validate_datetime_format("2025-01-15 14:30:45", "test", true);
+        let result =
+            validate_datetime_format("2025-01-15 14:30:45", "test", true, &Region::Commercial);
         assert!(result.is_ok());
         assert_eq!(result.unwrap(), "2025-01-15 14:30:45");
     }
 
     #[test]
     fn test_validate_datetime_format_invalid() {
-        let result = validate_datetime_format("2025/01/15", "test", true);
+        let result = validate_datetime_format("2025/01/15", "test", true, &Region::Commercial);
         assert!(result.is_err());
 
-        let result = validate_datetime_format("2025-01-15T14:30:45", "test", true);
+        let result =
+            validate_datetime_format("2025-01-15T14:30:45", "test", true, &Region::Commercial);
         assert!(result.is_err());
 
-        let result = validate_datetime_format("not-a-date", "test", true);
+        let result = validate_datetime_format("not-a-date", "test", true, &Region::Commercial);
         assert!(result.is_err());
 
         // YYYY-MM-DD HH:MM format should be rejected (not supported by Veracode)
-        let result = validate_datetime_format("2025-01-15 14:30", "test", true);
+        let result =
+            validate_datetime_format("2025-01-15 14:30", "test", true, &Region::Commercial);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_validate_datetime_format_future_date() {
         let future = format_utc_minus_minutes(-60); // 60 minutes in the future
-        let result = validate_datetime_format(&future, "test", true);
+        let result = validate_datetime_format(&future, "test", true, &Region::Commercial);
         assert!(result.is_err());
         assert!(matches!(result, Err(AuditError::DateRangeInvalid(_))));
     }
 
     #[test]
     fn test_validate_date_range_valid() {
-        let result = validate_date_range("2025-01-01", "2025-01-31", true);
+        let result = validate_date_range("2025-01-01", "2025-01-31", true, &Region::Commercial);
         assert!(result.is_ok());
         let (start, end) = result.unwrap();
         assert_eq!(start, "2025-01-01");
@@ -380,20 +411,25 @@ mod tests {
 
     #[test]
     fn test_validate_date_range_with_times() {
-        let result = validate_date_range("2025-01-01 10:00:00", "2025-01-01 11:30:00", true);
+        let result = validate_date_range(
+            "2025-01-01 10:00:00",
+            "2025-01-01 11:30:00",
+            true,
+            &Region::Commercial,
+        );
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_validate_date_range_start_after_end() {
-        let result = validate_date_range("2025-01-31", "2025-01-01", true);
+        let result = validate_date_range("2025-01-31", "2025-01-01", true, &Region::Commercial);
         assert!(result.is_err());
         assert!(matches!(result, Err(AuditError::DateRangeInvalid(_))));
     }
 
     #[test]
     fn test_validate_date_range_exceeds_6_months() {
-        let result = validate_date_range("2024-01-01", "2024-12-31", true);
+        let result = validate_date_range("2024-01-01", "2024-12-31", true, &Region::Commercial);
         assert!(result.is_err());
         assert!(matches!(result, Err(AuditError::DateRangeInvalid(_))));
     }
@@ -402,13 +438,13 @@ mod tests {
     fn test_format_now_utc() {
         let now = format_now_utc();
         // Should match format YYYY-MM-DD HH:MM:SS
-        assert!(validate_datetime_format(&now, "test", true).is_ok());
+        assert!(validate_datetime_format(&now, "test", true, &Region::Commercial).is_ok());
     }
 
     #[test]
     fn test_format_utc_minus_minutes() {
         let earlier = format_utc_minus_minutes(60);
-        assert!(validate_datetime_format(&earlier, "test", true).is_ok());
+        assert!(validate_datetime_format(&earlier, "test", true, &Region::Commercial).is_ok());
     }
 
     #[test]
@@ -456,20 +492,56 @@ mod tests {
         // Test minutes
         let result = format_utc_minus_offset("30m");
         assert!(result.is_ok());
-        assert!(validate_datetime_format(&result.unwrap(), "test", true).is_ok());
+        assert!(
+            validate_datetime_format(&result.unwrap(), "test", true, &Region::Commercial).is_ok()
+        );
 
         // Test hours
         let result = format_utc_minus_offset("2h");
         assert!(result.is_ok());
-        assert!(validate_datetime_format(&result.unwrap(), "test", true).is_ok());
+        assert!(
+            validate_datetime_format(&result.unwrap(), "test", true, &Region::Commercial).is_ok()
+        );
 
         // Test days
         let result = format_utc_minus_offset("1d");
         assert!(result.is_ok());
-        assert!(validate_datetime_format(&result.unwrap(), "test", true).is_ok());
+        assert!(
+            validate_datetime_format(&result.unwrap(), "test", true, &Region::Commercial).is_ok()
+        );
 
         // Test invalid
         let result = format_utc_minus_offset("invalid");
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_european_timezone_conversion() {
+        // Test European region uses Europe/Berlin timezone
+        // Winter time: CET is UTC+1
+        let result = convert_local_to_utc("2025-01-15 10:00:00", &Region::European);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "2025-01-15 09:00:00"); // 10:00 CET = 09:00 UTC
+
+        // Summer time: CEST is UTC+2
+        let result = convert_local_to_utc("2025-06-15 10:00:00", &Region::European);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "2025-06-15 08:00:00"); // 10:00 CEST = 08:00 UTC
+    }
+
+    #[test]
+    fn test_validate_date_range_european_region() {
+        // Test that European region properly converts to UTC
+        let result = validate_date_range(
+            "2025-01-15 10:00:00",
+            "2025-01-15 12:00:00",
+            false,
+            &Region::European,
+        );
+        assert!(result.is_ok());
+        let (start, end) = result.unwrap();
+        // Both should be converted from CET (UTC+1) to UTC
+        assert_eq!(start, "2025-01-15 09:00:00");
+        assert_eq!(end, "2025-01-15 11:00:00");
     }
 }
