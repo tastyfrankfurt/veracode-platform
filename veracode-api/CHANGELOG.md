@@ -5,6 +5,31 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2025-10-23
+
+### Enhanced
+- **Smart Application Profile Updates**: Enhanced `create_application_if_not_exists()` to intelligently update missing fields on existing applications
+  - **Fill-in-Blanks Strategy**: Automatically updates `repo_url` and `description` fields if they are not set (None or empty) on existing applications
+  - **Conservative Approach**: Never overrides existing values - only fills in missing information
+  - **Preserved Fields**: `business_criticality` and `teams` are never modified on existing applications
+  - **Safe Automation**: Enables idempotent CI/CD workflows that can safely run multiple times without overriding manual configuration
+  - **Debug Logging**: Added detailed debug logging showing which fields are being updated and why
+  - **Use Cases**: Allows automated workflows to gradually enhance application profiles over time (e.g., adding repository URLs to legacy applications)
+
+### Changed
+- **`create_application_if_not_exists()` Behavior**: Now updates missing fields instead of just returning existing applications unchanged
+  - If `repo_url` parameter is provided and existing application has None/empty `repo_url`, it will be updated
+  - If `description` parameter is provided and existing application has None/empty `description`, it will be updated
+  - All other scenarios remain unchanged - existing values are always preserved
+  - Backward compatible - existing behavior is maintained when all fields are already populated
+
+### Technical Details
+- **Implementation**: Modified `create_application_if_not_exists()` in `src/app.rs` to check for missing fields before returning existing application
+- **Update Logic**: Uses `is_some_and()` for clean empty string detection
+- **Preservation Strategy**: Builds `UpdateApplicationRequest` that explicitly preserves all existing profile values
+- **Error Handling**: Returns error if update fails (no silent failures)
+- **Documentation**: Updated function documentation with comprehensive behavior description and examples
+
 ## [0.5.8] - 2025-10-23
 
 ### Added

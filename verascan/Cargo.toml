@@ -12,7 +12,7 @@ categories = ["scanning", "web-programming::http-client", "development-tools"]
 
 [dependencies]
 # Veracode Platform client library
-veracode-platform = { path = "../veracode-api", version = "0.5.7" }
+veracode-platform = { path = "../veracode-api", version = "0.6.0" }
 
 # CLI and utilities
 clap = { workspace = true, features = ["derive"] }
