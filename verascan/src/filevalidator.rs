@@ -133,10 +133,7 @@ impl FileValidator {
         );
         debug!(
             "🔍 DEBUG: Infer detected type: {}",
-            file_type
-                .as_ref()
-                .map(|t| t.mime_type())
-                .unwrap_or("None")
+            file_type.as_ref().map(|t| t.mime_type()).unwrap_or("None")
         );
 
         match file_type {
