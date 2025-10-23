@@ -185,6 +185,15 @@ pub enum ScanType {
     Policy,
 }
 
+impl std::fmt::Display for ScanType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ScanType::Sandbox => write!(f, "Sandbox"),
+            ScanType::Policy => write!(f, "Policy"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct AssessmentScanConfig {
     pub app_profile_name: String,
@@ -1627,7 +1636,7 @@ impl AssessmentSubmitter {
     pub fn display_config(&self) {
         info!("📊 Assessment Scan Configuration:");
         info!("   App Profile: {}", self.config.app_profile_name);
-        info!("   Scan Type: {:?}", self.config.scan_type);
+        info!("   Scan Type: {}", self.config.scan_type);
         if let Some(ref sandbox_name) = self.config.sandbox_name {
             info!("   Sandbox: {sandbox_name}");
         }

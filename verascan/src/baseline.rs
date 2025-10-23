@@ -899,7 +899,13 @@ impl BaselineManager {
                 }
 
                 if !rule_result.rule.cwe_ids.is_empty() {
-                    info!("      CWE filter: {:?}", rule_result.rule.cwe_ids);
+                    let cwe_ids_str: Vec<String> = rule_result
+                        .rule
+                        .cwe_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect();
+                    info!("      CWE filter: [{}]", cwe_ids_str.join(", "));
                 }
                 if !rule_result.rule.severity_levels.is_empty() {
                     let severity_names: Vec<String> = rule_result
@@ -908,7 +914,7 @@ impl BaselineManager {
                         .iter()
                         .map(|&s| severity_to_name(s).into())
                         .collect();
-                    info!("      Severity filter: {severity_names:?}");
+                    info!("      Severity filter: [{}]", severity_names.join(", "));
                 }
             }
         }
@@ -955,14 +961,33 @@ impl BaselineManager {
                 "       Checking rule against {} total findings",
                 findings.len()
             );
-            info!(
-                "       Rule CWE filter: {:?} (empty = all CWEs)",
-                rule.cwe_ids
-            );
-            info!(
-                "       Rule severity filter: {:?} (empty = all severities)",
-                rule.severity_levels
-            );
+            let cwe_display = if rule.cwe_ids.is_empty() {
+                "all CWEs".to_string()
+            } else {
+                format!(
+                    "[{}]",
+                    rule.cwe_ids
+                        .iter()
+                        .map(|id| id.to_string())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            info!("       Rule CWE filter: {}", cwe_display);
+
+            let severity_display = if rule.severity_levels.is_empty() {
+                "all severities".to_string()
+            } else {
+                format!(
+                    "[{}]",
+                    rule.severity_levels
+                        .iter()
+                        .map(|&s| severity_to_name(s))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                )
+            };
+            info!("       Rule severity filter: {}", severity_display);
         }
 
         for finding in findings {

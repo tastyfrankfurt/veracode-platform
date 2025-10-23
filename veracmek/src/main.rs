@@ -194,7 +194,10 @@ async fn main() -> Result<()> {
         .filter_level(cli.log_level.parse().unwrap_or(log::LevelFilter::Info))
         .init();
 
-    debug!("Starting veracmek with args: {:?}", std::env::args());
+    debug!(
+        "Starting veracmek with args: [{}]",
+        std::env::args().collect::<Vec<_>>().join(" ")
+    );
 
     // Create Veracode client
     let client = create_client(&cli)
@@ -615,8 +618,9 @@ async fn process_from_file(
     output_format: &OutputFormat,
 ) -> AppResult<()> {
     info!(
-        "Processing applications from file: {:?} (dry_run: {})",
-        file_path, dry_run
+        "Processing applications from file: {} (dry_run: {})",
+        file_path.display(),
+        dry_run
     );
 
     // Read and parse JSON file

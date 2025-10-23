@@ -46,6 +46,16 @@ pub enum DevStage {
     Release,
 }
 
+impl std::fmt::Display for DevStage {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            DevStage::Development => write!(f, "DEVELOPMENT"),
+            DevStage::Testing => write!(f, "TESTING"),
+            DevStage::Release => write!(f, "RELEASE"),
+        }
+    }
+}
+
 /// Pipeline scan stage/status
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "UPPERCASE")]
@@ -1106,7 +1116,7 @@ impl PipelineApi {
                         debug!("🔍 Debug - Successfully parsed findings response:");
                         debug!("   Scan Status: {}", findings_response.scan_status);
                         debug!("   Message: {}", findings_response.message);
-                        debug!("   Modules: {:?}", findings_response.modules);
+                        debug!("   Modules: [{}]", findings_response.modules.join(", "));
                         debug!("   Findings Count: {}", findings_response.findings.len());
                         Ok(findings_response.findings)
                     }

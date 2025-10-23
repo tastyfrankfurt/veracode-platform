@@ -5,6 +5,58 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2025-10-23
+
+### Added
+- **Regional Timezone Support**: Enhanced datetime conversion with region-specific timezone handling
+  - **Europe/Berlin Timezone**: European region (`--region european`) now uses Europe/Berlin timezone (CET/CEST) for datetime conversion
+    - Winter time: CET (UTC+1) - Example: 10:00 CET → 09:00 UTC
+    - Summer time: CEST (UTC+2) - Example: 10:00 CEST → 08:00 UTC
+    - Automatic daylight saving time (DST) transitions
+  - **System Timezone**: Commercial and Federal regions continue using system's local timezone for backward compatibility
+  - **Timezone-Aware Validation**: All datetime validation now respects region-specific timezones
+  - **Use Cases**: Enables accurate audit log retrieval for teams operating in European timezones
+
+### Changed
+- **Datetime Conversion Functions**: Enhanced to accept `Region` parameter
+  - `convert_local_to_utc(datetime_str, region)` - Now converts based on region timezone
+  - `validate_datetime_format(datetime_str, field_name, utc_mode, region)` - Added region parameter
+  - `validate_date_range(start, end, utc_mode, region)` - Added region parameter
+  - **Backward Compatible**: Existing functionality preserved for Commercial and Federal regions
+
+### Enhanced
+- **Production-Grade Logging**: Improved log formatting for operational clarity
+  - Removed debug formatters (`:?`) from all log statements
+  - Vector/collection logs now use clean `.join(", ")` formatting instead of debug output
+  - Example: `[Delete, Create, Update]` instead of `["Delete", "Create", "Update"]`
+  - Improved readability for operators monitoring audit log retrieval
+  - **Modified Files**: `src/audit.rs` - audit action and action type filter logging
+
+- **Test Coverage**: Added comprehensive tests for European timezone conversion
+  - `test_european_timezone_conversion()` - Validates CET/CEST to UTC conversion
+  - `test_validate_date_range_european_region()` - Tests date range validation with Berlin timezone
+  - All existing tests updated to work with region-aware functions
+
+### Updated
+- **Dependencies**:
+  - Added `chrono-tz = "0.10"` for timezone database support
+  - Updated `veracode-platform` to v0.6.0 with Reporting API enhancements
+
+### Technical Details
+- **Implementation**: Uses `chrono-tz::Europe::Berlin` for accurate timezone conversion
+- **DST Handling**: Automatically handles daylight saving time transitions using IANA timezone database
+- **Region Mapping**:
+  - `Region::European` → Europe/Berlin (eu-central-1 timezone)
+  - `Region::Federal` → System local timezone
+  - `Region::Commercial` → System local timezone
+- **Modified Files**: `src/datetime.rs`, `src/main.rs`, `src/audit.rs`, `Cargo.toml`
+
+### Benefits
+- **Accurate Timestamps**: European teams can specify audit log times in their local timezone
+- **Compliance**: Simplifies audit log retrieval for regulatory compliance across different regions
+- **User Experience**: No mental math required for timezone conversion when using `--region european`
+- **Operational Excellence**: Clean, production-ready log output for monitoring and troubleshooting
+
 ## [0.5.7] - 2025-10-23
 
 ### Added

@@ -106,6 +106,18 @@ pub enum ReportStatus {
     Failed,
 }
 
+impl std::fmt::Display for ReportStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReportStatus::Queued => write!(f, "Queued"),
+            ReportStatus::Submitted => write!(f, "Submitted"),
+            ReportStatus::Processing => write!(f, "Processing"),
+            ReportStatus::Completed => write!(f, "Completed"),
+            ReportStatus::Failed => write!(f, "Failed"),
+        }
+    }
+}
+
 /// Pagination links for navigating report pages
 #[derive(Debug, Clone, Deserialize)]
 pub struct ReportLinks {
@@ -409,7 +421,7 @@ impl ReportingApi {
             let status = &report.embedded.status;
 
             log::debug!(
-                "Report {} status: {:?} (attempt {}/{})",
+                "Report {} status: {} (attempt {}/{})",
                 report_id,
                 status,
                 attempts,
@@ -430,7 +442,7 @@ impl ReportingApi {
                 ReportStatus::Queued | ReportStatus::Submitted | ReportStatus::Processing => {
                     if attempts >= max_attempts {
                         return Err(VeracodeError::InvalidResponse(format!(
-                            "Report polling timeout after {} attempts. Status: {:?}",
+                            "Report polling timeout after {} attempts. Status: {}",
                             attempts, status
                         )));
                     }
@@ -473,7 +485,7 @@ impl ReportingApi {
         // Check if report is completed
         if initial_report.embedded.status != ReportStatus::Completed {
             return Err(VeracodeError::InvalidResponse(format!(
-                "Report is not completed. Status: {:?}",
+                "Report is not completed. Status: {}",
                 initial_report.embedded.status
             )));
         }
@@ -586,9 +598,9 @@ impl ReportingApi {
     ) -> Result<serde_json::Value, VeracodeError> {
         // Step 1: Generate the report
         log::info!(
-            "Generating audit report for date range: {} to {:?}",
+            "Generating audit report for date range: {} to {}",
             request.start_date,
-            request.end_date
+            request.end_date.as_deref().unwrap_or("now")
         );
         let report_id = self.generate_audit_report(request).await?;
         log::info!("Report generated with ID: {}", report_id);
@@ -597,8 +609,12 @@ impl ReportingApi {
         log::info!("Polling for report completion...");
         let completed_report = self.poll_report_status(&report_id, None, None).await?;
         log::info!(
-            "Report completed at: {:?}",
-            completed_report.embedded.date_report_completed
+            "Report completed at: {}",
+            completed_report
+                .embedded
+                .date_report_completed
+                .as_deref()
+                .unwrap_or("unknown")
         );
 
         // Step 3: Retrieve all pages

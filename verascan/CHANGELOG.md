@@ -5,6 +5,47 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.10] - 2025-10-23
+
+### Enhanced
+- **Production-Grade Logging**: Comprehensive log formatting improvements for operational clarity
+  - **Display Implementation**: Added Display trait for `ScanType` enum for clean logging output
+  - **Removed All Debug Formatting**: Replaced `:?` with `{}` in all production and debug logs
+  - **Vector Formatting**: All collection logs now use `.join(", ")` for clean, readable output
+  - **Pipeline Scans**:
+    - Project URI and Dev Stage now use proper Display formatting
+    - Expected segments formatted as numbers instead of debug output
+    - Scan status errors use Display trait (e.g., `FAILURE` instead of enum variant)
+  - **Baseline Rules**:
+    - CWE filters show `[79, 89, 434]` or `all CWEs` instead of debug Vec output
+    - Severity filters show `[High, Medium]` or `all severities` instead of quoted strings
+  - **HTTP Client & GitLab**:
+    - Timeout durations formatted as `30s` and `500ms` instead of debug Duration output
+    - Connection and request timeouts now clearly show time units
+  - **File Validation**:
+    - File extensions and MIME types display cleanly without quotes
+  - **Team Assignment**:
+    - Team lists formatted as `[TeamA, TeamB]` without redundant debug output
+  - **Examples**:
+    - Scan Type: `Sandbox` instead of `Sandbox` (enum variant)
+    - Status: `FAILURE` instead of debug representation
+    - Timeout: `30s` instead of `Duration { secs: 30, nanos: 0 }`
+    - CWE filter: `[79, 89]` or `all CWEs` instead of `[79, 89]` (debug)
+  - **Modified Files**: `src/assessment.rs`, `src/baseline.rs`, `src/pipeline.rs`, `src/scan.rs`, `src/http_client.rs`, `src/gitlab_issues.rs`, `src/filevalidator.rs`, `src/gitlab_report.rs`
+
+### Technical Details
+- Added `impl std::fmt::Display for ScanType` with clean variant formatting
+- Updated all logs to use Display formatter (`{}`) instead of Debug formatter (`:?`)
+- Vector collections use `.join(", ")` with brackets for consistent formatting
+- Duration types formatted using `.as_secs()` and `.as_millis()` for clarity
+- Option types handled with `.as_deref().unwrap_or()` or conditional formatting
+
+### Benefits
+- **Operational Excellence**: Clean log output for monitoring and troubleshooting across all modules
+- **User Experience**: Highly readable logs for operators and CI/CD pipeline outputs
+- **Production Ready**: Follows Rust best practices for production logging throughout the codebase
+- **Consistency**: Unified logging style across all scan types and operations
+
 ## [0.5.9] - 2025-10-18
 
 ### Added

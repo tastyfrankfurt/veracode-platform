@@ -1,6 +1,6 @@
 [package]
 name = "veraaudit"
-version = "0.5.7"
+version = "0.5.8"
 edition = "2024"
 description = "CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API"
 authors = ["Veracode API Team"]
@@ -34,6 +34,7 @@ url = "2.5"
 
 # Date/time handling for timestamps and date ranges
 chrono = "0.4"
+chrono-tz = "0.10"
 
 # Service mode scheduling
 tokio-cron-scheduler = "0.15"

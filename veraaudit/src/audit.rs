@@ -23,29 +23,29 @@ use veracode_platform::{AuditReportRequest, VeracodeClient};
 pub async fn retrieve_audit_logs(
     client: &VeracodeClient,
     start_datetime: &str,
-    end_datetime: Option<String>,
+    end_datetime: &str,
     audit_actions: Option<Vec<String>>,
     action_types: Option<Vec<String>>,
 ) -> Result<serde_json::Value> {
     debug!(
-        "Building audit report request for datetime range: {} to {:?}",
+        "Building audit report request for datetime range: {} to {}",
         start_datetime, end_datetime
     );
 
     // Build the audit report request
-    let mut request = AuditReportRequest::new(start_datetime, end_datetime);
+    let mut request = AuditReportRequest::new(start_datetime, Some(end_datetime.to_string()));
 
     if let Some(actions) = audit_actions
         && !actions.is_empty()
     {
-        debug!("Adding audit action filters: {:?}", actions);
+        debug!("Adding audit action filters: [{}]", actions.join(", "));
         request = request.with_audit_actions(actions);
     }
 
     if let Some(types) = action_types
         && !types.is_empty()
     {
-        debug!("Adding action type filters: {:?}", types);
+        debug!("Adding action type filters: [{}]", types.join(", "));
         request = request.with_action_types(types);
     }
 

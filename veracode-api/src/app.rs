@@ -932,10 +932,16 @@ impl VeracodeClient {
             if needs_update {
                 log::debug!("🔄 Updating fields for existing application '{}'", name);
                 if update_repo_url {
-                    log::debug!("   Setting repo_url: {:?}", repo_url);
+                    log::debug!(
+                        "   Setting repo_url: {}",
+                        repo_url.as_deref().unwrap_or("None")
+                    );
                 }
                 if update_description {
-                    log::debug!("   Setting description: {:?}", description);
+                    log::debug!(
+                        "   Setting description: {}",
+                        description.as_deref().unwrap_or("None")
+                    );
                 }
 
                 // Build update request preserving all existing values

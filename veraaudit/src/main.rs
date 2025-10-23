@@ -64,7 +64,7 @@ async fn main() -> Result<()> {
 
             // Validate the datetime range (converts to UTC if utc=false)
             let (validated_start, validated_end) =
-                datetime::validate_date_range(&start_datetime, &end_datetime, utc)?;
+                datetime::validate_date_range(&start_datetime, &end_datetime, utc, &args.region)?;
 
             // Convert validated enum types to API strings
             let audit_action_strings: Vec<String> = audit_action
@@ -135,7 +135,7 @@ async fn run_cli_mode(
     let audit_data = audit::retrieve_audit_logs(
         client,
         start_datetime,
-        Some(end_datetime.to_string()),
+        end_datetime,
         if audit_actions.is_empty() {
             None
         } else {

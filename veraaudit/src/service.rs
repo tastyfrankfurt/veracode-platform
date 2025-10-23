@@ -99,19 +99,18 @@ async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Res
     let start_time = now - Duration::minutes(60);
 
     let start_datetime = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
-    let end_datetime = Some(now.format("%Y-%m-%d %H:%M:%S").to_string());
+    let end_datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
 
     info!(
         "Retrieving audit logs from {} to {}",
-        start_datetime,
-        end_datetime.as_ref().unwrap()
+        start_datetime, end_datetime
     );
 
     // Retrieve audit logs
     let audit_data = audit::retrieve_audit_logs(
         client,
         &start_datetime,
-        end_datetime,
+        &end_datetime,
         config.audit_actions.clone(),
         config.action_types.clone(),
     )

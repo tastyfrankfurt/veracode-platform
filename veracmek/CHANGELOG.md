@@ -5,6 +5,28 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.8] - 2025-10-23
+
+### Enhanced
+- **Production-Grade Logging**: Improved log formatting for operational clarity
+  - **Removed Debug Formatting**: Replaced `:?` with clean formatting in all logs
+  - **Path Display**: File paths now use `.display()` for proper formatting instead of debug output
+  - **Command Line Args**: Application startup arguments use `.join(" ")` for clean, readable output
+  - **Examples**:
+    - File path: `./apps.json` instead of `"./apps.json"` (quoted debug format)
+    - Args: `[veracmek enable --app MyApp]` instead of debug iterator representation
+  - **Modified Files**: `src/main.rs` (startup logging, file processing)
+
+### Technical Details
+- Updated `info!` and `debug!` logs to use Display formatter (`{}`) instead of Debug formatter (`:?`)
+- Replaced `std::env::args()` debug format with collected and joined string
+- File paths now use `.display()` method for clean path formatting
+
+### Benefits
+- **Operational Excellence**: Clean log output for monitoring and troubleshooting
+- **User Experience**: More readable logs for operators managing CMEK operations
+- **Production Ready**: Follows Rust best practices for production logging
+
 ## [0.5.7] - 2025-10-15
 
 ### Added
