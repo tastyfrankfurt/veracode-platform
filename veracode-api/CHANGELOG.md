@@ -5,7 +5,7 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.7] - 2025-10-22
+## [0.5.8] - 2025-10-23
 
 ### Added
 - **Reporting API Support**: Complete implementation of Veracode Reporting REST API for audit logs
@@ -20,6 +20,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Filtering Support**: Filter audit logs by actions, action types, target users, and modifier users
   - **Use Cases**: Enables compliance reporting, security auditing, and continuous audit log archival
 
+### Updated
+- **Dependencies**: Updated to latest stable versions and added new dependencies
+  - Added `chrono-tz = "0.10"` for timezone conversion in Reporting API
+  - `clap`: 4.5.49 → 4.5.50
+  - `bitflags`: 2.9.4 → 2.10.0
+  - `indexmap`: 2.11.4 → 2.12.0
+  - `rustls`: 0.23.33 → 0.23.34
+  - `proc-macro2`: 1.0.101 → 1.0.102
+  - `syn`: 2.0.106 → 2.0.108
+  - `unicode-ident`: 1.0.19 → 1.0.20
+  - Various other minor dependency updates
+
+## [0.5.7] - 2025-10-18
+
+### Added
 - **Repository URL Field**: Added support for tracking Git repository URLs in application profiles
   - **New Profile Field**: Added `repo_url` field to `Profile`, `CreateApplicationProfile`, and `UpdateApplicationProfile` structs
   - **Enhanced Application Creation**: Updated `create_application_if_not_exists()` method to accept optional `repo_url` parameter
@@ -35,16 +50,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Convenience method `create_application_simple()` continues to work unchanged by passing `None` internally
 
 ### Updated
-- **Dependencies**: Updated to latest stable versions and added new dependencies
-  - Added `chrono-tz = "0.10"` for timezone conversion in Reporting API
-  - `clap`: 4.5.49 → 4.5.50
-  - `bitflags`: 2.9.4 → 2.10.0
-  - `indexmap`: 2.11.4 → 2.12.0
-  - `rustls`: 0.23.33 → 0.23.34
-  - `proc-macro2`: 1.0.101 → 1.0.102
-  - `syn`: 2.0.106 → 2.0.108
-  - `unicode-ident`: 1.0.19 → 1.0.20
-  - Various other minor dependency updates
+- **Dependencies**: Minor dependency updates
+  - `cfg-if`: 1.0.0 → 1.0.1
+  - `mio`: 1.0.4 → 1.0.5
+  - `rustls`: 0.23.32 → 0.23.33
+  - `rustls-native-certs`: 0.8.0 → 0.8.1
 
 ### Technical Details
 - **Modified Structs**: Enhanced `Profile`, `CreateApplicationProfile`, and `UpdateApplicationProfile` with `repo_url: Option<String>`
