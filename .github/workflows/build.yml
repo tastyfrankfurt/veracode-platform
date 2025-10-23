@@ -95,5 +95,6 @@ jobs:
         path: |
           target/${{ matrix.target }}/release/verascan${{ matrix.os == 'windows-latest' && '.exe' || '' }}
           target/${{ matrix.target }}/release/veracmek${{ matrix.os == 'windows-latest' && '.exe' || '' }}
+          target/${{ matrix.target }}/release/veraaudit${{ matrix.os == 'windows-latest' && '.exe' || '' }}
           README.md
         retention-days: 7

@@ -21,6 +21,7 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - 🔨 **Build API** - Build management and SAST operations via XML API
 - 📊 **Scan API** - File upload and scan operations via XML API
 - 📋 **Policy API** - Security policy management and compliance evaluation with intelligent REST/XML API fallback
+- 📄 **Reporting API** - Audit log retrieval and compliance reporting via REST API with automatic pagination and timezone conversion
 - 🚀 **Async/Await** - Built on tokio for high-performance concurrent operations
 - ⚡ **Type-Safe** - Full Rust type safety with comprehensive serde serialization
 - 📊 **Rich Data Types** - Comprehensive data structures for all API responses
@@ -311,6 +312,47 @@ use veracode_platform::PolicyApi;
 if PolicyApi::should_break_build(&compliance_status) {
     let exit_code = PolicyApi::get_exit_code_for_status(&compliance_status);
     println!("❌ Build should break - exit code: {}", exit_code);
+}
+```
+
+### Reporting API (REST)
+Audit log retrieval and compliance reporting:
+
+```rust
+use veracode_platform::reporting::AuditReportRequest;
+
+let reporting = client.reporting_api();
+
+// Create audit report request
+let request = AuditReportRequest::new("2025-01-01", Some("2025-01-31".to_string()))
+    .with_audit_actions(vec!["Delete".to_string(), "Create".to_string()])
+    .with_action_types(vec!["Admin".to_string()]);
+
+// Generate and retrieve audit logs (convenience method)
+// Handles report generation, polling, and pagination automatically
+let audit_logs = reporting.get_audit_logs(&request).await?;
+println!("Retrieved {} audit log entries", audit_logs.as_array().unwrap().len());
+
+// Or use step-by-step approach for more control:
+
+// Step 1: Generate report
+let report_id = reporting.generate_audit_report(&request).await?;
+
+// Step 2: Poll for completion
+let completed_report = reporting.poll_report_status(&report_id, None, None).await?;
+
+// Step 3: Retrieve all pages
+let all_logs = reporting.get_all_audit_log_pages(&report_id).await?;
+
+// Audit logs include automatic timezone conversion
+// - timestamp: Original from API (US-East-1 timezone, handles DST)
+// - timestamp_utc: Converted to UTC for standardized processing
+for entry in all_logs {
+    println!("{}: {} - {}",
+        entry.timestamp_utc.unwrap_or_default(),
+        entry.action.unwrap_or_default(),
+        entry.action_detail.unwrap_or_default()
+    );
 }
 ```
 
