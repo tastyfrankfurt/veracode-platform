@@ -370,7 +370,7 @@ This is the initial release of **veraaudit**, a production-ready tool for retrie
 veraaudit run --start-date 2025-01-01 --output-dir ./logs
 
 # Service Mode - Continuous monitoring
-veraaudit service --interval-minutes 15 --cleanup-hours 168
+veraaudit service --interval 15m --cleanup-hours 168
 ```
 
 For detailed usage instructions, see [README.md](README.md).

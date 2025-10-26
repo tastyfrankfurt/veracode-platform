@@ -258,7 +258,7 @@ Keep only the N most recent files:
 
 ```bash
 veraaudit service \
-  --interval-minutes 15 \
+  --interval 15m \
   --cleanup-count 100
 ```
 
@@ -270,7 +270,7 @@ Delete files older than a specified number of hours:
 
 ```bash
 veraaudit service \
-  --interval-minutes 15 \
+  --interval 15m \
   --cleanup-hours 168  # 7 days
 ```
 
@@ -280,7 +280,7 @@ Both strategies can be used together - the more restrictive condition applies:
 
 ```bash
 veraaudit service \
-  --interval-minutes 15 \
+  --interval 15m \
   --cleanup-count 1000 \
   --cleanup-hours 720  # 30 days
 ```
