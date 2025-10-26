@@ -1,6 +1,7 @@
 //! Audit log retrieval logic
 use crate::error::Result;
 use log::{debug, info, warn};
+use std::sync::Arc;
 use veracode_platform::{AuditReportRequest, VeracodeClient};
 
 /// Retrieve audit logs for a specific datetime range
@@ -24,8 +25,8 @@ pub async fn retrieve_audit_logs(
     client: &VeracodeClient,
     start_datetime: &str,
     end_datetime: &str,
-    audit_actions: Option<Vec<String>>,
-    action_types: Option<Vec<String>>,
+    audit_actions: Option<Arc<[String]>>,
+    action_types: Option<Arc<[String]>>,
 ) -> Result<serde_json::Value> {
     debug!(
         "Building audit report request for datetime range: {} to {}",
@@ -39,14 +40,14 @@ pub async fn retrieve_audit_logs(
         && !actions.is_empty()
     {
         debug!("Adding audit action filters: [{}]", actions.join(", "));
-        request = request.with_audit_actions(actions);
+        request = request.with_audit_actions(actions.to_vec());
     }
 
     if let Some(types) = action_types
         && !types.is_empty()
     {
         debug!("Adding action type filters: [{}]", types.join(", "));
-        request = request.with_action_types(types);
+        request = request.with_action_types(types.to_vec());
     }
 
     // Retrieve audit logs using the reporting API
@@ -86,8 +87,8 @@ pub async fn retrieve_audit_logs_chunked(
     end_datetime: &str,
     interval_str: &str,
     backend_window_str: &str,
-    audit_actions: Option<Vec<String>>,
-    action_types: Option<Vec<String>>,
+    audit_actions: Option<Arc<[String]>>,
+    action_types: Option<Arc<[String]>>,
 ) -> Result<serde_json::Value> {
     info!(
         "Starting chunked retrieval from {} to {} with interval {}",
@@ -111,7 +112,10 @@ pub async fn retrieve_audit_logs_chunked(
     let now_dt = crate::datetime::try_parse_datetime(&now_utc_str)?;
 
     let effective_end = if end_dt > now_dt {
-        info!("End datetime {} is in the future, capping at current time {}", end_datetime, now_utc_str);
+        info!(
+            "End datetime {} is in the future, capping at current time {}",
+            end_datetime, now_utc_str
+        );
         now_dt
     } else {
         end_dt
@@ -155,9 +159,7 @@ pub async fn retrieve_audit_logs_chunked(
 
         // Check if chunk returned logs
         let chunk_logs = chunk_data.as_array().ok_or_else(|| {
-            crate::error::AuditError::InvalidConfig(
-                "API response is not a JSON array".to_string()
-            )
+            crate::error::AuditError::InvalidConfig("API response is not a JSON array".to_string())
         })?;
 
         if chunk_logs.is_empty() {

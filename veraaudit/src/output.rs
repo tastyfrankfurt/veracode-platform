@@ -3,6 +3,7 @@ use crate::error::Result;
 use chrono::{NaiveDateTime, Utc};
 use log::{debug, info, warn};
 use regex::Regex;
+use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
@@ -16,6 +17,18 @@ fn extract_last_timestamp(data: &serde_json::Value) -> Option<String> {
     let logs = data.as_array()?;
     let last_log = logs.last()?;
     let timestamp_utc = last_log.get("timestamp_utc")?.as_str()?;
+    Some(timestamp_utc.to_string())
+}
+
+/// Extract the timestamp from the first audit log entry
+///
+/// Assumes logs are sorted chronologically (oldest first, newest last).
+/// Returns None if the array is empty or timestamp is missing.
+#[cfg(test)]
+fn extract_first_timestamp(data: &serde_json::Value) -> Option<String> {
+    let logs = data.as_array()?;
+    let first_log = logs.first()?;
+    let timestamp_utc = first_log.get("timestamp_utc")?.as_str()?;
     Some(timestamp_utc.to_string())
 }
 
@@ -214,6 +227,60 @@ fn get_last_log_file(output_dir: &str) -> Option<PathBuf> {
     files_with_timestamps.first().map(|(_, path)| path.clone())
 }
 
+/// Find log files with timestamps newer than or equal to the specified cutoff
+///
+/// # Arguments
+///
+/// * `output_dir` - Directory to search for log files
+/// * `cutoff_timestamp` - Cutoff timestamp in "YYYY-MM-DD HH:MM:SS" format
+///
+/// # Returns
+///
+/// Vector of PathBufs for log files with timestamps >= cutoff
+#[cfg(test)]
+fn find_log_files_newer_than(output_dir: &str, cutoff_timestamp: &str) -> Vec<PathBuf> {
+    // Check if directory exists
+    let dir_path = std::path::Path::new(output_dir);
+    if !dir_path.exists() || !dir_path.is_dir() {
+        return Vec::new();
+    }
+
+    // Read directory entries
+    let entries = match fs::read_dir(dir_path) {
+        Ok(entries) => entries,
+        Err(_) => return Vec::new(),
+    };
+
+    // Pattern to match audit log files: audit_log_YYYYMMDD_HHMMSS_UTC.json
+    let pattern = match Regex::new(r"^audit_log_(\d{8}_\d{6}_UTC)\.json$") {
+        Ok(p) => p,
+        Err(_) => return Vec::new(),
+    };
+
+    // Collect all matching filenames with their timestamps and paths
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let filename = entry.file_name();
+            let filename_str = filename.to_str()?;
+
+            // Extract timestamp from filename
+            let captures = pattern.captures(filename_str)?;
+            let timestamp_str = captures.get(1)?.as_str();
+
+            // Parse timestamp from filename format to API format
+            let api_timestamp = parse_timestamp_from_filename(timestamp_str)?;
+
+            // Compare with cutoff (string comparison works for YYYY-MM-DD HH:MM:SS format)
+            if api_timestamp.as_str() >= cutoff_timestamp {
+                Some(entry.path())
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
 /// Find the last audit log file and extract its timestamp
 ///
 /// Searches the output directory for audit log files matching the pattern
@@ -335,9 +402,9 @@ pub fn write_audit_log_file(
     fs::create_dir_all(output_dir)?;
 
     // Perform deduplication if we have log entries (unless skip_dedup is true)
-    let deduplicated_data = if skip_dedup {
+    let deduplicated_data: Cow<'_, serde_json::Value> = if skip_dedup {
         info!("Deduplication disabled, writing all logs");
-        data.clone()
+        Cow::Borrowed(data)
     } else if let Some(logs_array) = data.as_array() {
         if !logs_array.is_empty() {
             // Only check the last (most recent) log file for duplicates
@@ -371,19 +438,19 @@ pub fn write_audit_log_file(
                     deduplicated_logs.len()
                 );
 
-                serde_json::Value::Array(deduplicated_logs)
+                Cow::Owned(serde_json::Value::Array(deduplicated_logs))
             } else {
                 // No existing log files to check against
                 debug!("No existing log files found for deduplication");
-                data.clone()
+                Cow::Borrowed(data)
             }
         } else {
             // Empty array
-            data.clone()
+            Cow::Borrowed(data)
         }
     } else {
         // Not an array
-        data.clone()
+        Cow::Borrowed(data)
     };
 
     // Check if deduplicated data is empty - skip writing if so
@@ -414,7 +481,7 @@ pub fn write_audit_log_file(
     debug!("Writing audit log to: {}", filepath.display());
 
     // Serialize and write the data
-    let json_string = serde_json::to_string_pretty(&deduplicated_data)?;
+    let json_string = serde_json::to_string_pretty(&*deduplicated_data)?;
     fs::write(&filepath, json_string)?;
 
     info!("Audit log written to: {}", filepath.display());
@@ -440,7 +507,7 @@ mod tests {
         let result = write_audit_log_file(output_dir, &test_data, false, None);
         assert!(result.is_ok());
 
-        let filepath = result.unwrap();
+        let filepath = result.unwrap().expect("Expected Some(PathBuf)");
         assert!(filepath.exists());
         assert!(filepath.to_str().unwrap().contains("audit_log_"));
         assert!(filepath.to_str().unwrap().ends_with("_UTC.json"));
@@ -687,7 +754,7 @@ mod tests {
         let result = write_audit_log_file(output_dir, &new_logs, false, None);
         assert!(result.is_ok());
 
-        let new_filepath = result.unwrap();
+        let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
         let content = fs::read_to_string(&new_filepath).unwrap();
         let saved_logs: serde_json::Value = serde_json::from_str(&content).unwrap();
 
@@ -722,7 +789,7 @@ mod tests {
         let result = write_audit_log_file(output_dir, &new_logs, false, None);
         assert!(result.is_ok());
 
-        let new_filepath = result.unwrap();
+        let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
         let content = fs::read_to_string(&new_filepath).unwrap();
         let saved_logs: serde_json::Value = serde_json::from_str(&content).unwrap();
 
@@ -770,7 +837,7 @@ mod tests {
         let result = write_audit_log_file(output_dir, &new_logs, false, None);
         assert!(result.is_ok());
 
-        let new_filepath = result.unwrap();
+        let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
         let content = fs::read_to_string(&new_filepath).unwrap();
         let saved_logs: serde_json::Value = serde_json::from_str(&content).unwrap();
 
@@ -818,7 +885,7 @@ mod tests {
         let result = write_audit_log_file(output_dir, &new_logs, true, None);
         assert!(result.is_ok());
 
-        let new_filepath = result.unwrap();
+        let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
         let content = fs::read_to_string(&new_filepath).unwrap();
         let saved_logs: serde_json::Value = serde_json::from_str(&content).unwrap();
 

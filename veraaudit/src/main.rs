@@ -97,11 +97,14 @@ async fn main() -> Result<()> {
                 // to get the freshest available data while avoiding incomplete backend data
                 let now_utc = datetime::format_now_utc();
                 let backend_offset_minutes = datetime::parse_time_offset(&backend_window)?;
-                let calculated_end = datetime::subtract_minutes_from_datetime(&now_utc, backend_offset_minutes)?;
+                let calculated_end =
+                    datetime::subtract_minutes_from_datetime(&now_utc, backend_offset_minutes)?;
 
                 info!(
                     "Using interval-based chunked retrieval: start={}, end=(now - backend_window)={}, chunk_size={}",
-                    start_datetime, calculated_end, interval.as_ref().unwrap()
+                    start_datetime,
+                    calculated_end,
+                    interval.as_ref().unwrap()
                 );
 
                 (calculated_end, true) // Backend-calculated timestamps are always UTC
@@ -115,8 +118,12 @@ async fn main() -> Result<()> {
             // If timestamps came from files or were computed, they're already in UTC, so force utc=true
             // If they came from user input, respect the --utc flag
             let effective_utc_mode = utc || (using_file_timestamp && end_is_utc);
-            let (validated_start, validated_end) =
-                datetime::validate_date_range(&start_datetime, &end_datetime, effective_utc_mode, &args.region)?;
+            let (validated_start, validated_end) = datetime::validate_date_range(
+                &start_datetime,
+                &end_datetime,
+                effective_utc_mode,
+                &args.region,
+            )?;
 
             // Convert validated enum types to API strings
             let audit_action_strings: Vec<String> = audit_action
@@ -131,7 +138,7 @@ async fn main() -> Result<()> {
                 &validated_start,
                 &validated_end,
                 &output_dir,
-                interval, // Pass interval for chunked retrieval
+                interval,       // Pass interval for chunked retrieval
                 backend_window, // Pass backend window for empty chunk handling
                 audit_action_strings,
                 action_type_strings,
@@ -169,12 +176,12 @@ async fn main() -> Result<()> {
                 audit_actions: if audit_action_strings.is_empty() {
                     None
                 } else {
-                    Some(audit_action_strings)
+                    Some(audit_action_strings.into())
                 },
                 action_types: if action_type_strings.is_empty() {
                     None
                 } else {
-                    Some(action_type_strings)
+                    Some(action_type_strings.into())
                 },
                 no_file_timestamp,
                 no_dedup,
@@ -225,12 +232,12 @@ async fn run_cli_mode(
             if audit_actions.is_empty() {
                 None
             } else {
-                Some(audit_actions)
+                Some(audit_actions.into())
             },
             if action_types.is_empty() {
                 None
             } else {
-                Some(action_types)
+                Some(action_types.into())
             },
         )
         .await?
@@ -243,12 +250,12 @@ async fn run_cli_mode(
             if audit_actions.is_empty() {
                 None
             } else {
-                Some(audit_actions)
+                Some(audit_actions.into())
             },
             if action_types.is_empty() {
                 None
             } else {
-                Some(action_types)
+                Some(action_types.into())
             },
         )
         .await?

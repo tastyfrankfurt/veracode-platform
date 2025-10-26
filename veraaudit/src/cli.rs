@@ -323,12 +323,9 @@ fn validate_backend_window(s: &str) -> Result<String, String> {
     };
 
     // Parse the numeric value
-    let value: i64 = num_str.parse().map_err(|_| {
-        format!(
-            "Invalid backend window: '{}'. Expected format: Nm or Nh",
-            s
-        )
-    })?;
+    let value: i64 = num_str
+        .parse()
+        .map_err(|_| format!("Invalid backend window: '{}'. Expected format: Nm or Nh", s))?;
 
     if value <= 0 {
         return Err("Backend window must be positive".to_string());

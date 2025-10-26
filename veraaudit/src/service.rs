@@ -13,8 +13,8 @@ pub struct ServiceConfig {
     pub output_dir: String,
     pub cleanup_count: Option<usize>,
     pub cleanup_hours: Option<u64>,
-    pub audit_actions: Option<Vec<String>>,
-    pub action_types: Option<Vec<String>>,
+    pub audit_actions: Option<Arc<[String]>>,
+    pub action_types: Option<Arc<[String]>>,
     pub no_file_timestamp: bool,
     pub no_dedup: bool,
     pub backend_window: String,
@@ -120,7 +120,8 @@ async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Res
     // properly catching up after downtime instead of only querying one interval at a time
     let now_utc = crate::datetime::format_now_utc();
     let backend_offset_minutes = crate::datetime::parse_time_offset(&config.backend_window)?;
-    let end_datetime = crate::datetime::subtract_minutes_from_datetime(&now_utc, backend_offset_minutes)?;
+    let end_datetime =
+        crate::datetime::subtract_minutes_from_datetime(&now_utc, backend_offset_minutes)?;
 
     info!(
         "Service cycle will retrieve logs from {} to (now - backend_window) = {}",
@@ -140,7 +141,12 @@ async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Res
     .await?;
 
     // Write to timestamped file (pass start_datetime for deduplication)
-    match output::write_audit_log_file(&config.output_dir, &audit_data, config.no_dedup, Some(&start_datetime))? {
+    match output::write_audit_log_file(
+        &config.output_dir,
+        &audit_data,
+        config.no_dedup,
+        Some(&start_datetime),
+    )? {
         Some(filepath) => {
             info!("Audit log saved to: {}", filepath.display());
         }

@@ -705,7 +705,10 @@ impl ReportingApi {
         let mut all_logs = self.get_all_audit_log_pages(&report_id).await?;
 
         // Step 4: Sort logs by timestamp_utc (oldest first, newest last)
-        log::info!("Sorting {} audit logs by timestamp (oldest to newest)...", all_logs.len());
+        log::info!(
+            "Sorting {} audit logs by timestamp (oldest to newest)...",
+            all_logs.len()
+        );
         all_logs.sort_by(|a, b| {
             match (&a.timestamp_utc, &b.timestamp_utc) {
                 // Both have timestamps - parse and compare them
