@@ -13,6 +13,9 @@ CLI tool for retrieving and archiving Veracode audit logs using the Reporting RE
 - 🌍 **Multi-Regional Support** - Commercial, European, and Federal regions
 - 🔍 **Flexible Filtering** - Filter by audit actions and action types
 - 🔄 **Robust Error Handling** - Automatic retries with exponential backoff
+- ⚡ **Optimized Deduplication** - Fast hash-based deduplication scanning only the most recent file
+- 🔁 **Chunked Retrieval** - Automatic chunking to handle backend refresh cycles (respects 2-hour data refresh window)
+- 🎯 **Smart File Management** - Skips writing empty files after deduplication
 
 ## Installation
 
@@ -44,7 +47,18 @@ veraaudit run
 veraaudit run --start-offset 2h    # Last 2 hours
 veraaudit run --start-offset 7d    # Last 7 days
 veraaudit run --start-offset 30m   # Last 30 minutes
+
+# Use interval for chunked retrieval (recommended for large time ranges)
+veraaudit run --start-offset 3h --interval 30m   # Query last 3 hours in 30-min chunks
 ```
+
+**New: Chunked Retrieval**
+
+When using the `--interval` parameter, veraaudit automatically breaks large time ranges into smaller chunks:
+- Respects backend refresh cycles (queries in smaller windows)
+- Stops early if data not yet available (backend still refreshing)
+- Single aggregated output file per run
+- Optimal for catching up after downtime or large time windows
 
 #### CLI Mode Options
 
@@ -62,6 +76,14 @@ veraaudit run --start-offset 30m   # Last 30 minutes
   - Optional, defaults to current time
   - **Default**: Interpreted as local timezone (converted to UTC for API)
   - **With `--utc`**: Treated as UTC (no conversion)
+  - **Cannot be used with `--interval`**
+- `--interval` - Interval/chunk size for queries (formats: `Nm`, `Nh`)
+  - Optional, enables chunked retrieval mode
+  - **Range: 5-60 minutes** (enforced)
+  - Examples: `15m`, `30m`, `1h`
+  - When specified, queries are broken into interval-sized chunks
+  - Stops early if a chunk returns 0 logs (backend not ready)
+  - **Cannot be used with `--end`**
 - `--output-dir` - Output directory for audit log files (default: `./audit_logs`)
 - `--audit-action` - Filter by audit actions. Can be specified multiple times. **Valid values:**
   - `Create`, `Delete`, `Update`, `Error`, `Email`, `Success`, `Failed`
@@ -72,6 +94,8 @@ veraaudit run --start-offset 30m   # Last 30 minutes
 - `--region` - Veracode region (default: `commercial`). **Valid values:**
   - `commercial`, `european`, `federal`
 - `--utc` - Treat input datetimes as UTC instead of local timezone (optional switch)
+- `--no-file-timestamp` - Disable automatic detection of last log file timestamp (optional switch)
+- `--no-dedup` - Disable log deduplication (optional switch)
 
 ### Service Mode (Continuous Monitoring)
 
@@ -79,16 +103,28 @@ Run continuously with automatic retrieval and cleanup:
 
 ```bash
 veraaudit service \
-  --interval-minutes 15 \
+  --interval 15m \
   --output-dir ./audit_logs \
   --cleanup-count 100 \
   --cleanup-hours 72
 ```
 
+**Service Mode Behavior**:
+- Queries are automatically chunked using the configured interval
+- Each cycle queries from last log timestamp (or start-offset) to now
+- Respects backend refresh cycles by stopping if data not yet available
+- Automatic deduplication prevents duplicate log entries
+- Skips writing files when no new logs are found
+
 #### Service Mode Options
 
-- `--interval-minutes` - How often to retrieve logs, **must be 5-60** (default: `15`)
-  - Note: Service always retrieves the last 60 minutes of logs regardless of interval
+- `--interval` - Query interval and chunk size (formats: `Nm`, `Nh`)
+  - **Range: 5-60 minutes** (enforced) (default: `15m`)
+  - Service runs every interval duration and uses this for chunked queries
+  - Examples: `15m`, `30m`, `1h`
+- `--start-offset` - How far back to start querying on first run (formats: `Nm`, `Nh`, `Nd`)
+  - Optional, defaults to `15m`
+  - Examples: `30m`, `2h`, `7d`
 - `--output-dir` - Output directory for audit log files (default: `./audit_logs`)
 - `--cleanup-count` - Keep only the last N files, **must be > 0** (optional)
 - `--cleanup-hours` - Delete files older than N hours, **must be > 0** (optional)
@@ -100,7 +136,8 @@ veraaudit service \
   - `"Login Account"`, `Admin`, `Auth`, `Login`
 - `--region` - Veracode region (default: `commercial`). **Valid values:**
   - `commercial`, `european`, `federal`
-- `--utc` - Treat input datetimes as UTC instead of local timezone (optional switch)
+- `--no-file-timestamp` - Disable automatic detection of last log file timestamp (optional switch)
+- `--no-dedup` - Disable log deduplication (optional switch)
 
 ## Timezone Handling
 
@@ -210,6 +247,8 @@ audit_logs/
 ```
 
 File naming format: `audit_log_YYYYMMDD_HHMMSS_UTC.json`
+
+**Note**: Files are only created when new logs are found. After deduplication, if no new logs remain, no file is written (avoids empty files).
 
 ## File Cleanup
 
@@ -334,7 +373,7 @@ export VAULT_CLI_ROLE="veracode-auditor"
 export VAULT_CLI_SECRET_PATH="secret/veracode@kvv2"
 
 veraaudit service \
-  --interval-minutes 30 \
+  --interval 30m \
   --cleanup-hours 168 \
   --output-dir /var/log/veracode-audit
 ```
@@ -345,11 +384,21 @@ Monitor every 5 minutes (minimum interval), keep last 1000 files:
 
 ```bash
 veraaudit service \
-  --interval-minutes 5 \
+  --interval 5m \
   --cleanup-count 1000 \
   --audit-action Delete \
   --action-type Admin
 ```
+
+### Example 6: Catching Up After Downtime
+
+If service was down for 3 hours, use chunked retrieval:
+
+```bash
+veraaudit run --start-offset 3h --interval 30m --output-dir ./audit_logs
+```
+
+This queries the last 3 hours in 30-minute chunks, respecting backend refresh cycles.
 
 ### Example 5: Filtered Retrieval
 
@@ -389,7 +438,7 @@ docker run -d \
   -e VERACODE_API_ID=your-id \
   -e VERACODE_API_KEY=your-key \
   veraaudit:latest \
-  service --interval-minutes 15 --cleanup-count 100
+  service --interval 15m --cleanup-count 100
 ```
 
 ## API Limitations
@@ -436,9 +485,17 @@ The tool includes automatic retry logic. If you see this repeatedly, consider:
 Check that interval is within valid range (5-60 minutes):
 
 ```bash
-veraaudit service --interval-minutes 15  # Valid
-veraaudit service --interval-minutes 3   # Invalid (too low)
+veraaudit service --interval 15m  # Valid
+veraaudit service --interval 3m   # Invalid (too low)
+veraaudit service --interval 2h   # Invalid (too high)
 ```
+
+### No files being created
+
+If the service is running but not creating files:
+- Check logs for "No new logs found after deduplication" messages
+- This is normal behavior - files are only created when new logs exist
+- Deduplication prevents writing duplicate logs
 
 ## Security Considerations
 
@@ -487,6 +544,20 @@ This tool is part of the veracode-workspace monorepo. Follow the existing patter
 
 MIT OR Apache-2.0
 
+## Performance Optimizations
+
+### Deduplication
+- **Fast Hash-Based**: Uses xxHash (xxh3_64) for extremely fast log entry hashing
+- **Optimized Scanning**: Only scans the most recent log file (not all files)
+- **Memory Efficient**: Loads hashes from single file instead of multiple files
+- **Automatic Overlap**: Creates 1-second overlap between queries to catch sub-second logs
+
+### Chunked Retrieval
+- **Backend-Aware**: Respects Veracode's 2-hour backend refresh cycle
+- **Early Stopping**: Stops querying if chunk returns 0 logs (data not ready)
+- **Configurable**: Chunk size (5-60 minutes) balances API calls vs reliability
+- **Single Output**: Aggregates all chunks into one deduplicated file
+
 ## Version
 
-v0.5.7
+v0.5.9

@@ -1,0 +1,10 @@
+
+Need to fix timezone conversion as currently incorrect
+
+update the file name to use the newest UTC timestamp from logs retrieved
+
+function to take the oldest log entry UTC timestamp and then find the files that has a newer timestamp
+
+Load log sha256 from the auditlog files and compare with new log files sha256 entry to look for duplicates and exclude the log from being written out
+
+
