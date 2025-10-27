@@ -3,9 +3,9 @@ use crate::error::Result;
 use chrono::{NaiveDateTime, Utc};
 use log::{debug, info, warn};
 use regex::Regex;
-use std::borrow::Cow;
 use std::collections::HashSet;
 use std::fs;
+use std::io::BufReader;
 use std::path::PathBuf;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -132,17 +132,17 @@ fn extract_hashes_from_log_files(log_files: &[PathBuf]) -> HashSet<u64> {
     for file_path in log_files {
         debug!("Extracting hashes from: {}", file_path.display());
 
-        // Read the file
-        let content = match fs::read_to_string(file_path) {
-            Ok(c) => c,
+        // Open file with buffered reader
+        let file = match fs::File::open(file_path) {
+            Ok(f) => f,
             Err(e) => {
-                warn!("Failed to read file {}: {}", file_path.display(), e);
+                warn!("Failed to open file {}: {}", file_path.display(), e);
                 continue;
             }
         };
 
-        // Parse JSON
-        let logs: serde_json::Value = match serde_json::from_str(&content) {
+        // Stream JSON parsing using from_reader instead of from_str
+        let logs: serde_json::Value = match serde_json::from_reader(BufReader::new(file)) {
             Ok(v) => v,
             Err(e) => {
                 warn!("Failed to parse JSON from {}: {}", file_path.display(), e);
@@ -394,7 +394,7 @@ pub fn get_last_log_timestamp(output_dir: &str) -> Option<String> {
 /// Returns error if directory creation or file writing fails
 pub fn write_audit_log_file(
     output_dir: &str,
-    data: &serde_json::Value,
+    data: serde_json::Value,
     skip_dedup: bool,
     _start_datetime: Option<&str>,
 ) -> Result<Option<PathBuf>> {
@@ -402,10 +402,10 @@ pub fn write_audit_log_file(
     fs::create_dir_all(output_dir)?;
 
     // Perform deduplication if we have log entries (unless skip_dedup is true)
-    let deduplicated_data: Cow<'_, serde_json::Value> = if skip_dedup {
+    let deduplicated_data = if skip_dedup {
         info!("Deduplication disabled, writing all logs");
-        Cow::Borrowed(data)
-    } else if let Some(logs_array) = data.as_array() {
+        data
+    } else if let serde_json::Value::Array(mut logs_array) = data {
         if !logs_array.is_empty() {
             // Only check the last (most recent) log file for duplicates
             // Since logs are chronological and we use -1 second overlap,
@@ -419,38 +419,35 @@ pub fn write_audit_log_file(
                 // Extract hashes from the last file only
                 let existing_hashes = extract_hashes_from_log_files(&[last_file_path]);
 
-                // Filter out duplicates
-                let mut deduplicated_logs = Vec::new();
-                let mut duplicate_count = 0;
+                let original_count = logs_array.len();
 
-                for log_entry in logs_array {
+                // Retain in place - no clone, no new allocation!
+                logs_array.retain(|log_entry| {
                     let hash = compute_log_entry_hash(log_entry);
-                    if !existing_hashes.contains(&hash) {
-                        deduplicated_logs.push(log_entry.clone());
-                    } else {
-                        duplicate_count += 1;
-                    }
-                }
+                    !existing_hashes.contains(&hash)
+                });
+
+                let duplicate_count = original_count - logs_array.len();
 
                 info!(
                     "Deduplication: {} duplicates removed, {} unique logs remaining",
                     duplicate_count,
-                    deduplicated_logs.len()
+                    logs_array.len()
                 );
 
-                Cow::Owned(serde_json::Value::Array(deduplicated_logs))
+                serde_json::Value::Array(logs_array)
             } else {
                 // No existing log files to check against
                 debug!("No existing log files found for deduplication");
-                Cow::Borrowed(data)
+                serde_json::Value::Array(logs_array)
             }
         } else {
             // Empty array
-            Cow::Borrowed(data)
+            serde_json::Value::Array(logs_array)
         }
     } else {
         // Not an array
-        Cow::Borrowed(data)
+        data
     };
 
     // Check if deduplicated data is empty - skip writing if so
@@ -481,7 +478,7 @@ pub fn write_audit_log_file(
     debug!("Writing audit log to: {}", filepath.display());
 
     // Serialize and write the data
-    let json_string = serde_json::to_string_pretty(&*deduplicated_data)?;
+    let json_string = serde_json::to_string_pretty(&deduplicated_data)?;
     fs::write(&filepath, json_string)?;
 
     info!("Audit log written to: {}", filepath.display());
@@ -504,7 +501,7 @@ mod tests {
             "logs": []
         });
 
-        let result = write_audit_log_file(output_dir, &test_data, false, None);
+        let result = write_audit_log_file(output_dir, test_data, false, None);
         assert!(result.is_ok());
 
         let filepath = result.unwrap().expect("Expected Some(PathBuf)");
@@ -751,7 +748,7 @@ mod tests {
         ]);
 
         // Write the new logs with deduplication
-        let result = write_audit_log_file(output_dir, &new_logs, false, None);
+        let result = write_audit_log_file(output_dir, new_logs, false, None);
         assert!(result.is_ok());
 
         let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
@@ -786,7 +783,7 @@ mod tests {
         ]);
 
         // Write the new logs
-        let result = write_audit_log_file(output_dir, &new_logs, false, None);
+        let result = write_audit_log_file(output_dir, new_logs, false, None);
         assert!(result.is_ok());
 
         let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
@@ -834,7 +831,7 @@ mod tests {
         ]);
 
         // Write the new logs
-        let result = write_audit_log_file(output_dir, &new_logs, false, None);
+        let result = write_audit_log_file(output_dir, new_logs, false, None);
         assert!(result.is_ok());
 
         let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");
@@ -882,7 +879,7 @@ mod tests {
         ]);
 
         // Write the new logs with deduplication DISABLED
-        let result = write_audit_log_file(output_dir, &new_logs, true, None);
+        let result = write_audit_log_file(output_dir, new_logs, true, None);
         assert!(result.is_ok());
 
         let new_filepath = result.unwrap().expect("Expected Some(PathBuf)");

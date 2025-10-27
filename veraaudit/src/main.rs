@@ -262,7 +262,7 @@ async fn run_cli_mode(
     };
 
     // Write to timestamped file (pass start_datetime for deduplication)
-    match output::write_audit_log_file(output_dir, &audit_data, no_dedup, Some(start_datetime))? {
+    match output::write_audit_log_file(output_dir, audit_data, no_dedup, Some(start_datetime))? {
         Some(filepath) => {
             info!("Success! Audit log saved to: {}", filepath.display());
         }

@@ -143,7 +143,7 @@ async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Res
     // Write to timestamped file (pass start_datetime for deduplication)
     match output::write_audit_log_file(
         &config.output_dir,
-        &audit_data,
+        audit_data,
         config.no_dedup,
         Some(&start_datetime),
     )? {
