@@ -1,6 +1,6 @@
 [package]
 name = "veraaudit"
-version = "0.5.8"
+version = "0.5.9"
 edition = "2024"
 description = "CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API"
 authors = ["Veracode API Team"]
@@ -38,6 +38,15 @@ chrono-tz = "0.10"
 
 # Service mode scheduling
 tokio-cron-scheduler = "0.15"
+regex = "1.12.2"
+
+# Fast hashing for log deduplication
+xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
 tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "dedup_benchmark"
+harness = false

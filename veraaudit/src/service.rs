@@ -1,21 +1,23 @@
 //! Service/daemon mode implementation for continuous audit log retrieval
 use crate::{audit, cleanup, error::Result, output};
-use chrono::{Duration, Utc};
 use log::{error, info, warn};
 use std::sync::Arc;
 use tokio::signal;
-use tokio::sync::Mutex;
 use tokio::time::{Duration as TokioDuration, interval};
 use veracode_platform::VeracodeClient;
 
 /// Service configuration
 pub struct ServiceConfig {
-    pub interval_minutes: u64,
+    pub start_offset: String,
+    pub interval: String,
     pub output_dir: String,
     pub cleanup_count: Option<usize>,
     pub cleanup_hours: Option<u64>,
-    pub audit_actions: Option<Vec<String>>,
-    pub action_types: Option<Vec<String>>,
+    pub audit_actions: Option<Arc<[String]>>,
+    pub action_types: Option<Arc<[String]>>,
+    pub no_file_timestamp: bool,
+    pub no_dedup: bool,
+    pub backend_window: String,
 }
 
 /// Run the service in continuous mode
@@ -30,7 +32,8 @@ pub struct ServiceConfig {
 /// Returns error if service fails to start or encounters fatal error
 pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Result<()> {
     info!("Starting veraaudit service mode");
-    info!("  Interval: {} minutes", config.interval_minutes);
+    info!("  Start offset: {}", config.start_offset);
+    info!("  Interval: {}", config.interval);
     info!("  Output directory: {}", config.output_dir);
 
     if let Some(count) = config.cleanup_count {
@@ -44,27 +47,14 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
     let config = Arc::new(config);
     let client = Arc::new(client);
 
-    // Create a shutdown signal handler
-    let shutdown_flag = Arc::new(Mutex::new(false));
-    let shutdown_flag_clone = shutdown_flag.clone();
-
-    tokio::spawn(async move {
-        signal::ctrl_c().await.expect("Failed to listen for Ctrl+C");
-        info!("Shutdown signal received, gracefully stopping service...");
-        *shutdown_flag_clone.lock().await = true;
-    });
+    // Parse interval to get duration in minutes, then convert to seconds
+    let interval_minutes = crate::datetime::parse_time_offset(&config.interval)?;
 
     // Main service loop
-    let mut interval_timer = interval(TokioDuration::from_secs(config.interval_minutes * 60));
+    let mut interval_timer = interval(TokioDuration::from_secs((interval_minutes * 60) as u64));
     interval_timer.tick().await; // First tick happens immediately
 
     loop {
-        // Check shutdown flag
-        if *shutdown_flag.lock().await {
-            info!("Service shutting down");
-            break;
-        }
-
         // Run audit log retrieval
         match run_audit_cycle(&client, &config).await {
             Ok(_) => {
@@ -83,42 +73,87 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
             warn!("Cleanup cycle failed: {}", e);
         }
 
-        // Wait for next interval
-        interval_timer.tick().await;
+        // Wait for next interval or shutdown signal
+        tokio::select! {
+            _ = interval_timer.tick() => {
+                // Continue to next iteration
+            }
+            _ = signal::ctrl_c() => {
+                info!("Shutdown signal received, gracefully stopping service...");
+                break;
+            }
+        }
     }
 
+    info!("Service shut down successfully");
     Ok(())
 }
 
 /// Run a single audit log retrieval cycle
 ///
-/// Service mode always retrieves the last 60 minutes of audit logs
+/// Service mode retrieves audit logs based on configured start_offset and interval,
+/// but will use the timestamp from the last log file if it exists, is within 72 hours,
+/// and the no_file_timestamp flag is not set
 async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Result<()> {
-    let now = Utc::now();
-    // Fixed 60-minute lookback window for service mode
-    let start_time = now - Duration::minutes(60);
+    // Determine start datetime with the following priority:
+    // 1. If --no-file-timestamp is not set, check for last log file timestamp (if within 72 hours)
+    // 2. If not found, too old, or flag is set, use start_offset
+    let start_datetime = if !config.no_file_timestamp {
+        if let Some(last_timestamp) = output::get_last_log_timestamp(&config.output_dir) {
+            // Found a valid timestamp from the last log file (within 72 hours)
+            info!(
+                "Using timestamp from last log file as start: {}",
+                last_timestamp
+            );
+            last_timestamp
+        } else {
+            // No valid log file found, use start_offset
+            crate::datetime::format_utc_minus_offset(&config.start_offset)?
+        }
+    } else {
+        // File timestamp check is disabled
+        crate::datetime::format_utc_minus_offset(&config.start_offset)?
+    };
 
-    let start_datetime = start_time.format("%Y-%m-%d %H:%M:%S").to_string();
-    let end_datetime = now.format("%Y-%m-%d %H:%M:%S").to_string();
+    // Calculate end datetime: now - backend_window
+    // This ensures service mode queries to the freshest available data each cycle,
+    // properly catching up after downtime instead of only querying one interval at a time
+    let now_utc = crate::datetime::format_now_utc();
+    let backend_offset_minutes = crate::datetime::parse_time_offset(&config.backend_window)?;
+    let end_datetime =
+        crate::datetime::subtract_minutes_from_datetime(&now_utc, backend_offset_minutes)?;
 
     info!(
-        "Retrieving audit logs from {} to {}",
+        "Service cycle will retrieve logs from {} to (now - backend_window) = {}",
         start_datetime, end_datetime
     );
 
-    // Retrieve audit logs
-    let audit_data = audit::retrieve_audit_logs(
+    // Retrieve audit logs using chunked retrieval
+    let audit_data = audit::retrieve_audit_logs_chunked(
         client,
         &start_datetime,
         &end_datetime,
+        &config.interval,
+        &config.backend_window,
         config.audit_actions.clone(),
         config.action_types.clone(),
     )
     .await?;
 
-    // Write to timestamped file
-    let filepath = output::write_audit_log_file(&config.output_dir, &audit_data)?;
-    info!("Audit log saved to: {}", filepath.display());
+    // Write to timestamped file (pass start_datetime for deduplication)
+    match output::write_audit_log_file(
+        &config.output_dir,
+        audit_data,
+        config.no_dedup,
+        Some(&start_datetime),
+    )? {
+        Some(filepath) => {
+            info!("Audit log saved to: {}", filepath.display());
+        }
+        None => {
+            info!("No new logs found after deduplication, no file created");
+        }
+    }
 
     Ok(())
 }

@@ -161,17 +161,6 @@ impl FromStr for Region {
     }
 }
 
-/// Validate interval minutes (must be between 5 and 60)
-pub fn validate_interval_minutes(minutes: u64) -> Result<u64, AuditError> {
-    if !(5..=60).contains(&minutes) {
-        return Err(AuditError::InvalidConfig(format!(
-            "Interval must be between 5 and 60 minutes, got: {}",
-            minutes
-        )));
-    }
-    Ok(minutes)
-}
-
 /// Validate cleanup count (must be > 0)
 pub fn validate_cleanup_count(count: usize) -> Result<usize, AuditError> {
     if count == 0 {
@@ -257,16 +246,6 @@ mod tests {
     fn test_region_invalid() {
         assert!(Region::from_str("invalid").is_err());
         assert!(Region::from_str("us").is_err());
-    }
-
-    #[test]
-    fn test_validate_interval_minutes() {
-        assert!(validate_interval_minutes(5).is_ok());
-        assert!(validate_interval_minutes(30).is_ok());
-        assert!(validate_interval_minutes(60).is_ok());
-        assert!(validate_interval_minutes(4).is_err());
-        assert!(validate_interval_minutes(61).is_err());
-        assert!(validate_interval_minutes(0).is_err());
     }
 
     #[test]

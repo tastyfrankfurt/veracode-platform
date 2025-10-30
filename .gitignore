@@ -148,3 +148,7 @@ sast-*.json
 # Veracode specific
 *.jar
 *.zip
+
+# Audit logs - contains sensitive data
+audit_logs/
+**/audit_logs/

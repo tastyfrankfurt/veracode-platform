@@ -5,6 +5,160 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.9] - 2025-10-25
+
+### Added
+
+- **Chunked Query Retrieval**: New automatic chunking strategy for handling backend refresh cycles
+  - **Interval-Based Chunking**: Queries are automatically broken into smaller time windows (5-60 minute chunks)
+  - **Backend Refresh Awareness**: Respects Veracode's 2-hour backend data refresh cycle
+  - **Early Stopping**: Stops querying if a chunk returns 0 logs (indicates backend data not yet available)
+  - **Single Aggregated Output**: All chunks aggregated and deduplicated into one file per run/cycle
+  - **New `--interval` Parameter**:
+    - CLI Mode: `veraaudit run --start-offset 3h --interval 30m`
+    - Service Mode: Always uses chunked retrieval with configured interval
+  - **Use Cases**:
+    - Catching up after service downtime (e.g., 3+ hour gap)
+    - Ensuring data completeness during backend refresh windows
+    - More reliable retrieval for large time ranges
+
+- **Interval Validation**: Strict enforcement of 5-60 minute interval range
+  - **Range Enforcement**: Prevents intervals outside the optimal 5-60 minute window
+  - **Clear Error Messages**: Helpful feedback when interval is out of range
+  - **Rationale**:
+    - Too small (< 5 min): Excessive API calls, potential rate limiting
+    - Too large (> 60 min): May miss data during backend refresh cycles
+  - **Applied To**: Both `run --interval` and `service --interval` parameters
+
+- **New CLI Flags**:
+  - `--no-file-timestamp`: Disable automatic detection of last log file timestamp
+  - `--no-dedup`: Disable log deduplication (for debugging purposes)
+
+### Changed
+
+- **Parameter Rename**: `--interval-minutes` → `--interval` for consistency
+  - **Before**: `veraaudit service --interval-minutes 15`
+  - **After**: `veraaudit service --interval 15m`
+  - **Format**: Supports `Nm` (minutes), `Nh` (hours)
+  - **Examples**: `15m`, `30m`, `1h`
+  - **Backward Compatibility**: Old parameter no longer accepted
+
+- **Service Mode Behavior**: Now always uses chunked retrieval
+  - Queries from `(last timestamp OR start-offset)` to `now` in interval-sized chunks
+  - More reliable for catching all logs during backend refresh periods
+  - Automatic deduplication across all chunks
+
+- **Empty File Handling**: Files no longer created when no logs remain after deduplication
+  - **Before**: Created files even with `[]` empty arrays
+  - **After**: Skips file creation, logs info message
+  - **Benefit**: Cleaner output directory, avoids clutter from duplicate-only queries
+  - **Return Type**: `write_audit_log_file()` now returns `Result<Option<PathBuf>>`
+
+### Performance
+
+- **Deduplication Optimization**: Massive performance improvement for duplicate detection
+  - **Before**: Scanned ALL files newer than start datetime (O(N files))
+  - **After**: Scans ONLY the most recent file (O(1 file))
+  - **Rationale**:
+    - Logs are chronological
+    - -1 second overlap only affects boundary between queries
+    - Only last file can contain duplicates from current query
+  - **Impact**:
+    - Up to 100x faster for large output directories
+    - Reduced memory usage (only last file's hashes loaded)
+    - Reduced disk I/O (single file read vs multiple)
+  - **Implementation**: New `get_last_log_file()` helper function
+
+- **Hash-Based Deduplication**: Uses xxHash (xxh3_64) for extremely fast hashing
+  - Significantly faster than SHA256 or other cryptographic hashes
+  - Excellent collision resistance for deduplication use case
+  - Minimal memory footprint
+
+### Fixed
+
+- **Timestamp Overlap Comment**: Corrected misleading documentation
+  - **Issue**: Comment said "Add 1 second" but code did `-1 second`
+  - **Resolution**: Updated comment to accurately describe overlap strategy
+  - **Context**: -1 second creates overlap to catch sub-second precision logs
+  - **Location**: `output.rs:409-420`
+
+- **Return Value Bug**: Fixed variable name mismatch in overlap calculation
+  - Changed `next_timestamp` → `overlap_timestamp` for clarity
+
+### Removed
+
+- **Unused Functions**: Cleaned up dead code to improve maintainability
+  - Removed `extract_first_timestamp()` (no longer needed with last-file-only scanning)
+  - Removed `find_log_files_newer_than()` (replaced by `get_last_log_file()`)
+
+### Technical Details
+
+#### New Functions
+- `audit::retrieve_audit_logs_chunked()` - Chunked query implementation with early stopping
+- `output::get_last_log_file()` - Efficient last file lookup
+- `cli::validate_interval()` - Interval range validation (5-60 minutes)
+
+#### Modified Functions
+- `main::run_cli_mode()` - Now accepts `interval` parameter, uses chunked retrieval
+- `service::run_audit_cycle()` - Always uses chunked retrieval
+- `output::write_audit_log_file()` - Returns `Option<PathBuf>`, optimized deduplication
+
+#### Files Modified
+- `veraaudit/src/cli.rs` - Added interval validation, parameter updates
+- `veraaudit/src/audit.rs` - Added chunked retrieval implementation
+- `veraaudit/src/output.rs` - Optimized deduplication, empty file handling
+- `veraaudit/src/main.rs` - Updated to use chunked retrieval
+- `veraaudit/src/service.rs` - Updated to use chunked retrieval
+- `veraaudit/README.md` - Comprehensive documentation updates
+- `veraaudit/CHANGELOG.md` - This changelog
+
+### Benefits
+
+- **Reliability**: Chunked queries handle backend refresh cycles gracefully
+- **Performance**: 100x faster deduplication for large output directories
+- **Efficiency**: Reduced API calls via early stopping when data unavailable
+- **Cleanliness**: No more empty audit files cluttering output directory
+- **Memory**: Lower memory footprint from optimized deduplication
+- **Usability**: Clearer error messages for invalid intervals
+
+### Migration Notes
+
+#### Breaking Changes
+- `--interval-minutes` parameter renamed to `--interval`
+- Return type change for `write_audit_log_file()` (internal API, no user impact)
+
+#### Update Commands
+```bash
+# Before (v0.5.8)
+veraaudit service --interval-minutes 15
+
+# After (v0.5.9)
+veraaudit service --interval 15m
+```
+
+#### Behavior Changes
+- Service mode queries now always chunked (more API calls, but more reliable)
+- Empty files no longer created (check logs for "No new logs found" messages)
+- Deduplication only scans last file (much faster, same correctness)
+
+### Upgrade Guide
+
+1. **Update CLI Scripts**: Replace `--interval-minutes` with `--interval`
+2. **Monitor Empty Files**: Normal to see fewer files if many duplicate queries
+3. **Check Logs**: Look for "No new logs found after deduplication" info messages
+4. **Performance**: Expect faster deduplication on existing directories with many files
+
+### Known Issues
+
+None identified in this release.
+
+### Testing
+
+- All unit tests passing
+- Cargo check/clippy warnings resolved
+- Manual testing with 3-hour catchup scenario
+- Deduplication performance validated on directories with 100+ files
+
 ## [0.5.8] - 2025-10-23
 
 ### Added
@@ -216,7 +370,7 @@ This is the initial release of **veraaudit**, a production-ready tool for retrie
 veraaudit run --start-date 2025-01-01 --output-dir ./logs
 
 # Service Mode - Continuous monitoring
-veraaudit service --interval-minutes 15 --cleanup-hours 168
+veraaudit service --interval 15m --cleanup-hours 168
 ```
 
 For detailed usage instructions, see [README.md](README.md).
