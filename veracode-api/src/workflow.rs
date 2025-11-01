@@ -244,6 +244,7 @@ impl VeracodeWorkflow {
                             config.app_description,
                             None, // No teams specified
                             None, // No repo URL specified
+                            None, // No custom KMS alias specified
                         )
                         .await
                     {

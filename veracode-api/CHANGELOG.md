@@ -5,6 +5,30 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2025-10-30
+
+### Added
+- **Customer Managed Encryption Key (CMEK) Support**: Full support for AWS KMS encryption during application profile creation
+  - **API Enhancement**: Added `custom_kms_alias` parameter to `create_application_if_not_exists()` method
+  - **Smart Updates**: Automatically updates `custom_kms_alias` on existing applications if not already set
+  - **Optional Field**: Only included in API payload when explicitly provided (via `#[serde(skip_serializing_if = "Option::is_none")]`)
+  - **Validation**: Character set validation for AWS KMS alias format: `[a-zA-Z0-9-/_]`, length 8-256 characters
+  - **Examples**: Added comprehensive examples showing JSON payload structure with and without CMEK
+  - **Modified Files**: `src/app.rs`, `src/workflow.rs`, `examples/xml_api_workflow_validation.rs`
+
+### Testing
+- **11 New CMEK Tests**: Comprehensive test coverage for CMEK functionality
+  - `test_cmek_enabled_payload_structure`: Documents exact JSON structure WITH CMEK
+  - `test_cmek_disabled_payload_structure`: Documents exact JSON structure WITHOUT CMEK
+  - `test_cmek_alias_format_variations`: Tests various valid alias formats
+  - `test_complete_application_profile_with_cmek`: Full profile with all optional fields
+  - Additional tests for serialization, deserialization, and backward compatibility
+
+### API Contract
+- **With CMEK**: `{"profile": {"name": "...", "custom_kms_alias": "alias/my-key", ...}}`
+- **Without CMEK**: Field is completely excluded from payload (not included as `null`)
+- **Backward Compatible**: Existing code without CMEK continues to work unchanged
+
 ## [0.6.0] - 2025-10-23
 
 ### Enhanced

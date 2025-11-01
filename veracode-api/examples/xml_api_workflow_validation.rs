@@ -102,6 +102,7 @@ async fn test_application_operations(
                     Some("Rust API validation test application".to_string()),
                     None, // No teams specified
                     None, // No repo URL specified
+                    None, // No custom KMS alias specified
                 )
                 .await?;
 

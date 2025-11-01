@@ -857,6 +857,7 @@ impl VeracodeClient {
     ///     Some("My app description".to_string()),
     ///     None,
     ///     Some("https://github.com/user/repo".to_string()),
+    ///     None,
     /// ).await?;
     ///
     /// // Second call: Returns existing app, no updates (all fields populated)
@@ -866,6 +867,7 @@ impl VeracodeClient {
     ///     Some("Different description".to_string()), // Ignored - existing has value
     ///     None,
     ///     Some("https://github.com/user/repo".to_string()), // Ignored - existing has value
+    ///     None,
     /// ).await?;
     ///
     /// // Application created without repo_url, then updated later
@@ -875,6 +877,7 @@ impl VeracodeClient {
     ///     None,
     ///     None,
     ///     None, // No repo_url initially
+    ///     None,
     /// ).await?;
     ///
     /// // Later: Adds repo_url to existing application (because it was missing)
@@ -884,6 +887,7 @@ impl VeracodeClient {
     ///     Some("Adding description".to_string()), // Updates (was None)
     ///     None,
     ///     Some("https://github.com/user/another".to_string()), // Updates (was None)
+    ///     None,
     /// ).await?;
     /// # Ok(())
     /// # }
@@ -895,6 +899,7 @@ impl VeracodeClient {
         description: Option<String>,
         team_names: Option<Vec<String>>,
         repo_url: Option<String>,
+        custom_kms_alias: Option<String>,
     ) -> Result<Application, VeracodeError> {
         // First, check if application already exists
         if let Some(existing_app) = self.get_application_by_name(name).await? {
@@ -902,6 +907,7 @@ impl VeracodeClient {
             let mut needs_update = false;
             let mut update_repo_url = false;
             let mut update_description = false;
+            let mut update_custom_kms_alias = false;
 
             if let Some(ref profile) = existing_app.profile {
                 // Check repo_url: update if we have one AND existing is None/empty
@@ -927,6 +933,18 @@ impl VeracodeClient {
                     update_description = true;
                     needs_update = true;
                 }
+
+                // Check custom_kms_alias: update if we have one AND existing is None/empty
+                if custom_kms_alias.is_some()
+                    && (profile.custom_kms_alias.is_none()
+                        || profile
+                            .custom_kms_alias
+                            .as_ref()
+                            .is_some_and(|k| k.trim().is_empty()))
+                {
+                    update_custom_kms_alias = true;
+                    needs_update = true;
+                }
             }
 
             if needs_update {
@@ -941,6 +959,12 @@ impl VeracodeClient {
                     log::debug!(
                         "   Setting description: {}",
                         description.as_deref().unwrap_or("None")
+                    );
+                }
+                if update_custom_kms_alias {
+                    log::debug!(
+                        "   Setting custom_kms_alias: {}",
+                        custom_kms_alias.as_deref().unwrap_or("None")
                     );
                 }
 
@@ -961,7 +985,11 @@ impl VeracodeClient {
                         teams: profile.teams.clone(), // Keep existing
                         tags: profile.tags.clone(),
                         custom_fields: profile.custom_fields.clone(),
-                        custom_kms_alias: profile.custom_kms_alias.clone(),
+                        custom_kms_alias: if update_custom_kms_alias {
+                            custom_kms_alias
+                        } else {
+                            profile.custom_kms_alias.clone()
+                        },
                         repo_url: if update_repo_url {
                             repo_url
                         } else {
@@ -1026,7 +1054,7 @@ impl VeracodeClient {
                 teams,
                 tags: None,
                 custom_fields: None,
-                custom_kms_alias: None,
+                custom_kms_alias,
                 repo_url,
             },
         };
@@ -1115,8 +1143,15 @@ impl VeracodeClient {
         business_criticality: BusinessCriticality,
         description: Option<String>,
     ) -> Result<Application, VeracodeError> {
-        self.create_application_if_not_exists(name, business_criticality, description, None, None)
-            .await
+        self.create_application_if_not_exists(
+            name,
+            business_criticality,
+            description,
+            None,
+            None,
+            None,
+        )
+        .await
     }
 
     /// Enable Customer Managed Encryption Key (CMEK) on an application
@@ -1623,5 +1658,300 @@ mod tests {
 
         let request: CreateApplicationRequest = serde_json::from_str(json_without_cmek).unwrap();
         assert_eq!(request.profile.custom_kms_alias, None);
+    }
+
+    #[test]
+    fn test_create_application_profile_with_cmek() {
+        // Test that CreateApplicationProfile includes custom_kms_alias when Some
+        let profile_with_cmek = CreateApplicationProfile {
+            name: "MyApplication".to_string(),
+            business_criticality: BusinessCriticality::High,
+            description: Some("Application created for assessment scanning".to_string()),
+            business_unit: None,
+            business_owners: None,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: Some("alias/my-encryption-key".to_string()),
+            repo_url: Some("https://github.com/user/repo".to_string()),
+        };
+
+        let request = CreateApplicationRequest {
+            profile: profile_with_cmek,
+        };
+
+        let json = serde_json::to_string_pretty(&request).unwrap();
+
+        // Print the actual JSON payload that would be sent to Veracode
+        println!("\n📦 Example JSON Payload sent to Veracode API:");
+        println!("{}", json);
+        println!();
+
+        assert!(json.contains("custom_kms_alias"));
+        assert!(json.contains("alias/my-encryption-key"));
+
+        // Verify it deserializes correctly
+        let deserialized: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            deserialized.profile.custom_kms_alias,
+            Some("alias/my-encryption-key".to_string())
+        );
+    }
+
+    #[test]
+    fn test_create_application_profile_without_cmek() {
+        // Test that CreateApplicationProfile excludes custom_kms_alias when None
+        let profile_without_cmek = CreateApplicationProfile {
+            name: "MyApplication".to_string(),
+            business_criticality: BusinessCriticality::High,
+            description: Some("Application created for assessment scanning".to_string()),
+            business_unit: None,
+            business_owners: None,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: None,
+            repo_url: Some("https://github.com/user/repo".to_string()),
+        };
+
+        let request = CreateApplicationRequest {
+            profile: profile_without_cmek,
+        };
+
+        let json = serde_json::to_string_pretty(&request).unwrap();
+
+        // Print the actual JSON payload WITHOUT CMEK
+        println!("\n📦 Example JSON Payload sent to Veracode API (without --cmek):");
+        println!("{}", json);
+        println!("⚠️  Notice: 'custom_kms_alias' field is NOT included in the payload");
+        println!();
+
+        assert!(!json.contains("custom_kms_alias"));
+
+        // Verify it deserializes correctly
+        let deserialized: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(deserialized.profile.custom_kms_alias, None);
+    }
+
+    #[test]
+    fn test_update_application_profile_with_cmek() {
+        // Test that UpdateApplicationProfile handles custom_kms_alias correctly
+        let profile_with_cmek = UpdateApplicationProfile {
+            name: Some("Updated Application".to_string()),
+            description: Some("Updated description".to_string()),
+            business_unit: None,
+            business_owners: None,
+            business_criticality: BusinessCriticality::Medium,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: Some("alias/updated-key".to_string()),
+            repo_url: None,
+        };
+
+        let json = serde_json::to_string(&profile_with_cmek).unwrap();
+        assert!(json.contains("custom_kms_alias"));
+        assert!(json.contains("alias/updated-key"));
+    }
+
+    /// Test case demonstrating exact JSON payload structure WITH CMEK
+    /// This documents the API contract when creating applications with encryption enabled
+    #[test]
+    fn test_cmek_enabled_payload_structure() {
+        let request = CreateApplicationRequest {
+            profile: CreateApplicationProfile {
+                name: "MyApplication".to_string(),
+                business_criticality: BusinessCriticality::High,
+                description: Some("Application created for assessment scanning".to_string()),
+                business_unit: None,
+                business_owners: None,
+                policies: None,
+                teams: None,
+                tags: None,
+                custom_fields: None,
+                custom_kms_alias: Some("alias/my-encryption-key".to_string()),
+                repo_url: Some("https://github.com/user/repo".to_string()),
+            },
+        };
+
+        let json = serde_json::to_string_pretty(&request).unwrap();
+
+        // Verify the exact structure matches expected API format
+        let expected_keys = vec![
+            "profile",
+            "name",
+            "business_criticality",
+            "description",
+            "custom_kms_alias",
+            "repo_url",
+        ];
+
+        for key in expected_keys {
+            assert!(
+                json.contains(&format!("\"{key}\"")),
+                "Expected key '{}' not found in payload",
+                key
+            );
+        }
+
+        // Verify custom_kms_alias is present and has correct value
+        assert!(json.contains("\"custom_kms_alias\": \"alias/my-encryption-key\""));
+        assert!(json.contains("\"business_criticality\": \"HIGH\""));
+        assert!(json.contains("\"name\": \"MyApplication\""));
+
+        // Parse and verify structure
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed["profile"]["custom_kms_alias"],
+            "alias/my-encryption-key"
+        );
+        assert_eq!(parsed["profile"]["business_criticality"], "HIGH");
+    }
+
+    /// Test case demonstrating exact JSON payload structure WITHOUT CMEK
+    /// This documents the API contract when creating applications without encryption
+    #[test]
+    fn test_cmek_disabled_payload_structure() {
+        let request = CreateApplicationRequest {
+            profile: CreateApplicationProfile {
+                name: "MyApplication".to_string(),
+                business_criticality: BusinessCriticality::High,
+                description: Some("Application created for assessment scanning".to_string()),
+                business_unit: None,
+                business_owners: None,
+                policies: None,
+                teams: None,
+                tags: None,
+                custom_fields: None,
+                custom_kms_alias: None, // CMEK not specified
+                repo_url: Some("https://github.com/user/repo".to_string()),
+            },
+        };
+
+        let json = serde_json::to_string_pretty(&request).unwrap();
+
+        // Verify custom_kms_alias is NOT present in the payload
+        assert!(
+            !json.contains("custom_kms_alias"),
+            "custom_kms_alias should not be present when None"
+        );
+
+        // Verify other expected fields are present
+        assert!(json.contains("\"name\": \"MyApplication\""));
+        assert!(json.contains("\"business_criticality\": \"HIGH\""));
+        assert!(json.contains("\"repo_url\""));
+
+        // Parse and verify structure
+        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed["profile"]["name"], "MyApplication");
+        assert_eq!(parsed["profile"]["business_criticality"], "HIGH");
+
+        // Verify custom_kms_alias key doesn't exist in JSON
+        assert!(
+            !parsed["profile"]
+                .as_object()
+                .unwrap()
+                .contains_key("custom_kms_alias"),
+            "custom_kms_alias key should not exist in JSON object"
+        );
+    }
+
+    /// Test case for various valid CMEK alias formats
+    #[test]
+    fn test_cmek_alias_format_variations() {
+        // Test different valid alias formats
+        let test_cases = vec![
+            "alias/production-key",
+            "alias/dev_environment_key",
+            "alias/app/prod/2024",
+            "alias/KEY123",
+            "alias/my-app-key-2024",
+        ];
+
+        for alias in test_cases {
+            let request = CreateApplicationRequest {
+                profile: CreateApplicationProfile {
+                    name: "TestApp".to_string(),
+                    business_criticality: BusinessCriticality::Medium,
+                    description: None,
+                    business_unit: None,
+                    business_owners: None,
+                    policies: None,
+                    teams: None,
+                    tags: None,
+                    custom_fields: None,
+                    custom_kms_alias: Some(alias.to_string()),
+                    repo_url: None,
+                },
+            };
+
+            let json = serde_json::to_string(&request).unwrap();
+            assert!(
+                json.contains(alias),
+                "Alias '{}' should be present in payload",
+                alias
+            );
+
+            // Verify it can be deserialized
+            let parsed: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+            assert_eq!(parsed.profile.custom_kms_alias, Some(alias.to_string()));
+        }
+    }
+
+    /// Test case demonstrating full application profile with all optional fields
+    #[test]
+    fn test_complete_application_profile_with_cmek() {
+        let request = CreateApplicationRequest {
+            profile: CreateApplicationProfile {
+                name: "CompleteApplication".to_string(),
+                business_criticality: BusinessCriticality::VeryHigh,
+                description: Some("Full featured application with CMEK".to_string()),
+                business_unit: Some(BusinessUnit {
+                    id: Some(123),
+                    name: Some("Engineering".to_string()),
+                    guid: Some("bu-guid-123".to_string()),
+                }),
+                business_owners: Some(vec![BusinessOwner {
+                    email: Some("owner@example.com".to_string()),
+                    name: Some("App Owner".to_string()),
+                }]),
+                policies: None,
+                teams: Some(vec![Team {
+                    guid: Some("team-guid-456".to_string()),
+                    team_id: None,
+                    team_name: None,
+                    team_legacy_id: None,
+                }]),
+                tags: Some("production,encrypted".to_string()),
+                custom_fields: Some(vec![CustomField {
+                    name: Some("Environment".to_string()),
+                    value: Some("Production".to_string()),
+                }]),
+                custom_kms_alias: Some("alias/production-cmek-key".to_string()),
+                repo_url: Some("https://github.com/company/secure-app".to_string()),
+            },
+        };
+
+        let json = serde_json::to_string_pretty(&request).unwrap();
+
+        // Verify all major sections are present
+        assert!(json.contains("\"custom_kms_alias\": \"alias/production-cmek-key\""));
+        assert!(json.contains("\"business_unit\""));
+        assert!(json.contains("\"business_owners\""));
+        assert!(json.contains("\"teams\""));
+        assert!(json.contains("\"tags\""));
+        assert!(json.contains("\"custom_fields\""));
+
+        // Verify deserialization works with full structure
+        let parsed: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            parsed.profile.custom_kms_alias,
+            Some("alias/production-cmek-key".to_string())
+        );
+        assert!(parsed.profile.business_unit.is_some());
+        assert!(parsed.profile.business_owners.is_some());
     }
 }

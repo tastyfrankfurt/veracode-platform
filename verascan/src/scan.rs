@@ -1681,6 +1681,7 @@ async fn execute_assessment_scan_async(
         teamname,
         bus_cri,
         repo_url,
+        cmek,
         ..
     } = &args.command
     {
@@ -1721,6 +1722,7 @@ async fn execute_assessment_scan_async(
                 Some("Application created for assessment scanning".to_string()),
                 team_names,
                 resolved_repo_url,
+                cmek.clone(),
             )
             .await
         {

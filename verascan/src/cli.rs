@@ -258,6 +258,10 @@ pub enum Commands {
         #[arg(long = "repo-url", help = "Git repository URL to associate with the application profile (e.g., 'https://github.com/user/repo')", value_parser = validate_project_url)]
         repo_url: Option<String>,
 
+        /// AWS KMS alias for customer-managed encryption key
+        #[arg(long = "cmek", help = "AWS KMS alias for customer-managed encryption (e.g., 'alias/my-app-key'), only runs on application creation.", value_parser = validate_cmek_alias)]
+        cmek: Option<String>,
+
         /// Submit scan and exit without waiting for completion
         #[arg(
             long = "no-wait",
@@ -857,6 +861,35 @@ fn validate_build_version(s: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
+/// Validate CMEK alias input
+fn validate_cmek_alias(s: &str) -> Result<String, String> {
+    // Check if empty
+    if s.trim().is_empty() {
+        return Err("CMEK alias cannot be empty".to_string());
+    }
+
+    // Check length (AWS KMS alias limits: 8-256 characters)
+    if s.len() < 8 || s.len() > 256 {
+        return Err(format!(
+            "CMEK alias must be between 8 and 256 characters long, got: {} characters",
+            s.len()
+        ));
+    }
+
+    // Check for valid characters: alphanumeric, dash, underscore, forward slash
+    let is_valid = s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '/');
+
+    if !is_valid {
+        return Err(format!(
+            "CMEK alias can only contain alphanumeric characters, dashes (-), underscores (_), and forward slashes (/). Got: '{s}'"
+        ));
+    }
+
+    Ok(s.to_string())
+}
+
 /// Parse business criticality string to BusinessCriticality enum
 #[must_use]
 pub fn parse_business_criticality(
@@ -1102,6 +1135,7 @@ mod tests {
                 teamname: None,
                 bus_cri: "very-high".to_string(),
                 repo_url: None,
+                cmek: None,
                 deleteincompletescan: 1,
                 break_build: false,
                 force_buildinfo_api: false,
@@ -1214,5 +1248,81 @@ mod tests {
         let result = validate_delete_incomplete_scan("invalid");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("must be a valid number"));
+    }
+
+    #[test]
+    fn test_validate_cmek_alias_valid() {
+        // Valid alias with standard format
+        assert!(validate_cmek_alias("alias/my-app-key").is_ok());
+
+        // Valid alias with underscores
+        assert!(validate_cmek_alias("alias/my_app_key_2024").is_ok());
+
+        // Valid alias with nested path
+        assert!(validate_cmek_alias("alias/app/environment/key").is_ok());
+
+        // Valid alias with numbers
+        assert!(validate_cmek_alias("alias/123-test-key").is_ok());
+
+        // Valid alias at minimum length
+        assert!(validate_cmek_alias("alias/ab").is_ok());
+    }
+
+    #[test]
+    fn test_validate_cmek_alias_invalid_length() {
+        // Too short
+        let result = validate_cmek_alias("short");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("between 8 and 256 characters"));
+
+        // Empty
+        let result = validate_cmek_alias("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+
+        // Too long (over 256 characters)
+        let long_alias = format!("alias/{}", "a".repeat(252));
+        let result = validate_cmek_alias(&long_alias);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("between 8 and 256 characters"));
+    }
+
+    #[test]
+    fn test_validate_cmek_alias_invalid_characters() {
+        // Invalid character: @
+        let result = validate_cmek_alias("alias/my@key");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("can only contain alphanumeric")
+        );
+
+        // Invalid character: space
+        let result = validate_cmek_alias("alias/my key");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("can only contain alphanumeric")
+        );
+
+        // Invalid character: dot
+        let result = validate_cmek_alias("alias/my.key");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("can only contain alphanumeric")
+        );
+
+        // Invalid character: special symbols
+        let result = validate_cmek_alias("alias/my$key!");
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .contains("can only contain alphanumeric")
+        );
     }
 }

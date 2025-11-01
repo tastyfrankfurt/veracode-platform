@@ -120,14 +120,15 @@ pub fn validate_datetime_format(
 
     // Check if datetime is in the future
     if parsed_dt > Utc::now() {
+        let datetime_display = if utc_mode {
+            datetime_str.to_string()
+        } else {
+            format!("{} (local) / {} (UTC)", datetime_str, utc_datetime_str)
+        };
+
         return Err(AuditError::DateRangeInvalid(format!(
             "{} cannot be in the future: {}",
-            field_name,
-            if utc_mode {
-                datetime_str
-            } else {
-                &format!("{} (local) / {} (UTC)", datetime_str, utc_datetime_str)
-            }
+            field_name, datetime_display
         )));
     }
 
