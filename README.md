@@ -72,10 +72,10 @@ A specialized command-line tool for managing Customer Managed Encryption Keys (C
 - **🔐 CMEK Management** - Enable, change, and monitor encryption keys across applications
 - **🔄 Bulk Operations** - Process multiple applications with dry-run support
 - **📁 File-Based Configuration** - JSON-based batch processing for complex scenarios
-- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault
+- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault and Vault API-compliant retry logic
 - **📊 Multiple Output Formats** - Table and JSON output for different use cases
 - **🌍 Multi-Regional** - Support for all Veracode regions (Commercial, European, Federal)
-- **🛡️ Production Ready** - Robust error handling, retry logic, and comprehensive logging
+- **🛡️ Production Ready** - Intelligent error handling with fast failure on auth errors and automatic retry for transient issues
 
 ## ✨ Key Features
 
@@ -484,7 +484,7 @@ veracmek --region commercial bulk --kms-alias "alias/commercial-key" --dry-run
 
 #### Vault Integration
 
-Use HashiCorp Vault for secure credential management:
+Use HashiCorp Vault for secure credential management with production-grade error handling:
 
 ```bash
 # Set up Vault environment variables
@@ -501,6 +501,13 @@ veracmek enable --app "MyApp" --kms-alias "alias/my-key"
 # Get help on environment variables and configuration
 veracmek help-env
 ```
+
+**Improved Vault Reliability:**
+- ✅ **Smart Retry Logic**: Follows HashiCorp Vault API best practices
+- ✅ **Fast Failure**: Authentication errors (401, 403) exit immediately - no unnecessary retries
+- ✅ **Automatic Recovery**: Server errors (500, 503) and standby nodes (429) retry with exponential backoff
+- ✅ **Certificate Validation**: TLS/certificate errors fail fast when trust is enforced
+- ✅ **Safe Defaults**: Unknown errors don't retry to prevent retry storms
 
 #### Development and Debugging
 

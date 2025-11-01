@@ -1,6 +1,6 @@
 [package]
 name = "veraaudit"
-version = "0.5.9"
+version = "0.5.10"
 edition = "2024"
 description = "CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API"
 authors = ["Veracode API Team"]
@@ -19,7 +19,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Local dependency
-veracode-platform = { path = "../veracode-api", version = "0.6.0" }
+veracode-platform = { path = "../veracode-api", version = "0.7.0" }
 
 # Additional dependencies for CLI functionality
 env_logger = "0.11"
