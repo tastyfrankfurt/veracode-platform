@@ -720,6 +720,7 @@ mod tests {
     use std::borrow::Cow;
 
     // Helper function to create a mock client for testing
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn create_mock_client() -> VeracodeClient {
         let config = veracode_platform::VeracodeConfig::new("test_id", "test_key");
         VeracodeClient::new(config).expect("Failed to create mock client")
@@ -761,6 +762,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_source_file_name_generation() {
         // Test with sandbox
         let config_sandbox = ExportConfig {
@@ -804,6 +806,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension() {
         let workflow = ExportWorkflow {
             client: create_mock_client(),
@@ -832,6 +835,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_add_suffix_to_path() {
         let workflow = ExportWorkflow {
             client: create_mock_client(),
@@ -859,6 +863,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_validate_config() {
         let config_valid = ExportConfig {
             app_profile_name: Cow::Borrowed("Test Application"),
@@ -959,6 +964,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_create_finding_id() {
         use veracode_platform::findings::{
             CweInfo, FindingCategory, FindingDetails, FindingStatus, RestFinding,
@@ -1024,6 +1030,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_convert_rest_finding_to_pipeline() {
         use veracode_platform::findings::{
             CweInfo, FindingCategory, FindingDetails, FindingStatus, RestFinding,

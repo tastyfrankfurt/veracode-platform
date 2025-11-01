@@ -10,6 +10,7 @@
 mod basic_proxy_routing {
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_http_request_through_proxy() {
         // Test that we can create a client with proxy configuration
         // Note: Actual proxy routing is tested in integration environments
@@ -67,6 +68,7 @@ mod basic_proxy_routing {
 mod proxy_authentication {
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_authenticated_proxy_with_valid_credentials() {
         // Test that we can create a client with authenticated proxy configuration
         let proxy_url = "http://localhost:8080";
@@ -90,6 +92,7 @@ mod proxy_authentication {
     }
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_proxy_basic_auth_header_format() {
         // Test that basic auth creates proper Authorization header
         let proxy = reqwest::Proxy::all("http://proxy.example.com:8080")
@@ -194,6 +197,7 @@ mod environment_variable_proxy {
 mod error_handling {
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_unreachable_proxy_server() {
         // Use a proxy URL that will fail to connect
         let proxy_url = "http://127.0.0.1:9999"; // Unlikely to have a proxy here
@@ -230,6 +234,7 @@ mod error_handling {
     }
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_proxy_timeout_handling() {
         // Create client with very short timeout
         let client = reqwest::Client::builder()

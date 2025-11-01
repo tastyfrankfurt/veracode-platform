@@ -140,13 +140,19 @@ pub fn cleanup_by_age(output_dir: &str, max_age_hours: u64) -> Result<usize> {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::fs::File;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::thread;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::time::Duration as StdDuration;
-    use tempfile::TempDir;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use crate::test_utils::TempDir;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_cleanup_by_count() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -171,6 +177,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_cleanup_by_count_no_files() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();

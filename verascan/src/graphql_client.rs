@@ -428,6 +428,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_graphql_client_creation() {
         let config = GraphQLClientConfig::new("https://api.example.com/graphql".to_string());
 

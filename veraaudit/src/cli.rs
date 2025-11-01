@@ -472,9 +472,10 @@ fn validate_directory(s: &str) -> Result<String, String> {
 mod tests {
     use super::*;
     use std::fs;
-    use tempfile::TempDir;
+    use crate::test_utils::TempDir;
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Miri doesn't support permission checking correctly
     fn test_validate_directory_existing_writable() {
         let temp_dir = TempDir::new().unwrap();
         let path = temp_dir.path().to_str().unwrap();
@@ -485,6 +486,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Miri doesn't support permission checking correctly
     fn test_validate_directory_new_in_writable_parent() {
         let temp_dir = TempDir::new().unwrap();
         let new_dir = temp_dir.path().join("new_subdir");
@@ -496,6 +498,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Miri doesn't support permission checking correctly
     fn test_validate_directory_nested_new_dirs() {
         let temp_dir = TempDir::new().unwrap();
         let nested_dir = temp_dir.path().join("level1").join("level2").join("level3");
@@ -507,6 +510,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_validate_directory_path_is_file() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test_file.txt");
@@ -522,7 +526,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(all(unix, not(miri)))] // Skip in Miri due to filesystem isolation
     fn test_validate_directory_readonly() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -548,7 +552,7 @@ mod tests {
     }
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(all(unix, not(miri)))] // Skip in Miri due to filesystem isolation
     fn test_validate_directory_readonly_parent() {
         use std::os::unix::fs::PermissionsExt;
 
@@ -575,6 +579,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_validate_directory_parent_is_file() {
         // Try to create a directory where parent is a file, not a directory
         let temp_dir = TempDir::new().unwrap();

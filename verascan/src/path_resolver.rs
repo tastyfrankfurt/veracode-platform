@@ -269,13 +269,17 @@ impl PathResolver {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::fs::{self, File};
-    use tempfile::tempdir;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use crate::test_utils::TempDir;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_resolve_file_path_basic() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let config = PathResolverConfig::new(temp_dir.path());
         let resolver = PathResolver::new(config);
 
@@ -289,8 +293,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_find_file_by_relative_path() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
         // Create a Java-like directory structure
@@ -313,8 +318,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_find_file_in_project() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
         // Create nested directory structure
@@ -337,8 +343,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_path_matching_precision() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
         // Create directory structure
@@ -370,8 +377,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_common_source_directories() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
         // Test different source directory patterns

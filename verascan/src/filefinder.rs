@@ -338,13 +338,17 @@ impl FileFinder {
 
 #[cfg(test)]
 mod tests {
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::fs::{File, create_dir};
-    use tempfile::tempdir;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use crate::test_utils::TempDir;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_parse_config_valid() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_string_lossy();
 
         let config = FileFinder::parse_config(&temp_path, "*.txt,*.rs", false, false).unwrap();
@@ -353,14 +357,16 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_parse_config_invalid_directory() {
         let result = FileFinder::parse_config("/nonexistent/directory", "*.txt", false, false);
         assert!(matches!(result, Err(SearchError::DirectoryNotFound(_))));
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_parse_config_invalid_pattern() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path().to_string_lossy();
 
         let result = FileFinder::parse_config(&temp_path, "[invalid", false, false);
@@ -368,8 +374,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_directory_search() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
         // Create test files
@@ -392,8 +399,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_recursive_search() {
-        let temp_dir = tempdir().unwrap();
+        let temp_dir = TempDir::new().unwrap();
         let temp_path = temp_dir.path();
 
         // Create subdirectory

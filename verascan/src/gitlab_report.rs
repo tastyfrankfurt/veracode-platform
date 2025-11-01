@@ -646,6 +646,7 @@ mod tests {
     }
 
     // Helper function to create test data for schema validation
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn create_test_gitlab_report() -> GitLabSASTReport {
         let source = ScanSource {
             scan_id: "schema-test-scan-456".to_string(),
@@ -892,6 +893,7 @@ mod tests {
     }
 
     // Helper function to validate report against a specific schema version
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn validate_against_schema(
         schema_version: &str,
         report: &GitLabSASTReport,
@@ -955,6 +957,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_gitlab_sast_report_schema_validation() {
         // List of schema versions to test against
         // Add new versions here as they become available

@@ -152,3 +152,11 @@ sast-*.json
 # Audit logs - contains sensitive data
 audit_logs/
 **/audit_logs/
+
+##Miscellaneous
+*.grok
+delete_gitlab_issues.py
+Dockerfile
+validate_xml_api.sh
+runexamples.sh
+test.sh

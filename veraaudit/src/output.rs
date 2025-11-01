@@ -238,6 +238,7 @@ fn get_last_log_file(output_dir: &str) -> Option<PathBuf> {
 ///
 /// Vector of PathBufs for log files with timestamps >= cutoff
 #[cfg(test)]
+#[cfg(any(not(miri), feature = "disable-miri-isolation"))]
 fn find_log_files_newer_than(output_dir: &str, cutoff_timestamp: &str) -> Vec<PathBuf> {
     // Check if directory exists
     let dir_path = std::path::Path::new(output_dir);
@@ -489,9 +490,11 @@ pub fn write_audit_log_file(
 mod tests {
     use super::*;
     use serde_json::json;
-    use tempfile::TempDir;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use crate::test_utils::TempDir;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_write_audit_log_file() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -531,6 +534,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_is_timestamp_within_hours_recent() {
         // Create a timestamp from 1 hour ago
         let one_hour_ago = Utc::now() - chrono::Duration::hours(1);
@@ -541,6 +545,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_is_timestamp_within_hours_old() {
         // Create a timestamp from 100 hours ago
         let old = Utc::now() - chrono::Duration::hours(100);
@@ -551,12 +556,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_get_last_log_timestamp_no_directory() {
         let result = get_last_log_timestamp("/nonexistent/directory");
         assert!(result.is_none());
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_get_last_log_timestamp_with_files() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -579,6 +586,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_get_last_log_timestamp_too_old() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -596,6 +604,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_get_last_log_timestamp_multiple_files() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -676,6 +685,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_find_log_files_newer_than() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -700,7 +710,8 @@ mod tests {
         // Should find 2 files (middle and newer, since >= cutoff)
         assert_eq!(result.len(), 2);
     }
-
+    
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     #[test]
     fn test_deduplication_removes_duplicates() {
         let temp_dir = TempDir::new().unwrap();
@@ -764,6 +775,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_deduplication_with_no_existing_files() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -795,6 +807,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_deduplication_with_older_existing_files() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();
@@ -843,6 +856,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     fn test_deduplication_can_be_disabled() {
         let temp_dir = TempDir::new().unwrap();
         let output_dir = temp_dir.path().to_str().unwrap();

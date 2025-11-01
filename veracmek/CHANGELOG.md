@@ -5,6 +5,22 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+- **Dependency Migration**: Migrated from unmaintained `backoff` crate to actively maintained `backon` crate
+  - **Security**: Resolved RUSTSEC-2025-0012 (backoff unmaintained) and RUSTSEC-2024-0384 (instant unmaintained)
+  - **Modern API**: Updated retry logic to use backon's fluent `.retry().when()` API instead of callback-based approach
+  - **Same Behavior**: All retry logic and error handling semantics preserved - no functional changes
+  - **Improved Code**: Cleaner, more maintainable retry patterns with method chaining
+  - **Dependencies**: Changed from `backoff = "0.4"` to `backon = "1.3"`
+  - **Modified Files**: `Cargo.toml`, `src/vault_client.rs`
+
+### Testing
+- **100% Test Coverage**: All 104 tests passing after migration
+- **Updated Tests**: Refactored retry logic tests to work with new backon API
+- **Validation**: Comprehensive testing of all HTTP status codes and error scenarios
+
 ## [0.5.9] - 2025-11-01
 
 ### Fixed

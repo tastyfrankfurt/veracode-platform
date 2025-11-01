@@ -1,0 +1,43 @@
+[package]
+name = "veraaudit-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chrono = "0.4"
+
+[dependencies.veraaudit]
+path = "../veraaudit"
+
+[[bin]]
+name = "fuzz_datetime"
+path = "fuzz_targets/fuzz_datetime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_validation"
+path = "fuzz_targets/fuzz_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_combined"
+path = "fuzz_targets/fuzz_combined.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_cli_validators"
+path = "fuzz_targets/fuzz_cli_validators.rs"
+test = false
+doc = false
+bench = false

@@ -1,6 +1,7 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
+use std::hint::black_box;
 use serde_json::json;
-use tempfile::TempDir;
+use veraaudit::test_utils::TempDir;
 use veraaudit::output::write_audit_log_file;
 
 /// Generate realistic audit log entries

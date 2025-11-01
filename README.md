@@ -503,11 +503,12 @@ veracmek help-env
 ```
 
 **Improved Vault Reliability:**
-- ✅ **Smart Retry Logic**: Follows HashiCorp Vault API best practices
+- ✅ **Smart Retry Logic**: Follows HashiCorp Vault API best practices using modern `backon` crate
 - ✅ **Fast Failure**: Authentication errors (401, 403) exit immediately - no unnecessary retries
 - ✅ **Automatic Recovery**: Server errors (500, 503) and standby nodes (429) retry with exponential backoff
 - ✅ **Certificate Validation**: TLS/certificate errors fail fast when trust is enforced
 - ✅ **Safe Defaults**: Unknown errors don't retry to prevent retry storms
+- ✅ **Maintained Dependencies**: Uses actively maintained retry libraries with no security advisories
 
 #### Development and Debugging
 
@@ -961,7 +962,50 @@ cargo test -p veracmek
 
 # Run with output
 cargo test -- --nocapture
+
+# Run tests with miri (undefined behavior detection)
+cargo +nightly miri test
+
+# Run miri on specific package
+cargo +nightly miri test -p veracode-api
+cargo +nightly miri test -p verascan
+cargo +nightly miri test -p veracmek
 ```
+
+### Miri Setup
+
+[Miri](https://github.com/rust-lang/miri) is an interpreter for Rust's mid-level intermediate representation (MIR) that can detect certain classes of undefined behavior.
+
+```bash
+# Install miri (requires nightly toolchain)
+rustup +nightly component add miri
+
+# Run tests with miri to detect undefined behavior
+cargo +nightly miri test
+
+# Run miri on specific package
+cargo +nightly miri test -p veracode-api
+
+# Run miri with custom flags for more comprehensive checking
+MIRIFLAGS="-Zmiri-backtrace=full -Zmiri-disable-isolation" cargo +nightly miri test
+
+# Run with strict provenance and symbolic alignment checks (default in .cargo/config.toml)
+cargo +nightly miri test
+```
+
+The project includes miri configuration in `.cargo/config.toml` with sensible defaults:
+- **Strict Provenance**: Catches pointer provenance violations
+- **Symbolic Alignment Check**: Detects unaligned memory access
+
+Additional useful miri flags you can set via `MIRIFLAGS`:
+- `-Zmiri-backtrace=full` - Full backtraces for debugging
+- `-Zmiri-disable-isolation` - Allow filesystem/network access in tests
+- `-Zmiri-tree-borrows` - Use the Tree Borrows aliasing model (experimental)
+
+The dedicated `test` profile provides:
+- Debug symbols enabled for better diagnostics
+- Overflow checks to catch arithmetic errors
+- No optimizations for easier debugging
 
 ### Linting and Formatting
 
@@ -975,6 +1019,22 @@ cargo fmt
 # Check formatting
 cargo fmt -- --check
 ```
+
+### Security Auditing
+
+```bash
+# Check for security vulnerabilities in dependencies
+cargo audit
+
+# Install cargo-audit if not already installed
+cargo install cargo-audit
+```
+
+**Dependency Security:**
+- ✅ **Zero Security Advisories**: All dependencies are actively maintained
+- ✅ **Modern Retry Library**: Uses `backon` v1.3+ (actively maintained, replaces unmaintained `backoff`)
+- ✅ **Regular Updates**: Dependencies are regularly reviewed and updated
+- ✅ **Best Practices**: Follows Rust security best practices for dependency management
 
 ### Building Documentation
 
