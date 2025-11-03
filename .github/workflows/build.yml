@@ -79,14 +79,14 @@ jobs:
     
     - name: Run clippy (Linux only)
       if: matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo clippy --all-targets --all-features -- -D warnings
+      run: cargo clippy --all-targets --all-features --workspace --exclude vera-fuzz -- -D warnings 
     
     - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
+      run: cargo build --release --target ${{ matrix.target }} --workspace --exclude vera-fuzz
     
     - name: Run tests (Linux only)
       if: matrix.target == 'x86_64-unknown-linux-gnu'
-      run: cargo test --verbose --target ${{ matrix.target }}
+      run: cargo test --verbose --target ${{ matrix.target }} --workspace --exclude vera-fuzz
     
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
