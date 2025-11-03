@@ -271,6 +271,10 @@ impl Finding {
 }
 
 /// Strip HTML tags from display text to get plain text message
+///
+/// Security: This function removes `<script>` and `<style>` tags AND their content
+/// to prevent script injection. Other HTML tags are removed but their text content
+/// is preserved.
 fn strip_html_tags(html: &str) -> Cow<'_, str> {
     // Check if HTML tags are present to avoid unnecessary allocation
     if !html.contains('<') {
@@ -280,17 +284,61 @@ fn strip_html_tags(html: &str) -> Cow<'_, str> {
     // Simple HTML tag removal without regex dependency
     let mut result = String::new();
     let mut in_tag = false;
+    let mut in_script_or_style = false;
+    let mut tag_name = String::new();
+    let mut collecting_tag_name = false;
+    let mut just_closed_tag = false;
 
     for ch in html.chars() {
         match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(ch),
-            _ => {}
+            '<' => {
+                // Add space before tag if we just had content (for word boundaries)
+                if !result.is_empty() && !result.ends_with(char::is_whitespace) {
+                    result.push(' ');
+                }
+                in_tag = true;
+                collecting_tag_name = true;
+                just_closed_tag = false;
+                tag_name.clear();
+            }
+            '>' => {
+                in_tag = false;
+
+                // Check if we're entering or leaving a script/style block
+                let tag_lower = tag_name.trim().to_lowercase();
+                if tag_lower.starts_with("script") || tag_lower.starts_with("style") {
+                    in_script_or_style = true;
+                } else if tag_lower.starts_with("/script") || tag_lower.starts_with("/style") {
+                    in_script_or_style = false;
+                }
+                collecting_tag_name = false;
+                just_closed_tag = true;
+                tag_name.clear();
+            }
+            ' ' if in_tag && collecting_tag_name => {
+                // Space in tag (e.g., <script type="...">), stop collecting tag name
+                collecting_tag_name = false;
+            }
+            _ if (ch == '/' || ch.is_alphanumeric()) && collecting_tag_name => {
+                // Collect tag name to detect script/style tags
+                tag_name.push(ch);
+            }
+            _ if in_tag || in_script_or_style => {
+                // Skip content inside tags and inside script/style blocks
+            }
+            _ => {
+                // Keep text content (not in tags, not in script/style blocks)
+                // Add space after tag if needed (for word boundaries)
+                if just_closed_tag && !result.is_empty() && !result.ends_with(char::is_whitespace) {
+                    result.push(' ');
+                }
+                just_closed_tag = false;
+                result.push(ch);
+            }
         }
     }
 
-    // Clean up extra whitespace
+    // Clean up extra whitespace (collapse multiple spaces into one)
     let cleaned = result.split_whitespace().collect::<Vec<&str>>().join(" ");
     Cow::Owned(cleaned)
 }
@@ -1286,5 +1334,104 @@ impl PipelineApi {
         }
 
         summary
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_html_tags_no_tags() {
+        let input = "This is plain text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "This is plain text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_simple() {
+        let input = "This is <b>bold</b> text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "This is bold text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_removes_script_content() {
+        // SECURITY: Script content must be removed, not just tags
+        let input = "<script>alert('XSS')</script>This is safe";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "This is safe");
+    }
+
+    #[test]
+    fn test_strip_html_tags_removes_script_with_attributes() {
+        let input = "<script type='text/javascript'>alert('XSS')</script>Safe text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Safe text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_removes_style_content() {
+        let input = "<style>body { color: red; }</style>Visible text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Visible text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_multiple_scripts() {
+        let input = "<script>evil1()</script>Good<script>evil2()</script>Text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Good Text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_nested_tags() {
+        let input = "<div><p>Paragraph <b>bold</b> text</p></div>";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Paragraph bold text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_mixed_content() {
+        let input = "Before<script>bad()</script>Middle<b>bold</b>After";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Before Middle bold After");
+    }
+
+    #[test]
+    fn test_strip_html_tags_case_insensitive_script() {
+        let input = "<SCRIPT>evil()</SCRIPT>Safe";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Safe");
+    }
+
+    #[test]
+    fn test_strip_html_tags_case_insensitive_style() {
+        let input = "<STYLE>css</STYLE>Text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_whitespace_cleanup() {
+        // When HTML tags are present, extra whitespace is collapsed
+        let input = "Text   <b>with</b>    extra     <i>spaces</i>";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Text with extra spaces");
+    }
+
+    #[test]
+    fn test_strip_html_tags_no_html_preserves_whitespace() {
+        // When no HTML tags, original whitespace is preserved (Cow::Borrowed)
+        let input = "Text   with    extra     spaces";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Text   with    extra     spaces");
+    }
+
+    #[test]
+    fn test_strip_html_tags_preserves_normal_content_order() {
+        let input = "First <p>Second</p> Third <b>Fourth</b> Fifth";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "First Second Third Fourth Fifth");
     }
 }

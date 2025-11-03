@@ -489,9 +489,9 @@ pub fn write_audit_log_file(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use crate::test_utils::TempDir;
+    use serde_json::json;
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
@@ -710,7 +710,7 @@ mod tests {
         // Should find 2 files (middle and newer, since >= cutoff)
         assert_eq!(result.len(), 2);
     }
-    
+
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation
     #[test]
     fn test_deduplication_removes_duplicates() {

@@ -21,20 +21,15 @@ fuzz_target!(|data: &[u8]| {
         let _ = veraaudit::datetime::try_parse_datetime(s);
 
         // If we can split the input into two parts, test date range validation
-        if let Some(mid) = data.len().checked_div(2) {
-            if mid > 0 && mid < data.len() {
-                if let (Ok(start), Ok(end)) = (
-                    std::str::from_utf8(&data[..mid]),
-                    std::str::from_utf8(&data[mid..]),
-                ) {
-                    let _ = veraaudit::datetime::validate_date_range(
-                        start,
-                        end,
-                        true,
-                        &Region::Commercial,
-                    );
-                }
-            }
+        if let Some(mid) = data.len().checked_div(2)
+            && mid > 0
+            && mid < data.len()
+            && let (Ok(start), Ok(end)) = (
+                std::str::from_utf8(&data[..mid]),
+                std::str::from_utf8(&data[mid..]),
+            )
+        {
+            let _ = veraaudit::datetime::validate_date_range(start, end, true, &Region::Commercial);
         }
 
         // Fuzz add_interval_to_datetime - split input for datetime and interval

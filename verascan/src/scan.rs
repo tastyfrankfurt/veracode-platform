@@ -1788,9 +1788,9 @@ async fn execute_assessment_scan_async(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashSet;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use crate::test_utils::TempDir;
+    use std::collections::HashSet;
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]

@@ -143,13 +143,13 @@ mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use crate::test_utils::TempDir;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::fs::File;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::thread;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use std::time::Duration as StdDuration;
-    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
-    use crate::test_utils::TempDir;
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Skip in Miri due to filesystem isolation

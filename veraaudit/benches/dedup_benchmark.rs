@@ -1,8 +1,8 @@
 use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
-use std::hint::black_box;
 use serde_json::json;
-use veraaudit::test_utils::TempDir;
+use std::hint::black_box;
 use veraaudit::output::write_audit_log_file;
+use veraaudit::test_utils::TempDir;
 
 /// Generate realistic audit log entries
 fn generate_audit_logs(count: usize) -> serde_json::Value {

@@ -341,9 +341,9 @@ mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
-    use std::fs::{File, create_dir};
-    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use crate::test_utils::TempDir;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use std::fs::{File, create_dir};
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]

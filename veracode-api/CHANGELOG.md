@@ -5,6 +5,31 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2025-11-03
+
+### Security
+- **HTML Parser XSS Vulnerability Fix** (HIGH SEVERITY): Fixed XSS vulnerability in `strip_html_tags()` function
+  - **Issue**: Script tags were removed but script content was preserved, allowing potential XSS attacks
+  - **Fix**: Enhanced parser to properly remove ALL content within script tags (not just the tags themselves)
+  - **Detection**: Uses character-by-character state machine parser to track script tag boundaries
+  - **Testing**: Added 7+ comprehensive security tests covering nested tags, unclosed tags, and malicious content
+  - **Impact**: All pipeline scan finding descriptions are now properly sanitized
+  - **Modified Files**: `src/pipeline.rs`
+
+- **JSON Depth Validation** (MEDIUM SEVERITY): Added DoS prevention for deeply nested JSON structures
+  - **New Module**: Created `src/json_validator.rs` with depth validation functionality
+  - **Depth Limits**: Enforces maximum nesting depth to prevent stack overflow attacks
+  - **Protection**: Prevents DoS attacks from maliciously crafted deeply nested API responses
+  - **API Coverage**: Can be applied to all JSON deserialization points across the API client
+  - **Testing**: Comprehensive test coverage for depth validation and edge cases
+  - **Modified Files**: `src/lib.rs` (added json_validator module export), `src/json_validator.rs` (new file)
+
+### Testing
+- **15+ New Security Tests**: Comprehensive coverage of security-critical functionality
+  - HTML parser XSS tests (7 tests): nested tags, unclosed tags, malicious content
+  - JSON depth validation tests (5+ tests): deep nesting, edge cases
+  - All tests passing with 100% success rate
+
 ## [0.7.0] - 2025-10-30
 
 ### Added

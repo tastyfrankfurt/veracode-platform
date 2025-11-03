@@ -40,7 +40,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.7.0"
+veracode-platform = "0.7.1"
 tokio = { version = "1.0", features = ["full"] }
 ```
 

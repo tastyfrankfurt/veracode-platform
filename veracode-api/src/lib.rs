@@ -93,6 +93,7 @@ pub mod build;
 pub mod client;
 pub mod findings;
 pub mod identity;
+pub mod json_validator;
 pub mod pipeline;
 pub mod policy;
 pub mod reporting;
@@ -125,6 +126,7 @@ pub use identity::{
     IdentityApi, IdentityError, Role, Team, UpdateTeamRequest, UpdateUserRequest, User, UserQuery,
     UserType,
 };
+pub use json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 pub use pipeline::{
     CreateScanRequest, DevStage, Finding, FindingsSummary, PipelineApi, PipelineError, Scan,
     ScanConfig, ScanResults, ScanStage, ScanStatus, SecurityStandards, Severity,

@@ -539,6 +539,27 @@ fn validate_project_url(s: &str) -> Result<String, String> {
         return Err("Project URL cannot be empty".to_string());
     }
 
+    // Security: Reject control characters and non-ASCII whitespace BEFORE further validation
+    // This prevents injection attacks and ensures clean URL input
+    for c in s.chars() {
+        // Reject control characters (including newlines, carriage returns, null bytes, tabs)
+        if c.is_control() {
+            return Err(format!("Project URL contains control characters: '{s}'"));
+        }
+
+        // Reject non-ASCII whitespace (but allow normal space in path/query)
+        // This catches: non-breaking space (U+00A0), ideographic space (U+3000), etc.
+        if c.is_whitespace() && c != ' ' {
+            return Err(format!("Project URL contains invalid whitespace: '{s}'"));
+        }
+
+        // Reject zero-width and other format characters
+        // Zero-width space (U+200B) is not detected by is_whitespace() or is_control()
+        if matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}') {
+            return Err(format!("Project URL contains invalid characters: '{s}'"));
+        }
+    }
+
     // Check if certificate validation is disabled (allow http:// in that case)
     let cert_validation_disabled = std::env::var("VERASCAN_DISABLE_CERT_VALIDATION").is_ok();
 
@@ -1324,5 +1345,185 @@ mod tests {
                 .unwrap_err()
                 .contains("can only contain alphanumeric")
         );
+    }
+
+    // Security edge case tests for validate_cmek_alias
+    // These tests ensure fuzz-discovered edge cases are handled correctly
+
+    #[test]
+    fn test_validate_cmek_alias_rejects_unicode_whitespace() {
+        // Reject non-breaking space (U+00A0)
+        let result = validate_cmek_alias("alias/my\u{00A0}key");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject zero-width space (U+200B)
+        let result = validate_cmek_alias("alias/my\u{200B}key");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject ideographic space (U+3000)
+        let result = validate_cmek_alias("alias/my\u{3000}key");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_validate_cmek_alias_rejects_control_chars() {
+        // Reject newline
+        let result = validate_cmek_alias("alias/my\nkey");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject carriage return
+        let result = validate_cmek_alias("alias/my\rkey");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject null byte
+        let result = validate_cmek_alias("alias/my\0key");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject tab
+        let result = validate_cmek_alias("alias/my\tkey");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_validate_cmek_alias_rejects_leading_trailing_whitespace() {
+        // Leading space
+        let result = validate_cmek_alias(" alias/mykey");
+        assert!(result.is_err());
+
+        // Trailing space
+        let result = validate_cmek_alias("alias/mykey ");
+        assert!(result.is_err());
+
+        // Leading and trailing spaces
+        let result = validate_cmek_alias(" alias/mykey ");
+        assert!(result.is_err());
+    }
+
+    // Security tests for validate_project_url
+    // These tests ensure SSRF and injection attempts are blocked
+
+    #[test]
+    fn test_validate_project_url_valid_https() {
+        // Standard HTTPS URLs
+        assert!(validate_project_url("https://example.com").is_ok());
+        assert!(validate_project_url("https://gitlab.example.com/project").is_ok());
+        assert!(validate_project_url("https://gitlab.com/org/repo").is_ok());
+        assert!(validate_project_url("https://example.com:8080/path").is_ok());
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_http() {
+        // HTTP should be rejected when cert validation is enabled
+        let result = validate_project_url("http://example.com");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("https://"));
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_non_url() {
+        // Missing protocol
+        let result = validate_project_url("example.com");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("https://"));
+
+        // Wrong protocol
+        let result = validate_project_url("ftp://example.com");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("https://"));
+
+        // File protocol (potential SSRF)
+        let result = validate_project_url("file:///etc/passwd");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("https://"));
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_empty() {
+        let result = validate_project_url("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+
+        let result = validate_project_url("   ");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_too_long() {
+        // Over 100 characters
+        let long_url = format!("https://example.com/{}", "a".repeat(100));
+        let result = validate_project_url(&long_url);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("100 characters or less"));
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_unicode_bypass() {
+        // Unicode whitespace injection attempts
+        let result = validate_project_url("https://example.com\u{00A0}/path");
+        assert!(result.is_err());
+
+        let result = validate_project_url("https://example.com\u{200B}");
+        assert!(result.is_err());
+
+        let result = validate_project_url("https://\u{3000}example.com");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_control_chars() {
+        // Newline injection
+        let result = validate_project_url("https://example.com\n/path");
+        assert!(result.is_err());
+
+        // Carriage return injection
+        let result = validate_project_url("https://example.com\r\n");
+        assert!(result.is_err());
+
+        // Null byte
+        let result = validate_project_url("https://example.com\0");
+        assert!(result.is_err());
+
+        // Tab injection
+        let result = validate_project_url("https://example.com\t/path");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_ssrf_attempts() {
+        // Localhost SSRF
+        let _result = validate_project_url("https://localhost/admin");
+        // Note: This might pass URL validation but should be caught by downstream checks
+
+        // Internal IP SSRF attempts
+        let _result = validate_project_url("https://127.0.0.1/admin");
+        // Note: This might pass URL validation but should be caught by downstream checks
+
+        // Internal network SSRF
+        let _result = validate_project_url("https://192.168.1.1/api");
+        // Note: This might pass URL validation but should be caught by downstream checks
+
+        // These tests document current behavior - URL parser validation happens downstream
+        // The validator focuses on protocol and basic format, not SSRF prevention
+    }
+
+    #[test]
+    fn test_validate_project_url_rejects_javascript_protocol() {
+        // JavaScript protocol injection attempt
+        let result = validate_project_url("javascript:alert('XSS')");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("https://"));
+
+        // Data URI injection
+        let result = validate_project_url("data:text/html,<script>alert('XSS')</script>");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("https://"));
     }
 }

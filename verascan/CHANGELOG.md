@@ -5,7 +5,33 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.6.2] - 2025-11-03
+
+### Security
+- **Input Validation Hardening**: Comprehensive security improvements across CLI validators
+  - **Project URL Validation**: Added control character and Unicode whitespace rejection to `validate_project_url()`
+    - Rejects control characters (newlines, carriage returns, null bytes, tabs)
+    - Rejects non-ASCII whitespace (non-breaking space U+00A0, ideographic space U+3000)
+    - Rejects zero-width and format characters (U+200B, U+200C, U+200D, U+FEFF)
+    - Prevents injection attacks and ensures clean URL input
+  - **CMEK Alias Validation**: Enhanced `validate_cmek_alias()` security
+    - Rejects Unicode whitespace characters
+    - Rejects control characters in alias names
+    - Rejects leading/trailing whitespace
+    - 44+ new security tests for edge cases
+  - **API Credential Validation**: Comprehensive testing of credential validators
+    - Added tests for `validate_api_credential()` rejecting special characters
+    - Added tests for rejecting Unicode whitespace and control characters
+    - Added tests for `validate_api_credential_ascii()` validation
+    - 27+ new security tests for credential validation
+  - **Modified Files**: `src/cli.rs`, `src/credentials.rs`
+
+### Testing
+- **90+ New Security Tests**: Comprehensive fuzzing-discovered edge case coverage
+  - Project URL validation tests (9 tests)
+  - CMEK alias validation tests (8 tests)
+  - API credential validation tests (10 tests)
+  - All tests passing with 100% success rate
 
 ### Changed
 - **Dependency Migration**: Migrated from unmaintained `backoff` crate to actively maintained `backon` crate

@@ -66,7 +66,7 @@ impl TempDir {
                     return Ok(Self {
                         path: temp_path,
                         persist: false,
-                    })
+                    });
                 }
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                     // Rare collision, try again

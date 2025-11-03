@@ -5,7 +5,13 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.10] - 2025-11-03
+
+### Security
+- **Indirect Security Improvements**: Benefits from security hardening in veracode-api library
+  - Enhanced HTML tag stripping prevents XSS vulnerabilities
+  - JSON depth validation prevents DoS attacks from deeply nested structures
+  - All Veracode API interactions protected by improved security measures
 
 ### Changed
 - **Dependency Migration**: Migrated from unmaintained `backoff` crate to actively maintained `backon` crate

@@ -190,6 +190,36 @@ fn validate_hours(s: &str) -> Result<u64, String> {
 fn validate_datetime(s: &str) -> Result<String, String> {
     use chrono::{NaiveDate, NaiveDateTime};
 
+    // Security: Check for problematic characters BEFORE trimming
+    // This prevents log injection and parsing bypasses
+    for c in s.chars() {
+        // Reject control characters (including newlines, carriage returns, null bytes)
+        if c.is_control() {
+            return Err(format!(
+                "Invalid datetime format: '{}'. Contains control characters. Expected: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+                s
+            ));
+        }
+
+        // Reject non-ASCII whitespace (but allow normal space)
+        // This catches: non-breaking space (U+00A0), ideographic space (U+3000), etc.
+        if c.is_whitespace() && c != ' ' && c != '\t' {
+            return Err(format!(
+                "Invalid datetime format: '{}'. Contains invalid whitespace. Expected: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+                s
+            ));
+        }
+
+        // Reject zero-width and other format characters
+        // Zero-width space (U+200B) is not detected by is_whitespace() or is_control()
+        if matches!(c, '\u{200B}' | '\u{200C}' | '\u{200D}' | '\u{FEFF}') {
+            return Err(format!(
+                "Invalid datetime format: '{}'. Contains invalid whitespace. Expected: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
+                s
+            ));
+        }
+    }
+
     let s_trimmed = s.trim();
 
     if s_trimmed.is_empty() {
@@ -471,8 +501,8 @@ fn validate_directory(s: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
     use crate::test_utils::TempDir;
+    use std::fs;
 
     #[test]
     #[cfg_attr(miri, ignore)] // Miri doesn't support permission checking correctly
@@ -656,5 +686,81 @@ mod tests {
         let result = validate_time_offset("-5m");
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("positive value"));
+    }
+
+    // Security tests for datetime validation
+
+    #[test]
+    fn test_validate_datetime_rejects_unicode_non_breaking_space() {
+        // Non-breaking space (U+00A0)
+        let result = validate_datetime("\u{00A0}2025-01-15");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid whitespace"));
+
+        let result = validate_datetime("2025-01-15\u{00A0}");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid whitespace"));
+    }
+
+    #[test]
+    fn test_validate_datetime_rejects_zero_width_space() {
+        // Zero-width space (U+200B)
+        let result = validate_datetime("\u{200B}2025-01-15");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid whitespace"));
+    }
+
+    #[test]
+    fn test_validate_datetime_rejects_ideographic_space() {
+        // Ideographic space (U+3000)
+        let result = validate_datetime("2025-01-15\u{3000}");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("invalid whitespace"));
+    }
+
+    #[test]
+    fn test_validate_datetime_rejects_embedded_newlines() {
+        let result = validate_datetime("2025-01-15\n");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control characters"));
+
+        let result = validate_datetime("2025-01-15\n\n");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control characters"));
+
+        let result = validate_datetime("2025\n-01-15");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control characters"));
+    }
+
+    #[test]
+    fn test_validate_datetime_rejects_embedded_carriage_return() {
+        let result = validate_datetime("2025-01-15\r");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control characters"));
+    }
+
+    #[test]
+    fn test_validate_datetime_rejects_null_byte() {
+        let result = validate_datetime("2025-01-15\0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control characters"));
+    }
+
+    #[test]
+    fn test_validate_datetime_allows_normal_space() {
+        // Normal space between date and time should still work
+        let result = validate_datetime("2025-01-15 10:00:00");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_datetime_leading_trailing_spaces_ok() {
+        // Leading/trailing ASCII spaces should be trimmed and accepted
+        let result = validate_datetime("  2025-01-15  ");
+        assert!(result.is_ok());
+
+        let result = validate_datetime("  2025-01-15 10:00:00  ");
+        assert!(result.is_ok());
     }
 }

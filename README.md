@@ -41,8 +41,14 @@ veracode-workspace/
 │   ├── src/               # Application source code
 │   ├── examples/          # CLI usage examples
 │   └── gitlab/            # GitLab integration samples
+├── veraaudit/             # 📊 CLI audit log retrieval tool
+│   └── src/               # Application source code
 ├── veracmek/              # 🔐 CLI CMEK encryption management tool
 │   └── src/               # Application source code
+├── fuzz/                  # 🔍 Fuzzing infrastructure and targets
+│   ├── fuzz_targets/      # 9 fuzz targets covering 65+ functions
+│   ├── corpus/            # Seed corpus for fuzzing
+│   └── *.md               # Comprehensive fuzzing documentation
 └── resources/             # 📦 Test files and samples
 ```
 
@@ -64,6 +70,19 @@ A comprehensive Rust client library for the Veracode security platform APIs:
 
 A powerful command-line application for security scanning and Veracode integration.
 
+### Veraaudit CLI Application (`veraaudit`)
+
+A production-ready tool for retrieving and archiving Veracode audit logs for compliance and monitoring.
+
+**Key Capabilities:**
+- **📊 Audit Log Retrieval** - Automated collection of Veracode platform audit logs
+- **🔄 Service Mode** - Continuous monitoring with configurable intervals
+- **📁 Timestamped Archival** - UTC-based file naming for chronological organization
+- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault
+- **🧹 Automatic Cleanup** - Configurable retention policies by count and age
+- **🌍 Multi-Regional** - Support for all Veracode regions with timezone handling
+- **🛡️ Production Ready** - Comprehensive error handling and retry logic
+
 ### Veracmek CLI Application (`veracmek`)
 
 A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles.
@@ -76,6 +95,19 @@ A specialized command-line tool for managing Customer Managed Encryption Keys (C
 - **📊 Multiple Output Formats** - Table and JSON output for different use cases
 - **🌍 Multi-Regional** - Support for all Veracode regions (Commercial, European, Federal)
 - **🛡️ Production Ready** - Intelligent error handling with fast failure on auth errors and automatic retry for transient issues
+
+### Fuzzing Infrastructure (`fuzz/`)
+
+Comprehensive fuzzing infrastructure for security testing and vulnerability discovery.
+
+**Key Capabilities:**
+- **🔍 9 Fuzz Targets** - Covering 65+ security-critical functions across all applications
+- **🎯 Prioritized Testing** - High-priority targets for URL validation, HTML parsing, and credential handling
+- **📊 Comprehensive Coverage** - CLI validators, API deserializers, datetime parsing, and Vault integration
+- **🔐 Security Focused** - Discovered and fixed multiple high-severity vulnerabilities (XSS, injection attacks)
+- **📚 Extensive Documentation** - Quick start guides, run commands, and results interpretation
+- **🚀 Automated Scripts** - Pre-configured test suites for quick/standard/comprehensive testing
+- **✅ 90+ Security Tests** - All fuzzing discoveries converted to permanent unit tests
 
 ## ✨ Key Features
 
@@ -1045,6 +1077,36 @@ cargo doc --open
 # Build documentation for all packages
 cargo doc --workspace
 ```
+
+### Fuzzing
+
+The workspace includes comprehensive fuzzing infrastructure for security testing:
+
+```bash
+# Quick security check (2 minutes per high-priority target)
+cd fuzz && ./run_all_fuzz_tests.sh 120 quick
+
+# Standard fuzzing run (10 minutes per target)
+cd fuzz && ./run_all_fuzz_tests.sh 600 standard
+
+# Comprehensive overnight test
+cd fuzz && nohup ./run_all_fuzz_tests.sh 28800 comprehensive > fuzz.log 2>&1 &
+
+# Manual fuzzing of specific target
+cd /home/admin/code/veracode-workspace
+cargo +nightly fuzz run fuzz_verascan_validators -- -max_total_time=600
+```
+
+**Available Targets:**
+- **High Priority**: `fuzz_verascan_validators` (URL/CMEK validation), `fuzz_html_parser` (XSS prevention), `fuzz_vault_parsers` (auth security)
+- **Medium Priority**: `fuzz_api_deserializers` (JSON parsing), `fuzz_datetime` (timezone handling), `fuzz_cli_validators` (veraaudit CLI)
+- **Low Priority**: `fuzz_output_parsers`, `fuzz_validation`, `fuzz_combined`
+
+For detailed fuzzing documentation, see:
+- [fuzz/README.md](fuzz/README.md) - Complete fuzzing guide
+- [fuzz/QUICKSTART.md](fuzz/QUICKSTART.md) - Quick start commands
+- [fuzz/IMPROVEMENTS.md](fuzz/IMPROVEMENTS.md) - Security findings and fixes
+- [fuzz/RUN_COMMANDS.md](fuzz/RUN_COMMANDS.md) - Command reference
 
 ## 🔍 Debugging and Troubleshooting
 

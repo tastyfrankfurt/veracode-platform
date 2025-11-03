@@ -5,7 +5,34 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.5.11] - 2025-11-03
+
+### Security
+- **Input Validation Hardening**: Comprehensive datetime validation security improvements
+  - **Unicode Whitespace Rejection**: `validate_datetime()` now rejects non-ASCII whitespace BEFORE trimming
+    - Rejects non-breaking space (U+00A0), zero-width space (U+200B), ideographic space (U+3000)
+    - Prevents log injection and parsing bypasses
+  - **Control Character Rejection**: Enhanced security against injection attacks
+    - Rejects control characters (newlines, carriage returns, null bytes, tabs)
+    - Prevents log injection attacks
+    - Creates clear, secure error messages
+  - **Zero-Width Character Detection**: Catches format characters not detected by `is_whitespace()` or `is_control()`
+    - Rejects zero-width space (U+200B), zero-width non-joiner (U+200C), zero-width joiner (U+200D)
+    - Rejects byte order mark (U+FEFF)
+  - **Security-First Validation**: All validation happens BEFORE string trimming to prevent bypasses
+  - **Modified Files**: `src/cli.rs`
+
+### Testing
+- **8 New Security Tests**: Comprehensive coverage of datetime validation edge cases
+  - `test_validate_datetime_rejects_unicode_non_breaking_space`: Non-breaking space rejection
+  - `test_validate_datetime_rejects_zero_width_space`: Zero-width character detection
+  - `test_validate_datetime_rejects_ideographic_space`: CJK whitespace rejection
+  - `test_validate_datetime_rejects_embedded_newlines`: Log injection prevention
+  - `test_validate_datetime_rejects_embedded_carriage_return`: CR character rejection
+  - `test_validate_datetime_rejects_null_byte`: Null byte detection
+  - `test_validate_datetime_allows_normal_space`: Normal space preservation
+  - `test_validate_datetime_leading_trailing_spaces_ok`: ASCII space trimming works correctly
+  - All tests passing with 100% success rate
 
 ### Changed
 - **Dependency Migration**: Migrated from unmaintained `backoff` crate to actively maintained `backon` crate

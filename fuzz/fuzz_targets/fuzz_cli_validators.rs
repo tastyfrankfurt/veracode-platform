@@ -91,19 +91,19 @@ fn test_interval_validation(s: &str) {
         (s_trimmed, "m")
     };
 
-    if let Ok(value) = num_str.parse::<i64>() {
-        if value > 0 {
-            // Convert to minutes for range check
-            let minutes = match unit {
-                "m" => value,
-                "h" => value.saturating_mul(60),
-                "d" => value.saturating_mul(60).saturating_mul(24),
-                _ => value,
-            };
+    if let Ok(value) = num_str.parse::<i64>()
+        && value > 0
+    {
+        // Convert to minutes for range check
+        let minutes = match unit {
+            "m" => value,
+            "h" => value.saturating_mul(60),
+            "d" => value.saturating_mul(60).saturating_mul(24),
+            _ => value,
+        };
 
-            // Check range: 5-60 minutes
-            let _in_range = minutes >= 5 && minutes <= 60;
-        }
+        // Check range: 5-60 minutes
+        let _in_range = (5..=60).contains(&minutes);
     }
 }
 
@@ -124,18 +124,18 @@ fn test_backend_window_validation(s: &str) {
         return;
     };
 
-    if let Ok(value) = num_str.parse::<i64>() {
-        if value > 0 {
-            // Convert to minutes for range check
-            let minutes = match unit {
-                "m" => value,
-                "h" => value.saturating_mul(60),
-                _ => value,
-            };
+    if let Ok(value) = num_str.parse::<i64>()
+        && value > 0
+    {
+        // Convert to minutes for range check
+        let minutes = match unit {
+            "m" => value,
+            "h" => value.saturating_mul(60),
+            _ => value,
+        };
 
-            // Check range: 30 minutes to 4 hours (240 minutes)
-            let _in_range = minutes >= 30 && minutes <= 240;
-        }
+        // Check range: 30 minutes to 4 hours (240 minutes)
+        let _in_range = (30..=240).contains(&minutes);
     }
 }
 

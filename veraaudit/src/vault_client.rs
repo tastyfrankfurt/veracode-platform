@@ -440,7 +440,7 @@ async fn authenticate_vault(
             .with_min_delay(Duration::from_millis(500))
             .with_max_delay(Duration::from_secs(10))
             .with_max_times(10) // Approximately 60 seconds with exponential backoff
-            .with_factor(2.0)
+            .with_factor(2.0),
     )
     .when(|e: &ClientError| is_retryable_vault_error(e))
     .await
@@ -478,7 +478,7 @@ async fn retrieve_vault_secret(
             .with_min_delay(Duration::from_millis(500))
             .with_max_delay(Duration::from_secs(8))
             .with_max_times(8) // Approximately 45 seconds with exponential backoff
-            .with_factor(2.0)
+            .with_factor(2.0),
     )
     .when(|e: &ClientError| is_retryable_vault_error(e))
     .await
@@ -622,7 +622,7 @@ async fn revoke_vault_token(client: &VaultClient) -> Result<(), CredentialError>
             .with_min_delay(Duration::from_millis(250))
             .with_max_delay(Duration::from_secs(5))
             .with_max_times(7) // Approximately 30 seconds with exponential backoff
-            .with_factor(2.0)
+            .with_factor(2.0),
     )
     .when(|e: &ClientError| is_retryable_vault_error(e))
     .await
@@ -861,73 +861,109 @@ fn classify_vault_error<E>(
             match *code {
                 // Transient Errors (Retryable)
                 412 => {
-                    debug!("{operation_context}: Precondition failed (HTTP 412){error_details} - retrying");
+                    debug!(
+                        "{operation_context}: Precondition failed (HTTP 412){error_details} - retrying"
+                    );
                     error_constructor(format!(
                         "Precondition failed - eventually consistent data missing (HTTP 412){error_details}"
                     ))
                 }
                 429 => {
-                    debug!("{operation_context}: Standby node (HTTP 429){error_details} - retrying");
+                    debug!(
+                        "{operation_context}: Standby node (HTTP 429){error_details} - retrying"
+                    );
                     error_constructor(format!("Standby node status (HTTP 429){error_details}"))
                 }
                 472 => {
-                    debug!("{operation_context}: DR replication secondary (HTTP 472){error_details} - retrying");
-                    error_constructor(format!("DR replication secondary (HTTP 472){error_details}"))
+                    debug!(
+                        "{operation_context}: DR replication secondary (HTTP 472){error_details} - retrying"
+                    );
+                    error_constructor(format!(
+                        "DR replication secondary (HTTP 472){error_details}"
+                    ))
                 }
                 473 => {
-                    debug!("{operation_context}: Performance standby (HTTP 473){error_details} - retrying");
+                    debug!(
+                        "{operation_context}: Performance standby (HTTP 473){error_details} - retrying"
+                    );
                     error_constructor(format!("Performance standby (HTTP 473){error_details}"))
                 }
                 500 => {
-                    debug!("{operation_context}: Internal server error (HTTP 500){error_details} - retrying");
+                    debug!(
+                        "{operation_context}: Internal server error (HTTP 500){error_details} - retrying"
+                    );
                     error_constructor(format!("Internal server error (HTTP 500){error_details}"))
                 }
                 502 => {
                     debug!("{operation_context}: Bad gateway (HTTP 502){error_details} - retrying");
-                    error_constructor(format!("Third-party service error (HTTP 502){error_details}"))
+                    error_constructor(format!(
+                        "Third-party service error (HTTP 502){error_details}"
+                    ))
                 }
                 503 => {
-                    debug!("{operation_context}: Service unavailable (HTTP 503){error_details} - retrying");
-                    error_constructor(format!("Vault sealed or maintenance (HTTP 503){error_details}"))
+                    debug!(
+                        "{operation_context}: Service unavailable (HTTP 503){error_details} - retrying"
+                    );
+                    error_constructor(format!(
+                        "Vault sealed or maintenance (HTTP 503){error_details}"
+                    ))
                 }
 
                 // Permanent Errors (Client Errors)
                 400 => {
-                    error!("{operation_context}: Bad request (HTTP 400){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Bad request (HTTP 400){error_details} - not retrying"
+                    );
                     error_constructor(format!("Bad request (HTTP 400){error_details}"))
                 }
                 401 => {
-                    error!("{operation_context}: Unauthorized (HTTP 401){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Unauthorized (HTTP 401){error_details} - not retrying"
+                    );
                     error_constructor(format!("Unauthorized (HTTP 401){error_details}"))
                 }
                 403 => {
-                    error!("{operation_context}: Forbidden (HTTP 403){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Forbidden (HTTP 403){error_details} - not retrying"
+                    );
                     error_constructor(format!("Forbidden/Access denied (HTTP 403){error_details}"))
                 }
                 404 => {
-                    error!("{operation_context}: Not found (HTTP 404){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Not found (HTTP 404){error_details} - not retrying"
+                    );
                     error_constructor(format!("Not found (HTTP 404){error_details}"))
                 }
                 405 => {
-                    error!("{operation_context}: Method not allowed (HTTP 405){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Method not allowed (HTTP 405){error_details} - not retrying"
+                    );
                     error_constructor(format!("Method not allowed (HTTP 405){error_details}"))
                 }
                 501 => {
-                    error!("{operation_context}: Vault not initialized (HTTP 501){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Vault not initialized (HTTP 501){error_details} - not retrying"
+                    );
                     error_constructor(format!("Vault not initialized (HTTP 501){error_details}"))
                 }
 
                 // Catch-all Patterns
                 code if (400..500).contains(&code) => {
-                    error!("{operation_context}: Client error (HTTP {code}){error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Client error (HTTP {code}){error_details} - not retrying"
+                    );
                     error_constructor(format!("Client error (HTTP {code}){error_details}"))
                 }
                 code if (500..600).contains(&code) => {
-                    debug!("{operation_context}: Server error (HTTP {code}){error_details} - retrying");
+                    debug!(
+                        "{operation_context}: Server error (HTTP {code}){error_details} - retrying"
+                    );
                     error_constructor(format!("Server error (HTTP {code}){error_details}"))
                 }
                 code => {
-                    error!("{operation_context}: Unexpected HTTP {code}{error_details} - not retrying");
+                    error!(
+                        "{operation_context}: Unexpected HTTP {code}{error_details} - not retrying"
+                    );
                     error_constructor(format!("Unexpected HTTP status {code}{error_details}"))
                 }
             }
@@ -946,7 +982,9 @@ fn classify_vault_error<E>(
             }
 
             if is_certificate_error(source) {
-                error!("{operation_context}: Certificate/TLS error detected - not retrying: {source}");
+                error!(
+                    "{operation_context}: Certificate/TLS error detected - not retrying: {source}"
+                );
                 error_constructor(format!("TLS/certificate error: {source}"))
             } else if is_network_error(source) {
                 debug!("{operation_context}: Network error - retrying: {source}");
