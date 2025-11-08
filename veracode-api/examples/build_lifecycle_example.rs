@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 //! Build Lifecycle Example
 //!
 //! This example demonstrates the complete Veracode Build XML API functionality including:
@@ -39,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔧 Creating Veracode client...");
     let client = VeracodeClient::new(config)?;
-    let build_api = client.build_api();
+    let build_api = client.build_api()?;
     println!("   ✅ Client created successfully");
     println!("   🔗 Using XML API: analysiscenter.veracode.com");
 
@@ -58,7 +60,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   ✅ Test environment ready:");
             println!(
                 "      - App: {} (ID: {})",
-                app.profile.as_ref().unwrap().name,
+                app.profile.as_ref().expect("should have profile").name,
                 app_id
             );
             println!("      - Sandbox: {} (ID: {})", sandbox.name, sandbox_id);
@@ -356,7 +358,8 @@ async fn demonstrate_list_builds(
 
             // Show first few builds
             for (i, build) in build_list.builds.iter().take(3).enumerate() {
-                println!("      Build {}:", i + 1);
+                let i: usize = i;
+                println!("      Build {}:", i.saturating_add(1));
                 println!("        - Build ID: {}", build.build_id);
                 if let Some(version) = &build.version {
                     println!("        - Version: {version}");
@@ -383,11 +386,12 @@ async fn demonstrate_list_builds(
             // Show sandbox-specific builds
             for (i, build) in build_list.builds.iter().take(3).enumerate() {
                 if build.sandbox_id.is_some() {
-                    println!("      Sandbox Build {}:", i + 1);
+                    let i: usize = i;
+                    println!("      Sandbox Build {}:", i.saturating_add(1));
                     println!("        - Build ID: {}", build.build_id);
                     println!(
                         "        - Sandbox ID: {}",
-                        build.sandbox_id.as_ref().unwrap()
+                        build.sandbox_id.as_ref().expect("should have sandbox_id")
                     );
                     if let Some(version) = &build.version {
                         println!("        - Version: {version}");

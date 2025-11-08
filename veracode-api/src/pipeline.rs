@@ -14,6 +14,7 @@ const PLUGIN_VERSION: &str = "25.2.0-0";
 
 /// Error types specific to pipeline scan operations
 #[derive(Debug, thiserror::Error)]
+#[must_use = "Need to handle all error enum types."]
 pub enum PipelineError {
     #[error("Pipeline scan not found")]
     ScanNotFound,
@@ -581,7 +582,11 @@ impl PipelineApi {
 
         match applications.len() {
             0 => Err(PipelineError::ApplicationNotFound(app_name.to_owned())),
-            1 => Ok(applications[0].id.to_string()),
+            1 => Ok(applications
+                .first()
+                .ok_or_else(|| PipelineError::ApplicationNotFound(app_name.to_owned()))?
+                .id
+                .to_string()),
             _ => {
                 // Print the found applications to help the user
                 error!(
@@ -591,9 +596,9 @@ impl PipelineApi {
                 );
                 for (i, app) in applications.iter().enumerate() {
                     if let Some(ref profile) = app.profile {
-                        error!("   {}. ID: {} - Name: '{}'", i + 1, app.id, profile.name);
+                        error!("   {}. ID: {} - Name: '{}'", i.saturating_add(1), app.id, profile.name);
                     } else {
-                        error!("   {}. ID: {} - GUID: {}", i + 1, app.id, app.guid);
+                        error!("   {}. ID: {} - GUID: {}", i.saturating_add(1), app.id, app.guid);
                     }
                 }
                 error!(
@@ -706,6 +711,7 @@ impl PipelineApi {
                 .map(str::to_owned);
 
             // Extract expected segments
+            #[allow(clippy::cast_possible_truncation)]
             let expected_segments = json_value
                 .get("binary_segments_expected")
                 .and_then(|segments| segments.as_u64())
@@ -770,6 +776,7 @@ impl PipelineApi {
         file_name: &str,
     ) -> Result<(), PipelineError> {
         let total_size = binary_data.len();
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
         let segment_size = ((total_size as f64) / (expected_segments as f64)).ceil() as usize;
 
         debug!("📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)");
@@ -778,13 +785,19 @@ impl PipelineApi {
         let mut current_upload_uri = initial_upload_uri.to_string();
 
         for segment_num in 0..expected_segments {
-            let start_idx = (segment_num as usize) * segment_size;
-            let end_idx = std::cmp::min(start_idx + segment_size, total_size);
-            let segment_data = &binary_data[start_idx..end_idx];
+            #[allow(clippy::cast_sign_loss)]
+            let start_idx = (segment_num as usize).saturating_mul(segment_size);
+            let end_idx = std::cmp::min(start_idx.saturating_add(segment_size), total_size);
+            let segment_data = binary_data.get(start_idx..end_idx).ok_or_else(|| {
+                PipelineError::InvalidRequest(format!(
+                    "Invalid segment range: {}..{}",
+                    start_idx, end_idx
+                ))
+            })?;
 
             debug!(
                 "   Uploading segment {}/{} ({} bytes)...",
-                segment_num + 1,
+                segment_num.saturating_add(1),
                 expected_segments,
                 segment_data.len()
             );
@@ -794,10 +807,10 @@ impl PipelineApi {
                 .await
             {
                 Ok(response_text) => {
-                    debug!("   ✅ Segment {} uploaded successfully", segment_num + 1);
+                    debug!("   ✅ Segment {} uploaded successfully", segment_num.saturating_add(1));
 
                     // Parse response to get next upload URI (like Java implementation)
-                    if segment_num < expected_segments - 1 {
+                    if segment_num < expected_segments.saturating_sub(1) {
                         match self.extract_next_upload_uri(&response_text) {
                             Some(next_uri) => {
                                 current_upload_uri = next_uri;
@@ -810,7 +823,7 @@ impl PipelineApi {
                     }
                 }
                 Err(e) => {
-                    error!("   ❌ Failed to upload segment {}: {}", segment_num + 1, e);
+                    error!("   ❌ Failed to upload segment {}: {}", segment_num.saturating_add(1), e);
                     return Err(e);
                 }
             }
@@ -925,14 +938,29 @@ impl PipelineApi {
 
         // Add scan config fields if provided
         if let Some(config) = config {
-            if let Some(timeout) = config.timeout {
-                payload["timeout"] = serde_json::Value::Number(timeout.into());
+            if let Some(timeout) = config.timeout
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number(timeout.into()),
+                );
             }
-            if let Some(include_low_severity) = config.include_low_severity {
-                payload["include_low_severity"] = serde_json::Value::Bool(include_low_severity);
+            if let Some(include_low_severity) = config.include_low_severity
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "include_low_severity".to_string(),
+                    serde_json::Value::Bool(include_low_severity),
+                );
             }
-            if let Some(max_findings) = config.max_findings {
-                payload["max_findings"] = serde_json::Value::Number(max_findings.into());
+            if let Some(max_findings) = config.max_findings
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "max_findings".to_string(),
+                    serde_json::Value::Number(max_findings.into()),
+                );
             }
         }
 
@@ -998,14 +1026,29 @@ impl PipelineApi {
 
         // Add scan config fields if provided
         if let Some(config) = config {
-            if let Some(timeout) = config.timeout {
-                payload["timeout"] = serde_json::Value::Number(timeout.into());
+            if let Some(timeout) = config.timeout
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number(timeout.into()),
+                );
             }
-            if let Some(include_low_severity) = config.include_low_severity {
-                payload["include_low_severity"] = serde_json::Value::Bool(include_low_severity);
+            if let Some(include_low_severity) = config.include_low_severity
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "include_low_severity".to_string(),
+                    serde_json::Value::Bool(include_low_severity),
+                );
             }
-            if let Some(max_findings) = config.max_findings {
-                payload["max_findings"] = serde_json::Value::Number(max_findings.into());
+            if let Some(max_findings) = config.max_findings
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "max_findings".to_string(),
+                    serde_json::Value::Number(max_findings.into()),
+                );
             }
         }
 
@@ -1292,7 +1335,10 @@ impl PipelineApi {
     ) -> Result<Scan, PipelineError> {
         let timeout = timeout_minutes.unwrap_or(60);
         let interval = poll_interval_seconds.unwrap_or(10);
-        let max_polls = (timeout * 60) / interval;
+        let max_polls = timeout
+            .saturating_mul(60)
+            .checked_div(interval)
+            .unwrap_or(u32::MAX);
 
         for _ in 0..max_polls {
             let scan = self.get_scan(scan_id).await?;
@@ -1311,6 +1357,7 @@ impl PipelineApi {
 
     /// Calculate findings summary from a list of findings
     fn calculate_summary(&self, findings: &[Finding]) -> FindingsSummary {
+        #[allow(clippy::cast_possible_truncation)]
         let mut summary = FindingsSummary {
             very_high: 0,
             high: 0,
@@ -1323,12 +1370,12 @@ impl PipelineApi {
 
         for finding in findings {
             match finding.severity {
-                5 => summary.very_high += 1,
-                4 => summary.high += 1,
-                3 => summary.medium += 1,
-                2 => summary.low += 1,
-                1 => summary.very_low += 1,
-                0 => summary.informational += 1,
+                5 => summary.very_high = summary.very_high.saturating_add(1),
+                4 => summary.high = summary.high.saturating_add(1),
+                3 => summary.medium = summary.medium.saturating_add(1),
+                2 => summary.low = summary.low.saturating_add(1),
+                1 => summary.very_low = summary.very_low.saturating_add(1),
+                0 => summary.informational = summary.informational.saturating_add(1),
                 _ => {} // Unknown severity
             }
         }

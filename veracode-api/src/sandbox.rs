@@ -203,6 +203,7 @@ impl From<SandboxListParams> for Vec<(String, String)> {
 
 /// Sandbox-specific error types that extend the base VeracodeError
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum SandboxError {
     /// Veracode API error
     Api(VeracodeError),

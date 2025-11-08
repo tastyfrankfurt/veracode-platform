@@ -1,9 +1,12 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::{
     VeracodeClient, VeracodeConfig, VeracodeError,
     app::{
         BusinessCriticality, CreateApplicationProfile, CreateApplicationRequest,
         UpdateApplicationProfile, UpdateApplicationRequest,
     },
+    validation::{AppGuid, AppName, Description},
 };
 
 #[tokio::main]
@@ -17,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time should be after unix epoch")
         .as_secs();
 
     println!("🏗️  Application Lifecycle Example\n");
@@ -28,8 +31,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let create_request = CreateApplicationRequest {
         profile: CreateApplicationProfile {
-            name: app_name.clone(),
-            description: Some("A test application for lifecycle demonstration".to_string()),
+            name: AppName::new(app_name.clone())?,
+            description: Some(Description::new(
+                "A test application for lifecycle demonstration",
+            )?),
             business_unit: None,
             business_criticality: BusinessCriticality::VeryHigh,
             business_owners: None,
@@ -46,7 +51,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(app) => {
             println!(
                 "✅ Created application: {} ({})",
-                app.profile.as_ref().unwrap().name,
+                app.profile.as_ref().expect("should have profile").name,
                 app.guid
             );
             app
@@ -64,7 +69,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if let Some(found_app) = search_results.first() {
         println!(
             "✅ Found created application: {} ({})",
-            found_app.profile.as_ref().unwrap().name,
+            found_app
+                .profile
+                .as_ref()
+                .expect("should have profile")
+                .name,
             found_app.guid
         );
     } else {
@@ -75,8 +84,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n✏️  Updating application...");
     let update_request = UpdateApplicationRequest {
         profile: UpdateApplicationProfile {
-            name: Some(format!("{app_name} - Updated")),
-            description: Some("Updated description for lifecycle demonstration".to_string()),
+            name: Some(AppName::new(format!("{app_name} - Updated"))?),
+            description: Some(Description::new(
+                "Updated description for lifecycle demonstration",
+            )?),
             business_unit: None,
             business_criticality: BusinessCriticality::High,
             business_owners: None,
@@ -90,13 +101,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let updated_app = match client
-        .update_application(&created_app.guid, &update_request)
+        .update_application(&AppGuid::new(&created_app.guid)?, &update_request)
         .await
     {
         Ok(app) => {
             println!(
                 "✅ Updated application: {} ({})",
-                app.profile.as_ref().unwrap().name,
+                app.profile.as_ref().expect("should have profile").name,
                 app.guid
             );
             app
@@ -104,21 +115,30 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Err(e) => {
             eprintln!("❌ Failed to update application: {e}");
             println!("🗑️  Cleaning up created application...");
-            let _ = client.delete_application(&created_app.guid).await;
+            let _ = client
+                .delete_application(&AppGuid::new(&created_app.guid)?)
+                .await;
             return Err(e.into());
         }
     };
 
     // Example 4: Get the updated application to verify changes
     println!("\n🔍 Retrieving updated application to verify changes...");
-    match client.get_application(&updated_app.guid).await {
+    match client
+        .get_application(&AppGuid::new(&updated_app.guid)?)
+        .await
+    {
         Ok(retrieved_app) => {
-            let profile = retrieved_app.profile.as_ref().unwrap();
+            let profile = retrieved_app.profile.as_ref().expect("should have profile");
             println!("✅ Retrieved application details:");
             println!("   Name: {}", profile.name);
             println!(
                 "   Description: {}",
-                profile.description.as_ref().unwrap_or(&"None".to_string())
+                profile
+                    .description
+                    .as_ref()
+                    .map(|d| d.as_str())
+                    .unwrap_or("None")
             );
             println!(
                 "   Business Criticality: {:?}",
@@ -154,15 +174,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 // Show first few applications
                 for (i, app) in embedded.applications.iter().take(3).enumerate() {
+                    let i: usize = i;
                     if let Some(profile) = &app.profile {
-                        println!("   {}. {} ({})", i + 1, profile.name, app.guid);
+                        println!("   {}. {} ({})", i.saturating_add(1), profile.name, app.guid);
                     } else {
-                        println!("   {}. [No profile] ({})", i + 1, app.guid);
+                        println!("   {}. [No profile] ({})", i.saturating_add(1), app.guid);
                     }
                 }
 
                 if embedded.applications.len() > 3 {
-                    println!("   ... and {} more", embedded.applications.len() - 3);
+                    println!("   ... and {} more", embedded.applications.len().saturating_sub(3));
                 }
             } else {
                 println!("   No applications found");
@@ -179,7 +200,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 6: Delete the application
     println!("\n🗑️  Deleting the test application...");
-    match client.delete_application(&updated_app.guid).await {
+    match client
+        .delete_application(&AppGuid::new(&updated_app.guid)?)
+        .await
+    {
         Ok(_) => {
             println!("✅ Successfully deleted application: {}", updated_app.guid);
         }
@@ -191,7 +215,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 7: Verify deletion
     println!("\n🔍 Verifying application deletion...");
-    match client.get_application(&updated_app.guid).await {
+    match client
+        .get_application(&AppGuid::new(&updated_app.guid)?)
+        .await
+    {
         Ok(_) => {
             println!("⚠️  Application still exists after deletion attempt");
         }

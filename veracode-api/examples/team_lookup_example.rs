@@ -10,6 +10,7 @@ use veracode_platform::{
     app::{
         BusinessCriticality, CreateApplicationProfile, CreateApplicationRequest, Team as AppTeam,
     },
+    validation::{AppName, Description},
 };
 
 #[tokio::main]
@@ -62,9 +63,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let _create_request = CreateApplicationRequest {
                 profile: CreateApplicationProfile {
-                    name: "Example App with Team".to_string(),
+                    name: AppName::new("Example App with Team")?,
                     business_criticality: BusinessCriticality::Medium,
-                    description: Some("Application created with team assignment".to_string()),
+                    description: Some(Description::new(
+                        "Application created with team assignment",
+                    )?),
                     business_unit: None,
                     business_owners: None,
                     policies: None,

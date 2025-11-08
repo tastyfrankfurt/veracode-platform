@@ -43,8 +43,12 @@ impl VeracodeClient {
     /// Build URL with query parameters - centralized helper
     fn build_url_with_params(&self, endpoint: &str, query_params: &[(&str, &str)]) -> String {
         // Pre-allocate string capacity for better performance
-        let estimated_capacity =
-            self.config.base_url.len() + endpoint.len() + query_params.len() * 32; // Rough estimate for query params
+        let estimated_capacity = self
+            .config
+            .base_url
+            .len()
+            .saturating_add(endpoint.len())
+            .saturating_add(query_params.len().saturating_mul(32)); // Rough estimate for query params
 
         let mut url = String::with_capacity(estimated_capacity);
         url.push_str(&self.config.base_url);
@@ -162,9 +166,9 @@ impl VeracodeClient {
         }
 
         let mut last_error = None;
-        let mut rate_limit_attempts = 0;
+        let mut rate_limit_attempts: u32 = 0;
 
-        for attempt in 1..=retry_config.max_attempts + 1 {
+        for attempt in 1..=retry_config.max_attempts.saturating_add(1) {
             // Build and send the request
             match request_builder().send().await {
                 Ok(response) => {
@@ -184,7 +188,7 @@ impl VeracodeClient {
                         };
 
                         // Increment rate limit attempt counter
-                        rate_limit_attempts += 1;
+                        rate_limit_attempts = rate_limit_attempts.saturating_add(1);
 
                         // Check if we should retry based on rate limit specific limits
                         if attempt > retry_config.max_attempts
@@ -196,7 +200,7 @@ impl VeracodeClient {
 
                         // Calculate rate limit specific delay
                         let delay = retry_config.calculate_rate_limit_delay(retry_after_seconds);
-                        total_delay += delay;
+                        total_delay = total_delay.saturating_add(delay);
 
                         // Check total delay limit
                         if total_delay.as_millis() > retry_config.max_total_delay_ms as u128 {
@@ -243,7 +247,7 @@ impl VeracodeClient {
 
                     // Use normal exponential backoff for non-429 errors
                     let delay = retry_config.calculate_delay(attempt);
-                    total_delay += delay;
+                    total_delay = total_delay.saturating_add(delay);
 
                     // Check if we've exceeded the maximum total delay
                     if total_delay.as_millis() > retry_config.max_total_delay_ms as u128 {
@@ -275,11 +279,18 @@ impl VeracodeClient {
                 let elapsed = start_time.elapsed();
                 match error {
                     VeracodeError::RetryExhausted(_) => Err(error),
-                    _ => {
+                    VeracodeError::Http(_)
+                    | VeracodeError::Serialization(_)
+                    | VeracodeError::Authentication(_)
+                    | VeracodeError::InvalidResponse(_)
+                    | VeracodeError::InvalidConfig(_)
+                    | VeracodeError::NotFound(_)
+                    | VeracodeError::RateLimited { .. }
+                    | VeracodeError::Validation(_) => {
                         let msg = format!(
                             "{} failed after {} attempts over {}ms: {}",
                             operation_name,
-                            retry_config.max_attempts + 1,
+                            retry_config.max_attempts.saturating_add(1),
                             elapsed.as_millis(),
                             error
                         );
@@ -291,7 +302,7 @@ impl VeracodeClient {
                 let msg = format!(
                     "{} failed after {} attempts with unknown error",
                     operation_name,
-                    retry_config.max_attempts + 1
+                    retry_config.max_attempts.saturating_add(1)
                 );
                 Err(VeracodeError::RetryExhausted(msg))
             }
@@ -366,6 +377,7 @@ impl VeracodeClient {
 
     /// Generate authorization header for HMAC authentication
     pub fn generate_auth_header(&self, method: &str, url: &str) -> Result<String, VeracodeError> {
+        #[allow(clippy::cast_possible_truncation)]
         let timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map_err(|e| VeracodeError::Authentication(format!("System time error: {e}")))?
@@ -403,7 +415,12 @@ impl VeracodeClient {
     ) -> Result<reqwest::Response, VeracodeError> {
         // Pre-allocate URL capacity
         let param_count = query_params.map_or(0, |p| p.len());
-        let estimated_capacity = self.config.base_url.len() + endpoint.len() + param_count * 32;
+        let estimated_capacity = self
+            .config
+            .base_url
+            .len()
+            .saturating_add(endpoint.len())
+            .saturating_add(param_count.saturating_mul(32));
         let mut url = String::with_capacity(estimated_capacity);
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
@@ -460,7 +477,9 @@ impl VeracodeClient {
         endpoint: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        let mut url = String::with_capacity(
+            self.config.base_url.len().saturating_add(endpoint.len())
+        );
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -515,7 +534,9 @@ impl VeracodeClient {
         endpoint: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        let mut url = String::with_capacity(
+            self.config.base_url.len().saturating_add(endpoint.len())
+        );
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -565,7 +586,9 @@ impl VeracodeClient {
     ///
     /// A `Result` containing the HTTP response.
     pub async fn delete(&self, endpoint: &str) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        let mut url = String::with_capacity(
+            self.config.base_url.len().saturating_add(endpoint.len())
+        );
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -598,18 +621,26 @@ impl VeracodeClient {
     /// # Arguments
     ///
     /// * `response` - The HTTP response to check
+    /// * `context` - A description of the operation being performed (e.g., "get application")
     ///
     /// # Returns
     ///
     /// A `Result` containing the response if successful, or an error if not.
+    ///
+    /// # Error Context
+    ///
+    /// This method enhances error messages with context about the failed operation
+    /// to improve debugging and user experience.
     pub async fn handle_response(
         response: reqwest::Response,
+        context: &str,
     ) -> Result<reqwest::Response, VeracodeError> {
         if !response.status().is_success() {
             let status = response.status();
+            let url = response.url().clone();
             let error_text = response.text().await?;
             return Err(VeracodeError::InvalidResponse(format!(
-                "HTTP {status}: {error_text}"
+                "Failed to {context}\n  URL: {url}\n  HTTP {status}: {error_text}"
             )));
         }
         Ok(response)
@@ -634,7 +665,7 @@ impl VeracodeClient {
     ) -> Result<reqwest::Response, VeracodeError> {
         let query_slice = query_params.as_deref();
         let response = self.get(endpoint, query_slice).await?;
-        Self::handle_response(response).await
+        Self::handle_response(response, &format!("GET {endpoint}")).await
     }
 
     /// Make a POST request with automatic response handling.
@@ -653,7 +684,7 @@ impl VeracodeClient {
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
         let response = self.post(endpoint, body).await?;
-        Self::handle_response(response).await
+        Self::handle_response(response, &format!("POST {endpoint}")).await
     }
 
     /// Make a PUT request with automatic response handling.
@@ -672,7 +703,7 @@ impl VeracodeClient {
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
         let response = self.put(endpoint, body).await?;
-        Self::handle_response(response).await
+        Self::handle_response(response, &format!("PUT {endpoint}")).await
     }
 
     /// Make a DELETE request with automatic response handling.
@@ -689,7 +720,7 @@ impl VeracodeClient {
         endpoint: &str,
     ) -> Result<reqwest::Response, VeracodeError> {
         let response = self.delete(endpoint).await?;
-        Self::handle_response(response).await
+        Self::handle_response(response, &format!("DELETE {endpoint}")).await
     }
 
     /// Make paginated GET requests to collect all results.
@@ -713,7 +744,7 @@ impl VeracodeClient {
         page_size: Option<u32>,
     ) -> Result<String, VeracodeError> {
         let size = page_size.unwrap_or(500);
-        let mut page = 0;
+        let mut page: u32 = 0;
         let mut all_items = Vec::new();
         let mut page_info = None;
 
@@ -755,7 +786,7 @@ impl VeracodeClient {
                     if let (Some(current), Some(total)) = (
                         page_obj.get("number").and_then(|n| n.as_u64()),
                         page_obj.get("totalPages").and_then(|n| n.as_u64()),
-                    ) && current + 1 >= total
+                    ) && current.saturating_add(1) >= total
                     {
                         break; // Last page reached
                     }
@@ -765,7 +796,7 @@ impl VeracodeClient {
                 return Ok(response_text);
             }
 
-            page += 1;
+            page = page.saturating_add(1);
 
             // Safety check to prevent infinite loops
             if page > 100 {
@@ -805,7 +836,9 @@ impl VeracodeClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        let mut url = String::with_capacity(
+            self.config.base_url.len().saturating_add(endpoint.len())
+        );
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
         let mut request_url =
@@ -847,7 +880,9 @@ impl VeracodeClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        let mut url = String::with_capacity(
+            self.config.base_url.len().saturating_add(endpoint.len())
+        );
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -889,7 +924,9 @@ impl VeracodeClient {
         filename: &str,
         file_data: Vec<u8>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(self.config.base_url.len() + endpoint.len());
+        let mut url = String::with_capacity(
+            self.config.base_url.len().saturating_add(endpoint.len())
+        );
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -1164,6 +1201,7 @@ impl VeracodeClient {
             .len();
 
         // Check file size limit (2GB for uploadlargefile.do)
+        #[allow(clippy::arithmetic_side_effects)]
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
         if file_size > MAX_FILE_SIZE {
             return Err(VeracodeError::InvalidConfig(format!(
@@ -1175,6 +1213,7 @@ impl VeracodeClient {
         file.seek(SeekFrom::Start(0))
             .map_err(|e| VeracodeError::InvalidConfig(format!("Failed to seek file: {e}")))?;
 
+        #[allow(clippy::cast_possible_truncation)]
         let mut file_data = Vec::with_capacity(file_size as usize);
         file.read_to_end(&mut file_data)
             .map_err(|e| VeracodeError::InvalidConfig(format!("Failed to read file: {e}")))?;

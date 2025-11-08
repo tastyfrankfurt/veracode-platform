@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::{VeracodeClient, VeracodeConfig, policy::PolicyError};
 
 #[tokio::main]
@@ -18,13 +20,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(policies) => {
             println!("✅ Found {} policies:", policies.len());
             for (i, policy) in policies.iter().take(3).enumerate() {
-                println!("   {}. {} ({})", i + 1, policy.name, policy.guid);
+                let i: usize = i;
+                println!("   {}. {} ({})", i.saturating_add(1), policy.name, policy.guid);
                 if policy.policy_type == "CUSTOMER" && policy.organization_id.is_some() {
                     println!("      ⭐ Customer Policy");
                 }
             }
             if policies.len() > 3 {
-                println!("   ... and {} more", policies.len() - 3);
+                println!("   ... and {} more", policies.len().saturating_sub(3));
             }
         }
         Err(e) => {

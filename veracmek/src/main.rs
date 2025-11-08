@@ -12,6 +12,7 @@ use std::path::PathBuf;
 use veracode_platform::{
     VeracodeClient, VeracodeError,
     app::{Application, ApplicationQuery, validate_kms_alias},
+    validation::{AppGuid, ValidationError},
 };
 
 mod credentials;
@@ -177,6 +178,9 @@ enum AppError {
 
     #[error("Invalid KMS alias: {0}")]
     InvalidKmsAlias(String),
+
+    #[error("Validation error: {0}")]
+    Validation(#[from] ValidationError),
 }
 
 #[tokio::main]
@@ -365,14 +369,14 @@ async fn enable_encryption(
         "Found application: {} ({})",
         app.profile
             .as_ref()
-            .map(|p| &p.name)
-            .unwrap_or(&"Unknown".to_string()),
+            .map(|p| p.name.as_str())
+            .unwrap_or("Unknown"),
         app.guid
     );
 
     // Enable encryption
     let updated_app = client
-        .enable_application_encryption(&app.guid, kms_alias)
+        .enable_application_encryption(&AppGuid::new(&app.guid)?, kms_alias)
         .await
         .map_err(AppError::from)?;
 
@@ -396,8 +400,8 @@ async fn enable_encryption(
                 updated_app
                     .profile
                     .as_ref()
-                    .map(|p| &p.name)
-                    .unwrap_or(&"Unknown".to_string()),
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Unknown"),
                 updated_app.guid
             );
             println!("   KMS Alias: {}", kms_alias);
@@ -429,14 +433,14 @@ async fn change_encryption_key(
         "Found application: {} ({})",
         app.profile
             .as_ref()
-            .map(|p| &p.name)
-            .unwrap_or(&"Unknown".to_string()),
+            .map(|p| p.name.as_str())
+            .unwrap_or("Unknown"),
         app.guid
     );
 
     // Change encryption key
     let updated_app = client
-        .change_encryption_key(&app.guid, new_kms_alias)
+        .change_encryption_key(&AppGuid::new(&app.guid)?, new_kms_alias)
         .await
         .map_err(AppError::from)?;
 
@@ -460,8 +464,8 @@ async fn change_encryption_key(
                 updated_app
                     .profile
                     .as_ref()
-                    .map(|p| &p.name)
-                    .unwrap_or(&"Unknown".to_string()),
+                    .map(|p| p.name.as_str())
+                    .unwrap_or("Unknown"),
                 updated_app.guid
             );
             println!("   New KMS Alias: {}", new_kms_alias);
@@ -516,7 +520,9 @@ async fn bulk_enable_encryption(
 
         // Check if already encrypted and should skip
         if skip_encrypted
-            && let Ok(Some(_)) = client.get_application_encryption_status(&app.guid).await
+            && let Ok(Some(_)) = client
+                .get_application_encryption_status(&AppGuid::new(&app.guid)?)
+                .await
         {
             info!("Skipping {} - already encrypted", app_name);
             skipped += 1;
@@ -538,7 +544,7 @@ async fn bulk_enable_encryption(
             }));
         } else {
             match client
-                .enable_application_encryption(&app.guid, kms_alias)
+                .enable_application_encryption(&AppGuid::new(&app.guid)?, kms_alias)
                 .await
             {
                 Ok(_) => {
@@ -663,7 +669,9 @@ async fn process_from_file(
 
         // Check if already encrypted and should skip
         if app_config.skip_if_encrypted
-            && let Ok(Some(_)) = client.get_application_encryption_status(&app.guid).await
+            && let Ok(Some(_)) = client
+                .get_application_encryption_status(&AppGuid::new(&app.guid)?)
+                .await
         {
             info!("Skipping {} - already encrypted", app_name);
             skipped += 1;
@@ -685,7 +693,7 @@ async fn process_from_file(
             }));
         } else {
             match client
-                .enable_application_encryption(&app.guid, &app_config.kms_alias)
+                .enable_application_encryption(&AppGuid::new(&app.guid)?, &app_config.kms_alias)
                 .await
             {
                 Ok(_) => {
@@ -768,7 +776,7 @@ async fn show_encryption_status(
             // Show status for specific application
             let app = find_application(client, identifier).await?;
             let status = client
-                .get_application_encryption_status(&app.guid)
+                .get_application_encryption_status(&AppGuid::new(&app.guid)?)
                 .await
                 .map_err(AppError::from)?;
 
@@ -789,8 +797,8 @@ async fn show_encryption_status(
                         "Application: {} ({})",
                         app.profile
                             .as_ref()
-                            .map(|p| &p.name)
-                            .unwrap_or(&"Unknown".to_string()),
+                            .map(|p| p.name.as_str())
+                            .unwrap_or("Unknown"),
                         app.guid
                     );
                     match status {
@@ -831,7 +839,10 @@ async fn show_encryption_status(
                     .map(|p| p.name.as_str())
                     .unwrap_or("Unknown");
 
-                match client.get_application_encryption_status(&app.guid).await {
+                match client
+                    .get_application_encryption_status(&AppGuid::new(&app.guid)?)
+                    .await
+                {
                     Ok(status) => {
                         let encrypted = status.is_some();
                         if encrypted {
@@ -909,7 +920,7 @@ async fn show_encryption_status(
 async fn find_application(client: &VeracodeClient, identifier: &str) -> AppResult<Application> {
     // First try to get by GUID (if it looks like a GUID)
     if identifier.len() == 36 && identifier.contains('-') {
-        match client.get_application(identifier).await {
+        match client.get_application(&AppGuid::new(identifier)?).await {
             Ok(app) => return Ok(app),
             Err(_) => {
                 // Not found by GUID, try by name
@@ -931,12 +942,17 @@ async fn find_application(client: &VeracodeClient, identifier: &str) -> AppResul
 
     match apps.len() {
         0 => Err(AppError::AppNotFound(identifier.to_string())),
-        1 => Ok(apps.into_iter().next().unwrap()),
+        1 => {
+            // We know there's exactly one element since len() == 1
+            apps.into_iter()
+                .next()
+                .ok_or_else(|| AppError::General(anyhow::anyhow!("Unexpected empty iterator")))
+        }
         _ => {
             // Multiple matches - look for exact name match
             for app in apps {
                 if let Some(profile) = &app.profile
-                    && profile.name == identifier
+                    && profile.name.as_str() == identifier
                 {
                     return Ok(app);
                 }
@@ -1003,7 +1019,9 @@ fn print_environment_variables() {
         ]
     });
 
-    println!("{}", serde_json::to_string_pretty(&example_config).unwrap());
+    if let Ok(json) = serde_json::to_string_pretty(&example_config) {
+        println!("{json}");
+    }
     println!();
 
     println!("📋 JSON File Field Descriptions:");

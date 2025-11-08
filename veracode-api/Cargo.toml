@@ -21,6 +21,35 @@ exclude = [
 name = "veracode_platform"
 path = "src/lib.rs"
 
+[lints.clippy]
+# Defensive programming essentials
+indexing_slicing = "deny"              # Prevents direct indexing
+fallible_impl_from = "deny"            # Catches failed conversions
+wildcard_enum_match_arm = "deny"       # Disallows catch-alls
+fn_params_excessive_bools = "warn"     # Flags too many booleans
+unwrap_used = "deny"                   # Prevents unwrap() in production
+expect_used = "warn"                   # Audit expect() usage
+panic = "deny"                         # Prevents panic! in production
+must_use_candidate = "warn"            # Prevents the result of a function or the value of a type from being ignored
+
+## INTEGER SAFETY
+arithmetic_side_effects = "warn"            # Detects potential overflow
+cast_possible_truncation = "warn"      # Lossy numeric casts (u64 -> u32)
+cast_sign_loss = "warn"                # Sign loss in casts (i32 -> u32)
+cast_possible_wrap = "warn"            # Wrapping casts
+cast_precision_loss = "warn"           # Float precision loss
+
+## STRING & MEMORY SAFETY (ADD THESE)
+string_slice = "warn"                  # String slicing can panic on UTF-8 boundaries
+mem_forget = "deny"                    # Prevents mem::forget abuse
+manual_assert = "warn"                 # Suggests assert! over if/panic
+
+## CODE QUALITY (ADD THESE)
+missing_errors_doc = "warn"            # Ensures error documentation
+missing_panics_doc = "warn"            # Documents panic conditions
+missing_safety_doc = "warn"            # Documents unsafe code
+doc_markdown = "warn"                  # Enforces markdown in docs
+
 [dependencies]
 # HTTP client and serialization
 reqwest = { version = "0.12", features = ["json", "multipart", "rustls-tls-native-roots"], default-features = false }
@@ -35,6 +64,7 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 # Utilities
 rand = "0.9"
+regex = "1.11"
 url = "2.4"
 urlencoding = "2.1"
 chrono = { version = "0.4", features = ["serde"] }

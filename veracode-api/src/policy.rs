@@ -545,6 +545,7 @@ pub enum ApiSource {
 
 /// Policy-specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum PolicyError {
     /// Veracode API error
     Api(VeracodeError),
@@ -776,11 +777,11 @@ impl<'a> PolicyApi<'a> {
             sandbox_id: sandbox_id.map(str::to_string),
         };
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         loop {
             let build_info = self
                 .client
-                .build_api()
+                .build_api()?
                 .get_build_info(&build_request)
                 .await
                 .map_err(|e| match e {
@@ -823,7 +824,7 @@ impl<'a> PolicyApi<'a> {
             }
 
             // If we've reached max retries, return "Not Assessed"
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not assessed after {max_retries} attempts. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or application may not have a policy assigned"
@@ -967,7 +968,7 @@ impl<'a> PolicyApi<'a> {
             ));
         }
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         loop {
             if attempts == 0 && enable_break_build {
                 debug!("Checking policy compliance status with retry logic...");
@@ -983,10 +984,10 @@ impl<'a> PolicyApi<'a> {
                 Err(PolicyError::InternalServerError) if attempts < 3 => {
                     warn!(
                         "Summary report API failed with server error (attempt {}/3), retrying in 5 seconds...",
-                        attempts + 1
+                        attempts.saturating_add(1)
                     );
                     sleep(Duration::from_secs(5)).await;
-                    attempts += 1;
+                    attempts = attempts.saturating_add(1);
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -1007,7 +1008,7 @@ impl<'a> PolicyApi<'a> {
             }
 
             // If we've reached max retries, return current results
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
@@ -1052,7 +1053,7 @@ impl<'a> PolicyApi<'a> {
         use std::borrow::Cow;
         use tokio::time::{Duration, sleep};
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         loop {
             let summary_report = self
                 .get_summary_report(app_guid, Some(build_id), sandbox_guid)
@@ -1068,7 +1069,7 @@ impl<'a> PolicyApi<'a> {
             }
 
             // If we've reached max retries, return current status
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
@@ -1277,11 +1278,19 @@ impl<'a> PolicyApi<'a> {
                 | PolicyError::PermissionDenied
                 | PolicyError::InternalServerError),
             ) => {
-                match e {
+                match *e {
                     PolicyError::InternalServerError => info!(
                         "Summary report API server error, falling back to getbuildinfo.do API"
                     ),
-                    _ => info!("Summary report access denied, falling back to getbuildinfo.do API"),
+                    PolicyError::Unauthorized | PolicyError::PermissionDenied => {
+                        info!("Summary report access denied, falling back to getbuildinfo.do API")
+                    }
+                    PolicyError::Api(_)
+                    | PolicyError::NotFound
+                    | PolicyError::InvalidConfig(_)
+                    | PolicyError::ScanFailed(_)
+                    | PolicyError::EvaluationError(_)
+                    | PolicyError::Timeout => {}
                 }
                 let status = self
                     .evaluate_policy_compliance_via_buildinfo_with_retry(
@@ -1311,6 +1320,7 @@ impl<'a> PolicyApi<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1347,29 +1357,30 @@ mod tests {
     #[test]
     fn test_scan_type_serialization() {
         let scan_type = ScanType::Static;
-        let json = serde_json::to_string(&scan_type).unwrap();
+        let json = serde_json::to_string(&scan_type).expect("should serialize to json");
         assert_eq!(json, "\"static\"");
 
-        let deserialized: ScanType = serde_json::from_str(&json).unwrap();
+        let deserialized: ScanType = serde_json::from_str(&json).expect("should deserialize json");
         assert!(matches!(deserialized, ScanType::Static));
     }
 
     #[test]
     fn test_policy_compliance_status_serialization() {
         let status = PolicyComplianceStatus::Passed;
-        let json = serde_json::to_string(&status).unwrap();
+        let json = serde_json::to_string(&status).expect("should serialize to json");
         assert_eq!(json, "\"Passed\"");
 
-        let deserialized: PolicyComplianceStatus = serde_json::from_str(&json).unwrap();
+        let deserialized: PolicyComplianceStatus =
+            serde_json::from_str(&json).expect("should deserialize json");
         assert!(matches!(deserialized, PolicyComplianceStatus::Passed));
 
         // Test the special case statuses with spaces
         let conditional_pass = PolicyComplianceStatus::ConditionalPass;
-        let json = serde_json::to_string(&conditional_pass).unwrap();
+        let json = serde_json::to_string(&conditional_pass).expect("should serialize to json");
         assert_eq!(json, "\"Conditional Pass\"");
 
         let did_not_pass = PolicyComplianceStatus::DidNotPass;
-        let json = serde_json::to_string(&did_not_pass).unwrap();
+        let json = serde_json::to_string(&did_not_pass).expect("should serialize to json");
         assert_eq!(json, "\"Did Not Pass\"");
     }
 
@@ -1410,7 +1421,7 @@ mod tests {
         let summary: Result<SummaryReport, _> = serde_json::from_str(summary_json);
         assert!(summary.is_ok());
 
-        let summary = summary.unwrap();
+        let summary = summary.expect("should have summary");
         assert_eq!(summary.policy_compliance_status, "Did Not Pass");
         assert_eq!(summary.app_name, "Verascan Java Test");
         assert_eq!(summary.build_id, 54209787);
@@ -1458,16 +1469,39 @@ mod tests {
         });
 
         // Verify JSON structure
-        assert!(export_json["summary_report"]["app_name"].is_string());
-        assert!(export_json["summary_report"]["policy_compliance_status"].is_string());
-        assert!(export_json["export_metadata"]["export_type"].is_string());
+        assert!(
+            export_json
+                .get("summary_report")
+                .and_then(|s| s.get("app_name"))
+                .map(|v| v.is_string())
+                .unwrap_or(false)
+        );
+        assert!(
+            export_json
+                .get("summary_report")
+                .and_then(|s| s.get("policy_compliance_status"))
+                .map(|v| v.is_string())
+                .unwrap_or(false)
+        );
+        assert!(
+            export_json
+                .get("export_metadata")
+                .and_then(|e| e.get("export_type"))
+                .map(|v| v.is_string())
+                .unwrap_or(false)
+        );
         assert_eq!(
-            export_json["export_metadata"]["export_type"],
+            export_json
+                .get("export_metadata")
+                .and_then(|e| e.get("export_type"))
+                .and_then(|v| v.as_str())
+                .expect("should have export_type"),
             "summary_report"
         );
 
         // Verify the summary report can be serialized and deserialized
-        let json_string = serde_json::to_string_pretty(&export_json).unwrap();
+        let json_string =
+            serde_json::to_string_pretty(&export_json).expect("should serialize to json");
         assert!(json_string.contains("summary_report"));
         assert!(json_string.contains("export_metadata"));
     }

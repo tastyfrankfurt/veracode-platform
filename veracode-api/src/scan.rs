@@ -202,6 +202,7 @@ impl From<&UploadFileRequest> for UploadLargeFileRequest {
 
 /// Scan specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum ScanError {
     /// Veracode API error
     Api(VeracodeError),
@@ -1823,7 +1824,7 @@ mod tests {
         async fn _test_delete_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
-            let api = client.scan_api();
+            let api = client.scan_api()?;
 
             // These calls won't actually execute due to test environment,
             // but they validate the method signatures exist
@@ -1890,7 +1891,7 @@ mod tests {
         async fn _test_large_file_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
-            let api = client.scan_api();
+            let api = client.scan_api()?;
 
             // Test that the method signatures exist and compile
             let request = UploadLargeFileRequest {

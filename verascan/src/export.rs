@@ -218,7 +218,7 @@ impl ExportWorkflow {
             .into_iter()
             .find(|app| {
                 if let Some(profile) = &app.profile {
-                    profile.name == self.config.app_profile_name
+                    profile.name.as_str() == self.config.app_profile_name
                 } else {
                     false
                 }

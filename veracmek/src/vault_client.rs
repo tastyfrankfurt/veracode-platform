@@ -689,16 +689,18 @@ fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
 
     while let Some(err) = current {
         // Check for io::Error with retryable kinds
-        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
-            match io_err.kind() {
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>()
+            && matches!(
+                io_err.kind(),
                 std::io::ErrorKind::ConnectionRefused
-                | std::io::ErrorKind::ConnectionReset
-                | std::io::ErrorKind::ConnectionAborted
-                | std::io::ErrorKind::NotConnected
-                | std::io::ErrorKind::TimedOut
-                | std::io::ErrorKind::WouldBlock => return true,
-                _ => {}
-            }
+                    | std::io::ErrorKind::ConnectionReset
+                    | std::io::ErrorKind::ConnectionAborted
+                    | std::io::ErrorKind::NotConnected
+                    | std::io::ErrorKind::TimedOut
+                    | std::io::ErrorKind::WouldBlock
+            )
+        {
+            return true;
         }
 
         // Check error debug representation for network-related errors
@@ -1026,6 +1028,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_vault_config_validation_non_https() {
         let result = validate_vault_config(
             "http://vault.example.com",
@@ -1034,8 +1037,8 @@ mod tests {
             "secret/path",
             "auth/jwt",
         );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("HTTPS"));
+        let err = result.expect_err("Expected error for non-HTTPS URL");
+        assert!(err.to_string().contains("HTTPS"));
     }
 
     #[test]
@@ -1108,23 +1111,20 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_auth_path_validation_invalid_chars() {
         let result = validate_auth_path("auth/jwt@invalid");
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("invalid characters")
-        );
+        let err = result.expect_err("Expected error for invalid characters in auth path");
+        assert!(err.to_string().contains("invalid characters"));
     }
 
     #[test]
+    #[allow(clippy::expect_used)]
     fn test_auth_path_validation_too_long() {
         let long_path = format!("auth/{}", "a".repeat(100));
         let result = validate_auth_path(&long_path);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("exceed"));
+        let err = result.expect_err("Expected error for auth path that is too long");
+        assert!(err.to_string().contains("exceed"));
     }
 
     // Tests for is_retryable_vault_error function

@@ -1,4 +1,8 @@
-use veracode_platform::{FindingsQuery, GetBuildInfoRequest, VeracodeClient, VeracodeConfig};
+#![allow(clippy::expect_used)]
+
+use veracode_platform::{
+    FindingsQuery, GetBuildInfoRequest, VeracodeClient, VeracodeConfig, validation::AppGuid,
+};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -19,7 +23,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let client = VeracodeClient::new(config.clone())?;
     let _policy_api = client.policy_api();
     let sandbox_api = client.sandbox_api();
-    let build_api = client.build_api();
+    let build_api = client.build_api()?;
 
     println!(
         "🔍 Application Sandboxes, Raw XML, Findings & Summary Report with GUID Resolution & Latest Scan"
@@ -30,12 +34,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     {
         // Looks like a GUID, need to fetch the application to get policy
         println!("🔍 Fetching application details for GUID: {app_name_or_guid}");
-        match client.get_application(&app_name_or_guid).await {
+        match client
+            .get_application(&AppGuid::new(&app_name_or_guid)?)
+            .await
+        {
             Ok(app) => {
                 let app_name = app
                     .profile
                     .as_ref()
-                    .map(|p| &p.name)
+                    .map(|p| p.name.as_str())
                     .unwrap_or(&app_name_or_guid);
                 println!("✅ Found application: {} (GUID: {})", app_name, app.guid);
 
@@ -43,7 +50,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let policy_guid = match &app.profile {
                     Some(profile) => match &profile.policies {
                         Some(policies) if !policies.is_empty() => {
-                            let policy = &policies[0]; // Use first policy
+                            let policy = policies.first().expect("should have first policy"); // Use first policy
                             println!("✅ Found policy: {} (GUID: {})", policy.name, policy.guid);
                             policy.guid.clone()
                         }
@@ -73,7 +80,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let app_name = app
                     .profile
                     .as_ref()
-                    .map(|p| &p.name)
+                    .map(|p| p.name.as_str())
                     .unwrap_or(&app_name_or_guid);
                 println!("✅ Found application: {} (GUID: {})", app_name, app.guid);
 
@@ -81,7 +88,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let policy_guid = match &app.profile {
                     Some(profile) => match &profile.policies {
                         Some(policies) if !policies.is_empty() => {
-                            let policy = &policies[0]; // Use first policy
+                            let policy = policies.first().expect("should have first policy"); // Use first policy
                             println!("✅ Found policy: {} (GUID: {})", policy.name, policy.guid);
                             policy.guid.clone()
                         }
@@ -166,7 +173,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔍 Getting latest scan information...");
 
     // Convert app GUID to app ID for XML API calls
-    let app_id = match client.get_app_id_from_guid(&app_guid).await {
+    let app_id = match client.get_app_id_from_guid(&AppGuid::new(&app_guid)?).await {
         Ok(id) => id,
         Err(e) => {
             eprintln!("❌ Failed to get app ID from GUID: {e}");
@@ -260,7 +267,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
                                 println!(
                                     "   Current page: {} of {}",
-                                    findings_response.current_page() + 1,
+                                    findings_response.current_page().saturating_add(1),
                                     findings_response.total_pages()
                                 );
                                 println!(
@@ -272,9 +279,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 // Display structured finding data
                                 for (i, finding) in findings_response.findings().iter().enumerate()
                                 {
+                                    let i: usize = i;
                                     println!(
                                         "\n   📋 Finding #{} (Issue ID: {})",
-                                        i + 1,
+                                        i.saturating_add(1),
                                         finding.issue_id
                                     );
                                     println!(
@@ -316,15 +324,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
 
                                 // Show summary by severity
-                                let mut severity_counts = std::collections::HashMap::new();
-                                let mut policy_violations = 0;
+                                let mut severity_counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+                                let mut policy_violations: usize = 0;
 
                                 for finding in &all_findings {
                                     *severity_counts
                                         .entry(finding.finding_details.severity)
-                                        .or_insert(0) += 1;
+                                        .or_insert(0) = severity_counts
+                                        .get(&finding.finding_details.severity)
+                                        .unwrap_or(&0)
+                                        .saturating_add(1);
                                     if finding.violates_policy {
-                                        policy_violations += 1;
+                                        policy_violations = policy_violations.saturating_add(1);
                                     }
                                 }
 

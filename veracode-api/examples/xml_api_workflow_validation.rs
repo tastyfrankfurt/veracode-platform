@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 //! Complete XML API Workflow Validation Example
 //!
 //! This example demonstrates the complete XML API workflow that you requested:
@@ -11,7 +13,7 @@
 use std::env;
 use veracode_platform::{
     VeracodeClient, VeracodeConfig, VeracodeRegion, WorkflowConfig, WorkflowError,
-    app::BusinessCriticality,
+    app::BusinessCriticality, validation::AppGuid,
 };
 
 #[tokio::main]
@@ -83,12 +85,14 @@ async fn test_application_operations(
         Some(app) => {
             println!(
                 "   ✅ Found existing application: {} (GUID: {})",
-                app.profile.as_ref().unwrap().name,
+                app.profile.as_ref().expect("should have profile").name,
                 app.guid
             );
 
             // Test getting numeric app_id
-            let app_id = client.get_app_id_from_guid(&app.guid).await?;
+            let app_id = client
+                .get_app_id_from_guid(&AppGuid::new(&app.guid)?)
+                .await?;
             println!("   📊 Numeric app_id for XML API: {app_id}");
         }
         None => {
@@ -108,11 +112,13 @@ async fn test_application_operations(
 
             println!(
                 "   ✅ Application created: {} (GUID: {})",
-                new_app.profile.as_ref().unwrap().name,
+                new_app.profile.as_ref().expect("should have profile").name,
                 new_app.guid
             );
 
-            let app_id = client.get_app_id_from_guid(&new_app.guid).await?;
+            let app_id = client
+                .get_app_id_from_guid(&AppGuid::new(&new_app.guid)?)
+                .await?;
             println!("   📊 Numeric app_id for XML API: {app_id}");
         }
     }
@@ -184,7 +190,9 @@ async fn test_sandbox_operations(
     }
 
     // Test 3: Check if sandbox exists
-    let app_id = client.get_app_id_from_guid(&app.guid).await?;
+    let app_id = client
+        .get_app_id_from_guid(&AppGuid::new(&app.guid)?)
+        .await?;
     let sandbox = sandbox_api
         .get_sandbox_by_name(&app.guid, test_sandbox_name)
         .await?
@@ -209,7 +217,7 @@ async fn test_sandbox_operations(
 async fn test_xml_api_methods(client: &VeracodeClient) -> Result<(), Box<dyn std::error::Error>> {
     println!("\n🔌 Testing XML API Integration:");
 
-    let _scan_api = client.scan_api();
+    let _scan_api = client.scan_api()?;
     println!("   ✅ XML API client created successfully");
     println!("   🔗 XML API configured for analysiscenter.veracode.com");
 
@@ -321,7 +329,7 @@ async fn test_error_handling(client: &VeracodeClient) -> Result<(), Box<dyn std:
     }
 
     // Test 3: Invalid file path
-    let scan_api = client.scan_api();
+    let scan_api = client.scan_api()?;
     match scan_api
         .upload_file_to_app("12345", "/non/existent/file.jar")
         .await
@@ -386,14 +394,14 @@ async fn test_cleanup_operations(
             println!("   ✅ Test resources created:");
             println!(
                 "      - App: {} (ID: {})",
-                app.profile.as_ref().unwrap().name,
+                app.profile.as_ref().expect("should have profile").name,
                 app_id
             );
             println!("      - Sandbox: {} (ID: {})", sandbox.name, sandbox_id);
 
             // Test 2: Build delete operations
             println!("\n   🗑️  Testing build deletion operations...");
-            let scan_api = client.scan_api();
+            let scan_api = client.scan_api()?;
 
             // Test deleting builds (expect no builds to exist)
             match scan_api

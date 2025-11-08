@@ -269,6 +269,7 @@ pub struct DeleteBuildResult {
 
 /// Build specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum BuildError {
     /// Veracode API error
     Api(VeracodeError),
@@ -1257,7 +1258,7 @@ mod tests {
         async fn _test_build_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
-            let api = client.build_api();
+            let api = client.build_api()?;
 
             // Test that the method signatures exist and compile
             let create_request = CreateBuildRequest {

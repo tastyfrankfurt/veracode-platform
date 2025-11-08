@@ -82,22 +82,23 @@ fn calculate_depth(value: &Value) -> usize {
             if arr.is_empty() {
                 1
             } else {
-                1 + arr.iter().map(calculate_depth).max().unwrap_or(0)
+                1_usize.saturating_add(arr.iter().map(calculate_depth).max().unwrap_or(0))
             }
         }
         Value::Object(obj) => {
             if obj.is_empty() {
                 1
             } else {
-                1 + obj.values().map(calculate_depth).max().unwrap_or(0)
+                1_usize.saturating_add(obj.values().map(calculate_depth).max().unwrap_or(0))
             }
         }
         // Scalars have depth 0
-        _ => 0,
+        Value::Null | Value::Bool(_) | Value::Number(_) | Value::String(_) => 0,
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -202,7 +203,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             result
-                .unwrap_err()
+                .expect_err("should fail on deeply nested json")
                 .contains("exceeds maximum allowed depth")
         );
     }
@@ -212,7 +213,11 @@ mod tests {
         let json = r#"{"invalid": json}"#;
         let result = validate_json_depth(json, MAX_JSON_DEPTH);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid JSON"));
+        assert!(
+            result
+                .expect_err("should fail on invalid json")
+                .contains("Invalid JSON")
+        );
     }
 
     #[test]
@@ -231,7 +236,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             result
-                .unwrap_err()
+                .expect_err("should fail on deeply nested json")
                 .contains("exceeds maximum allowed depth")
         );
     }
@@ -292,7 +297,7 @@ mod tests {
         assert!(result.is_err());
         assert!(
             result
-                .unwrap_err()
+                .expect_err("should fail on deeply nested json")
                 .contains("exceeds maximum allowed depth")
         );
     }

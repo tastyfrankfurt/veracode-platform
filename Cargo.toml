@@ -22,3 +22,13 @@ thiserror = "2.0"
 opt-level = 0
 debug = true
 overflow-checks = true
+
+[profile.release]
+opt-level = 3
+lto = true                    # Link-time optimization
+codegen-units = 1             # Better optimization
+strip = true                  # Strip symbols
+panic = "abort"               # Smaller binaries, faster panics
+
+[profile.dev]
+overflow-checks = true        # Catch integer overflow in dev

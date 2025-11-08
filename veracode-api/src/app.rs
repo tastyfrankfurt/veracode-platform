@@ -5,9 +5,14 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::fmt;
 
 use crate::VeracodeError;
 use crate::client::VeracodeClient;
+use crate::validation::{
+    AppGuid, AppName, Description, ValidationError, build_query_param, validate_page_number,
+    validate_page_size,
+};
 
 /// Represents a Veracode application.
 ///
@@ -44,12 +49,17 @@ pub struct Application {
 }
 
 /// Application profile information.
+///
+/// # Security
+///
+/// Uses validated types for `name` and `description` to prevent injection attacks
+/// and ensure data meets business requirements.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Profile {
-    /// Profile name
-    pub name: String,
-    /// Profile description
-    pub description: Option<String>,
+    /// Profile name (validated)
+    pub name: AppName,
+    /// Profile description (validated)
+    pub description: Option<Description>,
     /// Profile tags
     pub tags: Option<String>,
     /// Business unit associated with the application
@@ -103,12 +113,26 @@ pub struct BusinessUnit {
 }
 
 /// Business owner information.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+///
+/// # Security
+///
+/// This struct contains PII (email, name). The `Debug` implementation
+/// redacts sensitive fields to prevent accidental logging of personal information.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct BusinessOwner {
     /// Owner's email address
     pub email: Option<String>,
     /// Owner's name
     pub name: Option<String>,
+}
+
+impl fmt::Debug for BusinessOwner {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BusinessOwner")
+            .field("email", &"[REDACTED]")
+            .field("name", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Policy information.
@@ -142,12 +166,27 @@ pub struct Team {
 }
 
 /// Custom field information.
-#[derive(Debug, Serialize, Deserialize, Clone)]
+///
+/// # Security
+///
+/// This struct may contain sensitive data in the `value` field.
+/// The `Debug` implementation redacts the value to prevent accidental
+/// logging of potentially sensitive information.
+#[derive(Serialize, Deserialize, Clone)]
 pub struct CustomField {
     /// Field name
     pub name: Option<String>,
     /// Field value
     pub value: Option<String>,
+}
+
+impl fmt::Debug for CustomField {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CustomField")
+            .field("name", &self.name)
+            .field("value", &"[REDACTED]")
+            .finish()
+    }
 }
 
 /// Scan information.
@@ -223,16 +262,21 @@ pub struct CreateApplicationRequest {
 }
 
 /// Profile information for creating an application.
+///
+/// # Security
+///
+/// Uses validated types for `name` and `description` to ensure data meets
+/// business requirements and prevent injection attacks.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct CreateApplicationProfile {
-    /// Application name
-    pub name: String,
+    /// Application name (validated)
+    pub name: AppName,
     /// Business criticality level (required)
     #[serde(serialize_with = "serialize_business_criticality")]
     pub business_criticality: BusinessCriticality,
-    /// Application description
+    /// Application description (validated)
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub description: Option<String>,
+    pub description: Option<Description>,
     /// Business unit
     #[serde(skip_serializing_if = "Option::is_none")]
     pub business_unit: Option<BusinessUnit>,
@@ -343,12 +387,17 @@ pub struct UpdateApplicationRequest {
 }
 
 /// Profile information for updating an application.
+///
+/// # Security
+///
+/// Uses validated types for `name` and `description` to ensure data meets
+/// business requirements and prevent injection attacks.
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct UpdateApplicationProfile {
-    /// Application name
-    pub name: Option<String>,
-    /// Application description
-    pub description: Option<String>,
+    /// Application name (validated)
+    pub name: Option<AppName>,
+    /// Application description (validated)
+    pub description: Option<Description>,
     /// Business unit
     pub business_unit: Option<BusinessUnit>,
     /// Business owners
@@ -401,34 +450,34 @@ pub struct ApplicationQuery {
 
 impl ApplicationQuery {
     /// Create a new empty query.
-    #[must_use]
+    #[must_use = "builder methods consume self and return modified Self"]
     pub fn new() -> Self {
         ApplicationQuery::default()
     }
 
     /// Filter applications by name (partial match).
-    #[must_use]
+    #[must_use = "builder methods consume self and return modified Self"]
     pub fn with_name(mut self, name: &str) -> Self {
         self.name = Some(name.to_string());
         self
     }
 
     /// Filter applications by policy compliance status.
-    #[must_use]
+    #[must_use = "builder methods consume self and return modified Self"]
     pub fn with_policy_compliance(mut self, compliance: &str) -> Self {
         self.policy_compliance = Some(compliance.to_string());
         self
     }
 
     /// Filter applications modified after the specified date.
-    #[must_use]
+    #[must_use = "builder methods consume self and return modified Self"]
     pub fn with_modified_after(mut self, date: &str) -> Self {
         self.modified_after = Some(date.to_string());
         self
     }
 
     /// Filter applications modified before the specified date.
-    #[must_use]
+    #[must_use = "builder methods consume self and return modified Self"]
     pub fn with_modified_before(mut self, date: &str) -> Self {
         self.modified_before = Some(date.to_string());
         self
@@ -448,6 +497,38 @@ impl ApplicationQuery {
         self
     }
 
+    /// Normalize and validate pagination parameters.
+    ///
+    /// This method ensures that pagination parameters are within safe bounds
+    /// to prevent resource exhaustion attacks. It uses the library-wide
+    /// validation functions from the `validation` module.
+    ///
+    /// # Behavior
+    ///
+    /// - Sets default page size if not specified
+    /// - Rejects page size of 0
+    /// - Caps page size at maximum with warning
+    /// - Caps page number at maximum with warning
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the normalized query or a `ValidationError`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the page size is 0.
+    ///
+    /// # Security
+    ///
+    /// This method prevents `DoS` attacks from unbounded pagination requests.
+    pub fn normalize(mut self) -> Result<Self, ValidationError> {
+        // Validate and normalize using library-wide validation functions
+        self.size = Some(validate_page_size(self.size)?);
+        self.page = validate_page_number(self.page)?;
+
+        Ok(self)
+    }
+
     /// Convert the query to URL query parameters.
     #[must_use]
     pub fn to_query_params(&self) -> Vec<(String, String)> {
@@ -456,36 +537,40 @@ impl ApplicationQuery {
 }
 
 /// Convert `ApplicationQuery` to query parameters by borrowing (allows reuse)
+///
+/// # Security
+///
+/// All query parameter values are properly URL-encoded to prevent injection attacks.
 impl From<&ApplicationQuery> for Vec<(String, String)> {
     fn from(query: &ApplicationQuery) -> Self {
         let mut params = Vec::new();
 
         if let Some(ref name) = query.name {
-            params.push(("name".to_string(), name.clone()));
+            params.push(build_query_param("name", name));
         }
         if let Some(ref compliance) = query.policy_compliance {
-            params.push(("policy_compliance".to_string(), compliance.clone()));
+            params.push(build_query_param("policy_compliance", compliance));
         }
         if let Some(ref date) = query.modified_after {
-            params.push(("modified_after".to_string(), date.clone()));
+            params.push(build_query_param("modified_after", date));
         }
         if let Some(ref date) = query.modified_before {
-            params.push(("modified_before".to_string(), date.clone()));
+            params.push(build_query_param("modified_before", date));
         }
         if let Some(ref date) = query.created_after {
-            params.push(("created_after".to_string(), date.clone()));
+            params.push(build_query_param("created_after", date));
         }
         if let Some(ref date) = query.created_before {
-            params.push(("created_before".to_string(), date.clone()));
+            params.push(build_query_param("created_before", date));
         }
         if let Some(ref scan_type) = query.scan_type {
-            params.push(("scan_type".to_string(), scan_type.clone()));
+            params.push(build_query_param("scan_type", scan_type));
         }
         if let Some(ref tags) = query.tags {
-            params.push(("tags".to_string(), tags.clone()));
+            params.push(build_query_param("tags", tags));
         }
         if let Some(ref business_unit) = query.business_unit {
-            params.push(("business_unit".to_string(), business_unit.clone()));
+            params.push(build_query_param("business_unit", business_unit));
         }
         if let Some(page) = query.page {
             params.push(("page".to_string(), page.to_string()));
@@ -499,36 +584,40 @@ impl From<&ApplicationQuery> for Vec<(String, String)> {
 }
 
 /// Convert `ApplicationQuery` to query parameters by consuming (better performance)
+///
+/// # Security
+///
+/// All query parameter values are properly URL-encoded to prevent injection attacks.
 impl From<ApplicationQuery> for Vec<(String, String)> {
     fn from(query: ApplicationQuery) -> Self {
         let mut params = Vec::new();
 
         if let Some(name) = query.name {
-            params.push(("name".to_string(), name));
+            params.push(build_query_param("name", &name));
         }
         if let Some(compliance) = query.policy_compliance {
-            params.push(("policy_compliance".to_string(), compliance));
+            params.push(build_query_param("policy_compliance", &compliance));
         }
         if let Some(date) = query.modified_after {
-            params.push(("modified_after".to_string(), date));
+            params.push(build_query_param("modified_after", &date));
         }
         if let Some(date) = query.modified_before {
-            params.push(("modified_before".to_string(), date));
+            params.push(build_query_param("modified_before", &date));
         }
         if let Some(date) = query.created_after {
-            params.push(("created_after".to_string(), date));
+            params.push(build_query_param("created_after", &date));
         }
         if let Some(date) = query.created_before {
-            params.push(("created_before".to_string(), date));
+            params.push(build_query_param("created_before", &date));
         }
         if let Some(scan_type) = query.scan_type {
-            params.push(("scan_type".to_string(), scan_type));
+            params.push(build_query_param("scan_type", &scan_type));
         }
         if let Some(tags) = query.tags {
-            params.push(("tags".to_string(), tags));
+            params.push(build_query_param("tags", &tags));
         }
         if let Some(business_unit) = query.business_unit {
-            params.push(("business_unit".to_string(), business_unit));
+            params.push(build_query_param("business_unit", &business_unit));
         }
         if let Some(page) = query.page {
             params.push(("page".to_string(), page.to_string()));
@@ -552,15 +641,33 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing an `ApplicationsResponse` with the list of applications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the response cannot be parsed,
+    /// or validation of pagination parameters fails.
+    ///
+    /// # Security
+    ///
+    /// Pagination parameters are automatically validated and normalized to prevent
+    /// resource exhaustion attacks.
     pub async fn get_applications(
         &self,
         query: Option<ApplicationQuery>,
     ) -> Result<ApplicationsResponse, VeracodeError> {
         let endpoint = "/appsec/v1/applications";
-        let query_params = query.as_ref().map(Vec::from);
+
+        // Normalize query parameters to enforce pagination bounds
+        let normalized_query = if let Some(q) = query {
+            Some(q.normalize()?)
+        } else {
+            None
+        };
+
+        let query_params = normalized_query.as_ref().map(Vec::from);
 
         let response = self.get(endpoint, query_params.as_deref()).await?;
-        let response = Self::handle_response(response).await?;
+        let response = Self::handle_response(response, "list applications").await?;
 
         let apps_response: ApplicationsResponse = response.json().await?;
         Ok(apps_response)
@@ -575,11 +682,21 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the `Application` details.
-    pub async fn get_application(&self, guid: &str) -> Result<Application, VeracodeError> {
-        let endpoint = format!("/appsec/v1/applications/{guid}");
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the response cannot be parsed,
+    /// or the application is not found.
+    ///
+    /// # Security
+    ///
+    /// This method validates the GUID format to prevent URL path injection attacks.
+    pub async fn get_application(&self, guid: &AppGuid) -> Result<Application, VeracodeError> {
+        // AppGuid is already validated, safe to use in URL
+        let endpoint = format!("/appsec/v1/applications/{}", guid.as_url_safe());
 
         let response = self.get(&endpoint, None).await?;
-        let response = Self::handle_response(response).await?;
+        let response = Self::handle_response(response, "get application details").await?;
 
         let app: Application = response.json().await?;
         Ok(app)
@@ -594,6 +711,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the created `Application`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the request cannot be serialized,
+    /// or the response cannot be parsed.
     pub async fn create_application(
         &self,
         request: &CreateApplicationRequest,
@@ -609,7 +731,7 @@ impl VeracodeClient {
         }
 
         let response = self.post(endpoint, Some(&request)).await?;
-        let response = Self::handle_response(response).await?;
+        let response = Self::handle_response(response, "create application").await?;
 
         let app: Application = response.json().await?;
         Ok(app)
@@ -625,15 +747,25 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the updated `Application`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the request cannot be serialized,
+    /// or the response cannot be parsed.
+    ///
+    /// # Security
+    ///
+    /// This method validates the GUID format to prevent URL path injection attacks.
     pub async fn update_application(
         &self,
-        guid: &str,
+        guid: &AppGuid,
         request: &UpdateApplicationRequest,
     ) -> Result<Application, VeracodeError> {
-        let endpoint = format!("/appsec/v1/applications/{guid}");
+        // AppGuid is already validated, safe to use in URL
+        let endpoint = format!("/appsec/v1/applications/{}", guid.as_url_safe());
 
         let response = self.put(&endpoint, Some(&request)).await?;
-        let response = Self::handle_response(response).await?;
+        let response = Self::handle_response(response, "update application").await?;
 
         let app: Application = response.json().await?;
         Ok(app)
@@ -648,11 +780,20 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
-    pub async fn delete_application(&self, guid: &str) -> Result<(), VeracodeError> {
-        let endpoint = format!("/appsec/v1/applications/{guid}");
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails or the application is not found.
+    ///
+    /// # Security
+    ///
+    /// This method validates the GUID format to prevent URL path injection attacks.
+    pub async fn delete_application(&self, guid: &AppGuid) -> Result<(), VeracodeError> {
+        // AppGuid is already validated, safe to use in URL
+        let endpoint = format!("/appsec/v1/applications/{}", guid.as_url_safe());
 
         let response = self.delete(&endpoint).await?;
-        let _response = Self::handle_response(response).await?;
+        let _response = Self::handle_response(response, "delete application").await?;
 
         Ok(())
     }
@@ -662,6 +803,10 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a `Vec<Application>` of non-compliant applications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails or the response cannot be parsed.
     pub async fn get_non_compliant_applications(&self) -> Result<Vec<Application>, VeracodeError> {
         let query = ApplicationQuery::new().with_policy_compliance("DID_NOT_PASS");
 
@@ -683,6 +828,10 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a `Vec<Application>` of applications modified after the date.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails or the response cannot be parsed.
     pub async fn get_applications_modified_after(
         &self,
         date: &str,
@@ -707,6 +856,10 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a `Vec<Application>` of applications matching the name.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails or the response cannot be parsed.
     pub async fn search_applications_by_name(
         &self,
         name: &str,
@@ -727,6 +880,10 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a `Vec<Application>` of all applications.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any API request fails or responses cannot be parsed.
     pub async fn get_all_applications(&self) -> Result<Vec<Application>, VeracodeError> {
         let mut all_applications = Vec::new();
         let mut page = 0;
@@ -741,7 +898,7 @@ impl VeracodeClient {
                     break;
                 }
                 all_applications.extend(embedded.applications);
-                page += 1;
+                page = page.saturating_add(1);
             } else {
                 break;
             }
@@ -759,6 +916,10 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing an `Option<Application>` if found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails or the response cannot be parsed.
     pub async fn get_application_by_name(
         &self,
         name: &str,
@@ -768,7 +929,7 @@ impl VeracodeClient {
         // Find exact match (search_applications_by_name does partial matching)
         Ok(applications.into_iter().find(|app| {
             if let Some(profile) = &app.profile {
-                profile.name == name
+                profile.name.as_str() == name
             } else {
                 false
             }
@@ -784,6 +945,10 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing a boolean indicating if the application exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails or the response cannot be parsed.
     pub async fn application_exists_by_name(&self, name: &str) -> Result<bool, VeracodeError> {
         match self.get_application_by_name(name).await? {
             Some(_) => Ok(true),
@@ -802,7 +967,12 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the numeric `app_id` as a string.
-    pub async fn get_app_id_from_guid(&self, guid: &str) -> Result<String, VeracodeError> {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the application is not found,
+    /// or the response cannot be parsed.
+    pub async fn get_app_id_from_guid(&self, guid: &AppGuid) -> Result<String, VeracodeError> {
         let app = self.get_application(guid).await?;
         Ok(app.id.to_string())
     }
@@ -832,10 +1002,16 @@ impl VeracodeClient {
     /// * `description` - Optional description (sets on creation, updates if missing on existing apps)
     /// * `team_names` - Optional list of team names (sets on creation, ignored for existing apps)
     /// * `repo_url` - Optional repository URL (sets on creation, updates if missing on existing apps)
+    /// * `custom_kms_alias` - Optional KMS alias for encryption
     ///
     /// # Returns
     ///
     /// A `Result` containing the application (existing, updated, or newly created).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, validation fails, team lookup fails,
+    /// or the response cannot be parsed.
     ///
     /// # Examples
     ///
@@ -928,7 +1104,7 @@ impl VeracodeClient {
                         || profile
                             .description
                             .as_ref()
-                            .is_some_and(|d| d.trim().is_empty()))
+                            .is_some_and(|d| d.as_str().trim().is_empty()))
                 {
                     update_description = true;
                     needs_update = true;
@@ -969,12 +1145,14 @@ impl VeracodeClient {
                 }
 
                 // Build update request preserving all existing values
-                let profile = existing_app.profile.as_ref().unwrap();
+                let profile = existing_app.profile.as_ref().ok_or_else(|| {
+                    VeracodeError::InvalidResponse(format!("Application '{}' has no profile", name))
+                })?;
                 let update_request = UpdateApplicationRequest {
                     profile: UpdateApplicationProfile {
                         name: Some(profile.name.clone()),
                         description: if update_description {
-                            description
+                            description.map(Description::new).transpose()?
                         } else {
                             profile.description.clone()
                         },
@@ -998,9 +1176,8 @@ impl VeracodeClient {
                     },
                 };
 
-                return self
-                    .update_application(&existing_app.guid, &update_request)
-                    .await;
+                let guid = AppGuid::new(&existing_app.guid)?;
+                return self.update_application(&guid, &update_request).await;
             }
 
             return Ok(existing_app);
@@ -1045,9 +1222,9 @@ impl VeracodeClient {
 
         let create_request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: name.to_string(),
+                name: AppName::new(name)?,
                 business_criticality,
-                description,
+                description: description.map(Description::new).transpose()?,
                 business_unit: None,
                 business_owners: None,
                 policies: None,
@@ -1077,6 +1254,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the application (existing or newly created).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, validation fails,
+    /// or the response cannot be parsed.
     pub async fn create_application_if_not_exists_with_team_guids(
         &self,
         name: &str,
@@ -1106,9 +1288,9 @@ impl VeracodeClient {
 
         let create_request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: name.to_string(),
+                name: AppName::new(name)?,
                 business_criticality,
-                description,
+                description: description.map(Description::new).transpose()?,
                 business_unit: None,
                 business_owners: None,
                 policies: None,
@@ -1137,6 +1319,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the application (existing or newly created).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, validation fails,
+    /// or the response cannot be parsed.
     pub async fn create_application_if_not_exists_simple(
         &self,
         name: &str,
@@ -1168,10 +1355,15 @@ impl VeracodeClient {
     ///
     /// A `Result` containing the updated application or an error.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the KMS alias format is invalid, the API request fails,
+    /// the application is not found, or the response cannot be parsed.
+    ///
     /// # Examples
     ///
     /// ```no_run
-    /// # use veracode_platform::{VeracodeClient, VeracodeConfig};
+    /// # use veracode_platform::{VeracodeClient, VeracodeConfig, AppGuid};
     /// # use std::sync::Arc;
     /// # use secrecy::SecretString;
     /// # #[tokio::main]
@@ -1181,9 +1373,10 @@ impl VeracodeClient {
     ///     Arc::new(SecretString::from("api_key"))
     /// );
     /// let client = VeracodeClient::new(config)?;
+    /// let guid = AppGuid::new("550e8400-e29b-41d4-a716-446655440000")?;
     ///
     /// let app = client.enable_application_encryption(
-    ///     "app-guid-123",
+    ///     &guid,
     ///     "alias/my-encryption-key"
     /// ).await?;
     /// # Ok(())
@@ -1191,7 +1384,7 @@ impl VeracodeClient {
     /// ```
     pub async fn enable_application_encryption(
         &self,
-        app_guid: &str,
+        app_guid: &AppGuid,
         kms_alias: &str,
     ) -> Result<Application, VeracodeError> {
         // Validate KMS alias format
@@ -1237,9 +1430,14 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the updated application or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the KMS alias format is invalid, the API request fails,
+    /// the application is not found, or the response cannot be parsed.
     pub async fn change_encryption_key(
         &self,
-        app_guid: &str,
+        app_guid: &AppGuid,
         new_kms_alias: &str,
     ) -> Result<Application, VeracodeError> {
         // Validate new KMS alias format
@@ -1283,9 +1481,14 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the KMS alias if CMEK is enabled, None if disabled, or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the application is not found,
+    /// or the response cannot be parsed.
     pub async fn get_application_encryption_status(
         &self,
-        app_guid: &str,
+        app_guid: &AppGuid,
     ) -> Result<Option<String>, VeracodeError> {
         let app = self.get_application(app_guid).await?;
 
@@ -1312,6 +1515,10 @@ impl VeracodeClient {
 /// assert!(validate_kms_alias("invalid-alias").is_err());
 /// assert!(validate_kms_alias("alias/aws-managed").is_err());
 /// ```
+///
+/// # Errors
+///
+/// Returns an error if the alias doesn't meet AWS KMS naming requirements.
 pub fn validate_kms_alias(alias: &str) -> Result<(), String> {
     // Check prefix
     if !alias.starts_with("alias/") {
@@ -1324,7 +1531,8 @@ pub fn validate_kms_alias(alias: &str) -> Result<(), String> {
     }
 
     // Extract the alias name part (after "alias/")
-    let alias_name = &alias[6..];
+    let alias_name = alias.strip_prefix("alias/")
+        .ok_or_else(|| "KMS alias must start with 'alias/'".to_string())?;
 
     // Check for AWS reserved prefixes
     if alias_name.starts_with("aws") || alias_name.ends_with("aws") {
@@ -1348,6 +1556,7 @@ pub fn validate_kms_alias(alias: &str) -> Result<(), String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1386,6 +1595,135 @@ mod tests {
     }
 
     #[test]
+    fn test_application_query_normalize_defaults() {
+        let query = ApplicationQuery::new();
+        let normalized = query.normalize().expect("should normalize");
+
+        // Should set default page size
+        assert_eq!(normalized.size, Some(50)); // DEFAULT_PAGE_SIZE
+        assert_eq!(normalized.page, None);
+    }
+
+    #[test]
+    fn test_application_query_normalize_valid_values() {
+        let query = ApplicationQuery::new().with_page(10).with_size(100);
+        let normalized = query.normalize().expect("should normalize");
+
+        assert_eq!(normalized.page, Some(10));
+        assert_eq!(normalized.size, Some(100));
+    }
+
+    #[test]
+    fn test_application_query_normalize_zero_size() {
+        let query = ApplicationQuery::new().with_size(0);
+        let result = query.normalize();
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_application_query_normalize_caps_large_size() {
+        let query = ApplicationQuery::new().with_size(10000);
+        let normalized = query.normalize().expect("should cap to max");
+
+        // Should be capped to MAX_PAGE_SIZE (500)
+        assert_eq!(normalized.size, Some(500));
+    }
+
+    #[test]
+    fn test_application_query_normalize_caps_large_page() {
+        let query = ApplicationQuery::new().with_page(50000);
+        let normalized = query.normalize().expect("should cap to max");
+
+        // Should be capped to MAX_PAGE_NUMBER (10,000)
+        assert_eq!(normalized.page, Some(10000));
+    }
+
+    #[test]
+    fn test_query_params_url_encoding_normal() {
+        let query = ApplicationQuery::new()
+            .with_name("MyApp")
+            .with_policy_compliance("PASSED");
+
+        let params = query.to_query_params();
+
+        // Normal values should remain unchanged
+        assert!(params.contains(&("name".to_string(), "MyApp".to_string())));
+        assert!(params.contains(&("policy_compliance".to_string(), "PASSED".to_string())));
+    }
+
+    #[test]
+    fn test_query_params_url_encoding_special_chars() {
+        let query = ApplicationQuery::new()
+            .with_name("My App & Co")
+            .with_policy_compliance("DID_NOT_PASS");
+
+        let params = query.to_query_params();
+
+        // Spaces and ampersands should be encoded
+        assert!(params.contains(&("name".to_string(), "My%20App%20%26%20Co".to_string())));
+    }
+
+    #[test]
+    fn test_query_params_injection_attempt() {
+        // Attempt to inject additional parameters via ampersand
+        let query = ApplicationQuery::new().with_name("foo&admin=true");
+
+        let params = query.to_query_params();
+
+        // The ampersand should be encoded, preventing injection
+        assert!(params.contains(&("name".to_string(), "foo%26admin%3Dtrue".to_string())));
+
+        // Verify there's no "admin" parameter
+        assert!(!params.iter().any(|(key, _)| key == "admin"));
+    }
+
+    #[test]
+    fn test_query_params_equals_injection() {
+        // Attempt to inject key=value pairs
+        let query = ApplicationQuery::new().with_name("test=malicious");
+
+        let params = query.to_query_params();
+
+        // The equals sign should be encoded
+        assert!(params.contains(&("name".to_string(), "test%3Dmalicious".to_string())));
+    }
+
+    #[test]
+    fn test_query_params_semicolon_injection() {
+        // Attempt command injection via semicolon
+        let query = ApplicationQuery::new().with_name("test;rm -rf /");
+
+        let params = query.to_query_params();
+
+        // The semicolon and spaces should be encoded
+        assert!(params.contains(&("name".to_string(), "test%3Brm%20-rf%20%2F".to_string())));
+    }
+
+    #[test]
+    fn test_query_params_multiple_fields_with_encoding() {
+        let mut query = ApplicationQuery::new()
+            .with_name("App & Test")
+            .with_policy_compliance("PASSED")
+            .with_modified_after("2023-01-01T00:00:00.000Z");
+        query.business_unit = Some("Test & Development".to_string());
+
+        let params = query.to_query_params();
+
+        // Check that all fields are present with proper encoding
+        assert!(params.contains(&("name".to_string(), "App%20%26%20Test".to_string())));
+        assert!(params.contains(&("policy_compliance".to_string(), "PASSED".to_string())));
+        assert!(params.contains(&(
+            "modified_after".to_string(),
+            "2023-01-01T00%3A00%3A00.000Z".to_string()
+        )));
+        assert!(params.contains(&(
+            "business_unit".to_string(),
+            "Test%20%26%20Development".to_string()
+        )));
+    }
+
+    #[test]
     fn test_create_application_request_with_teams() {
         let team_names = vec!["Security Team".to_string(), "Development Team".to_string()];
         let teams: Vec<Team> = team_names
@@ -1400,9 +1738,9 @@ mod tests {
 
         let request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: "Test Application".to_string(),
+                name: AppName::new("Test Application").expect("valid name"),
                 business_criticality: BusinessCriticality::Medium,
-                description: Some("Test description".to_string()),
+                description: Some(Description::new("Test description").expect("valid description")),
                 business_unit: None,
                 business_owners: None,
                 policies: None,
@@ -1414,21 +1752,27 @@ mod tests {
             },
         };
 
-        assert_eq!(request.profile.name, "Test Application");
+        assert_eq!(request.profile.name.as_str(), "Test Application");
         assert_eq!(
             request.profile.business_criticality,
             BusinessCriticality::Medium
         );
         assert!(request.profile.teams.is_some());
 
-        let request_teams = request.profile.teams.unwrap();
+        let request_teams = request.profile.teams.expect("teams should be present");
         assert_eq!(request_teams.len(), 2);
         assert_eq!(
-            request_teams[0].team_name,
+            request_teams
+                .first()
+                .expect("should have first team")
+                .team_name,
             Some("Security Team".to_string())
         );
         assert_eq!(
-            request_teams[1].team_name,
+            request_teams
+                .get(1)
+                .expect("should have second team")
+                .team_name,
             Some("Development Team".to_string())
         );
     }
@@ -1448,9 +1792,9 @@ mod tests {
 
         let request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: "Test Application".to_string(),
+                name: AppName::new("Test Application").expect("valid name"),
                 business_criticality: BusinessCriticality::High,
-                description: Some("Test description".to_string()),
+                description: Some(Description::new("Test description").expect("valid description")),
                 business_unit: None,
                 business_owners: None,
                 policies: None,
@@ -1462,26 +1806,44 @@ mod tests {
             },
         };
 
-        assert_eq!(request.profile.name, "Test Application");
+        assert_eq!(request.profile.name.as_str(), "Test Application");
         assert_eq!(
             request.profile.business_criticality,
             BusinessCriticality::High
         );
         assert!(request.profile.teams.is_some());
 
-        let request_teams = request.profile.teams.unwrap();
+        let request_teams = request.profile.teams.expect("teams should be present");
         assert_eq!(request_teams.len(), 2);
-        assert_eq!(request_teams[0].guid, Some("team-guid-1".to_string()));
-        assert_eq!(request_teams[1].guid, Some("team-guid-2".to_string()));
-        assert!(request_teams[0].team_name.is_none());
-        assert!(request_teams[1].team_name.is_none());
+        assert_eq!(
+            request_teams.first().expect("should have first team").guid,
+            Some("team-guid-1".to_string())
+        );
+        assert_eq!(
+            request_teams.get(1).expect("should have second team").guid,
+            Some("team-guid-2".to_string())
+        );
+        assert!(
+            request_teams
+                .first()
+                .expect("should have first team")
+                .team_name
+                .is_none()
+        );
+        assert!(
+            request_teams
+                .get(1)
+                .expect("should have second team")
+                .team_name
+                .is_none()
+        );
     }
 
     #[test]
     fn test_create_application_profile_cmek_serialization() {
         // Test that custom_kms_alias is included when Some
         let profile_with_cmek = CreateApplicationProfile {
-            name: "Test Application".to_string(),
+            name: AppName::new("Test Application").expect("valid name"),
             business_criticality: BusinessCriticality::High,
             description: None,
             business_unit: None,
@@ -1494,13 +1856,13 @@ mod tests {
             repo_url: None,
         };
 
-        let json = serde_json::to_string(&profile_with_cmek).unwrap();
+        let json = serde_json::to_string(&profile_with_cmek).expect("should serialize to json");
         assert!(json.contains("custom_kms_alias"));
         assert!(json.contains("alias/my-app-key"));
 
         // Test that custom_kms_alias is excluded when None
         let profile_without_cmek = CreateApplicationProfile {
-            name: "Test Application".to_string(),
+            name: AppName::new("Test Application").expect("valid name"),
             business_criticality: BusinessCriticality::High,
             description: None,
             business_unit: None,
@@ -1513,7 +1875,7 @@ mod tests {
             repo_url: None,
         };
 
-        let json = serde_json::to_string(&profile_without_cmek).unwrap();
+        let json = serde_json::to_string(&profile_without_cmek).expect("should serialize to json");
         assert!(!json.contains("custom_kms_alias"));
     }
 
@@ -1521,7 +1883,7 @@ mod tests {
     fn test_update_application_profile_cmek_serialization() {
         // Test that custom_kms_alias is included when Some
         let profile_with_cmek = UpdateApplicationProfile {
-            name: Some("Updated Application".to_string()),
+            name: Some(AppName::new("Updated Application").expect("valid name")),
             description: None,
             business_unit: None,
             business_owners: None,
@@ -1534,13 +1896,13 @@ mod tests {
             repo_url: None,
         };
 
-        let json = serde_json::to_string(&profile_with_cmek).unwrap();
+        let json = serde_json::to_string(&profile_with_cmek).expect("should serialize to json");
         assert!(json.contains("custom_kms_alias"));
         assert!(json.contains("alias/updated-key"));
 
         // Test that custom_kms_alias is excluded when None
         let profile_without_cmek = UpdateApplicationProfile {
-            name: Some("Updated Application".to_string()),
+            name: Some(AppName::new("Updated Application").expect("valid name")),
             description: None,
             business_unit: None,
             business_owners: None,
@@ -1553,7 +1915,7 @@ mod tests {
             repo_url: None,
         };
 
-        let json = serde_json::to_string(&profile_without_cmek).unwrap();
+        let json = serde_json::to_string(&profile_without_cmek).expect("should serialize to json");
         assert!(!json.contains("custom_kms_alias"));
     }
 
@@ -1599,9 +1961,11 @@ mod tests {
     fn test_cmek_backward_compatibility() {
         // Test that existing application creation still works without CMEK field
         let legacy_profile = CreateApplicationProfile {
-            name: "Legacy Application".to_string(),
+            name: AppName::new("Legacy Application").expect("valid name"),
             business_criticality: BusinessCriticality::High,
-            description: Some("Legacy app without CMEK".to_string()),
+            description: Some(
+                Description::new("Legacy app without CMEK").expect("valid description"),
+            ),
             business_unit: None,
             business_owners: None,
             policies: None,
@@ -1617,7 +1981,7 @@ mod tests {
         };
 
         // Should serialize successfully
-        let json = serde_json::to_string(&request).unwrap();
+        let json = serde_json::to_string(&request).expect("should serialize to json");
 
         // Should not contain CMEK field
         assert!(!json.contains("custom_kms_alias"));
@@ -1628,7 +1992,8 @@ mod tests {
         assert!(json.contains("Legacy Application"));
 
         // Should be able to deserialize back
-        let _deserialized: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        let _deserialized: CreateApplicationRequest =
+            serde_json::from_str(&json).expect("should deserialize json");
     }
 
     #[test]
@@ -1642,7 +2007,8 @@ mod tests {
             }
         }"#;
 
-        let request: CreateApplicationRequest = serde_json::from_str(json_with_cmek).unwrap();
+        let request: CreateApplicationRequest =
+            serde_json::from_str(json_with_cmek).expect("should deserialize json");
         assert_eq!(
             request.profile.custom_kms_alias,
             Some("alias/test-key".to_string())
@@ -1656,7 +2022,8 @@ mod tests {
             }
         }"#;
 
-        let request: CreateApplicationRequest = serde_json::from_str(json_without_cmek).unwrap();
+        let request: CreateApplicationRequest =
+            serde_json::from_str(json_without_cmek).expect("should deserialize json");
         assert_eq!(request.profile.custom_kms_alias, None);
     }
 
@@ -1664,9 +2031,12 @@ mod tests {
     fn test_create_application_profile_with_cmek() {
         // Test that CreateApplicationProfile includes custom_kms_alias when Some
         let profile_with_cmek = CreateApplicationProfile {
-            name: "MyApplication".to_string(),
+            name: AppName::new("MyApplication").expect("valid name"),
             business_criticality: BusinessCriticality::High,
-            description: Some("Application created for assessment scanning".to_string()),
+            description: Some(
+                Description::new("Application created for assessment scanning")
+                    .expect("valid description"),
+            ),
             business_unit: None,
             business_owners: None,
             policies: None,
@@ -1681,7 +2051,7 @@ mod tests {
             profile: profile_with_cmek,
         };
 
-        let json = serde_json::to_string_pretty(&request).unwrap();
+        let json = serde_json::to_string_pretty(&request).expect("should serialize to json");
 
         // Print the actual JSON payload that would be sent to Veracode
         println!("\n📦 Example JSON Payload sent to Veracode API:");
@@ -1692,7 +2062,8 @@ mod tests {
         assert!(json.contains("alias/my-encryption-key"));
 
         // Verify it deserializes correctly
-        let deserialized: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        let deserialized: CreateApplicationRequest =
+            serde_json::from_str(&json).expect("should deserialize json");
         assert_eq!(
             deserialized.profile.custom_kms_alias,
             Some("alias/my-encryption-key".to_string())
@@ -1703,9 +2074,12 @@ mod tests {
     fn test_create_application_profile_without_cmek() {
         // Test that CreateApplicationProfile excludes custom_kms_alias when None
         let profile_without_cmek = CreateApplicationProfile {
-            name: "MyApplication".to_string(),
+            name: AppName::new("MyApplication").expect("valid name"),
             business_criticality: BusinessCriticality::High,
-            description: Some("Application created for assessment scanning".to_string()),
+            description: Some(
+                Description::new("Application created for assessment scanning")
+                    .expect("valid description"),
+            ),
             business_unit: None,
             business_owners: None,
             policies: None,
@@ -1720,7 +2094,7 @@ mod tests {
             profile: profile_without_cmek,
         };
 
-        let json = serde_json::to_string_pretty(&request).unwrap();
+        let json = serde_json::to_string_pretty(&request).expect("should serialize to json");
 
         // Print the actual JSON payload WITHOUT CMEK
         println!("\n📦 Example JSON Payload sent to Veracode API (without --cmek):");
@@ -1731,7 +2105,8 @@ mod tests {
         assert!(!json.contains("custom_kms_alias"));
 
         // Verify it deserializes correctly
-        let deserialized: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        let deserialized: CreateApplicationRequest =
+            serde_json::from_str(&json).expect("should deserialize json");
         assert_eq!(deserialized.profile.custom_kms_alias, None);
     }
 
@@ -1739,8 +2114,8 @@ mod tests {
     fn test_update_application_profile_with_cmek() {
         // Test that UpdateApplicationProfile handles custom_kms_alias correctly
         let profile_with_cmek = UpdateApplicationProfile {
-            name: Some("Updated Application".to_string()),
-            description: Some("Updated description".to_string()),
+            name: Some(AppName::new("Updated Application").expect("valid name")),
+            description: Some(Description::new("Updated description").expect("valid description")),
             business_unit: None,
             business_owners: None,
             business_criticality: BusinessCriticality::Medium,
@@ -1752,7 +2127,7 @@ mod tests {
             repo_url: None,
         };
 
-        let json = serde_json::to_string(&profile_with_cmek).unwrap();
+        let json = serde_json::to_string(&profile_with_cmek).expect("should serialize to json");
         assert!(json.contains("custom_kms_alias"));
         assert!(json.contains("alias/updated-key"));
     }
@@ -1763,9 +2138,12 @@ mod tests {
     fn test_cmek_enabled_payload_structure() {
         let request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: "MyApplication".to_string(),
+                name: AppName::new("MyApplication").expect("valid name"),
                 business_criticality: BusinessCriticality::High,
-                description: Some("Application created for assessment scanning".to_string()),
+                description: Some(
+                    Description::new("Application created for assessment scanning")
+                        .expect("valid description"),
+                ),
                 business_unit: None,
                 business_owners: None,
                 policies: None,
@@ -1777,7 +2155,7 @@ mod tests {
             },
         };
 
-        let json = serde_json::to_string_pretty(&request).unwrap();
+        let json = serde_json::to_string_pretty(&request).expect("should serialize to json");
 
         // Verify the exact structure matches expected API format
         let expected_keys = vec![
@@ -1803,12 +2181,24 @@ mod tests {
         assert!(json.contains("\"name\": \"MyApplication\""));
 
         // Parse and verify structure
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("should deserialize json");
         assert_eq!(
-            parsed["profile"]["custom_kms_alias"],
+            parsed
+                .get("profile")
+                .and_then(|p| p.get("custom_kms_alias"))
+                .and_then(|v| v.as_str())
+                .expect("should have custom_kms_alias"),
             "alias/my-encryption-key"
         );
-        assert_eq!(parsed["profile"]["business_criticality"], "HIGH");
+        assert_eq!(
+            parsed
+                .get("profile")
+                .and_then(|p| p.get("business_criticality"))
+                .and_then(|v| v.as_str())
+                .expect("should have business_criticality"),
+            "HIGH"
+        );
     }
 
     /// Test case demonstrating exact JSON payload structure WITHOUT CMEK
@@ -1817,9 +2207,12 @@ mod tests {
     fn test_cmek_disabled_payload_structure() {
         let request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: "MyApplication".to_string(),
+                name: AppName::new("MyApplication").expect("valid name"),
                 business_criticality: BusinessCriticality::High,
-                description: Some("Application created for assessment scanning".to_string()),
+                description: Some(
+                    Description::new("Application created for assessment scanning")
+                        .expect("valid description"),
+                ),
                 business_unit: None,
                 business_owners: None,
                 policies: None,
@@ -1831,7 +2224,7 @@ mod tests {
             },
         };
 
-        let json = serde_json::to_string_pretty(&request).unwrap();
+        let json = serde_json::to_string_pretty(&request).expect("should serialize to json");
 
         // Verify custom_kms_alias is NOT present in the payload
         assert!(
@@ -1845,15 +2238,31 @@ mod tests {
         assert!(json.contains("\"repo_url\""));
 
         // Parse and verify structure
-        let parsed: serde_json::Value = serde_json::from_str(&json).unwrap();
-        assert_eq!(parsed["profile"]["name"], "MyApplication");
-        assert_eq!(parsed["profile"]["business_criticality"], "HIGH");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&json).expect("should deserialize json");
+        assert_eq!(
+            parsed
+                .get("profile")
+                .and_then(|p| p.get("name"))
+                .and_then(|v| v.as_str())
+                .expect("should have name"),
+            "MyApplication"
+        );
+        assert_eq!(
+            parsed
+                .get("profile")
+                .and_then(|p| p.get("business_criticality"))
+                .and_then(|v| v.as_str())
+                .expect("should have business_criticality"),
+            "HIGH"
+        );
 
         // Verify custom_kms_alias key doesn't exist in JSON
         assert!(
-            !parsed["profile"]
-                .as_object()
-                .unwrap()
+            !parsed
+                .get("profile")
+                .and_then(|p| p.as_object())
+                .expect("should have profile object")
                 .contains_key("custom_kms_alias"),
             "custom_kms_alias key should not exist in JSON object"
         );
@@ -1874,7 +2283,7 @@ mod tests {
         for alias in test_cases {
             let request = CreateApplicationRequest {
                 profile: CreateApplicationProfile {
-                    name: "TestApp".to_string(),
+                    name: AppName::new("TestApp").expect("valid name"),
                     business_criticality: BusinessCriticality::Medium,
                     description: None,
                     business_unit: None,
@@ -1888,7 +2297,7 @@ mod tests {
                 },
             };
 
-            let json = serde_json::to_string(&request).unwrap();
+            let json = serde_json::to_string(&request).expect("should serialize to json");
             assert!(
                 json.contains(alias),
                 "Alias '{}' should be present in payload",
@@ -1896,7 +2305,8 @@ mod tests {
             );
 
             // Verify it can be deserialized
-            let parsed: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+            let parsed: CreateApplicationRequest =
+                serde_json::from_str(&json).expect("should deserialize json");
             assert_eq!(parsed.profile.custom_kms_alias, Some(alias.to_string()));
         }
     }
@@ -1906,9 +2316,12 @@ mod tests {
     fn test_complete_application_profile_with_cmek() {
         let request = CreateApplicationRequest {
             profile: CreateApplicationProfile {
-                name: "CompleteApplication".to_string(),
+                name: AppName::new("CompleteApplication").expect("valid name"),
                 business_criticality: BusinessCriticality::VeryHigh,
-                description: Some("Full featured application with CMEK".to_string()),
+                description: Some(
+                    Description::new("Full featured application with CMEK")
+                        .expect("valid description"),
+                ),
                 business_unit: Some(BusinessUnit {
                     id: Some(123),
                     name: Some("Engineering".to_string()),
@@ -1935,7 +2348,7 @@ mod tests {
             },
         };
 
-        let json = serde_json::to_string_pretty(&request).unwrap();
+        let json = serde_json::to_string_pretty(&request).expect("should serialize to json");
 
         // Verify all major sections are present
         assert!(json.contains("\"custom_kms_alias\": \"alias/production-cmek-key\""));
@@ -1946,7 +2359,8 @@ mod tests {
         assert!(json.contains("\"custom_fields\""));
 
         // Verify deserialization works with full structure
-        let parsed: CreateApplicationRequest = serde_json::from_str(&json).unwrap();
+        let parsed: CreateApplicationRequest =
+            serde_json::from_str(&json).expect("should deserialize json");
         assert_eq!(
             parsed.profile.custom_kms_alias,
             Some("alias/production-cmek-key".to_string())

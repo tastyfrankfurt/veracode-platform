@@ -495,6 +495,7 @@ impl From<UserQuery> for Vec<(String, String)> {
 
 /// Identity-specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum IdentityError {
     /// General API error
     Api(VeracodeError),
@@ -700,12 +701,8 @@ impl<'a> IdentityApi<'a> {
         let is_saml_user = matches!(fixed_request.user_type, Some(UserType::Saml));
 
         // Validate role assignments for API users
-        if is_api_user && fixed_request.role_ids.is_some() {
+        if is_api_user && let Some(ref provided_role_ids) = fixed_request.role_ids {
             let roles = self.list_roles().await?;
-            let provided_role_ids = fixed_request
-                .role_ids
-                .as_ref()
-                .expect("role_ids was checked to be Some");
 
             // Define human-only role descriptions (from userrolesbydescription file)
             let human_role_descriptions = [
@@ -820,12 +817,10 @@ impl<'a> IdentityApi<'a> {
         }
 
         // If no permissions provided, assign default permissions based on user type
-        if fixed_request.permissions.is_none()
-            || fixed_request
-                .permissions
-                .as_ref()
-                .expect("permissions was checked to be Some")
-                .is_empty()
+        if fixed_request
+            .permissions
+            .as_ref()
+            .is_none_or(|p| p.is_empty())
         {
             if is_api_user {
                 // For API users, assign "apiUser" permission (from defaultapiuserperm file)
@@ -898,23 +893,34 @@ impl<'a> IdentityApi<'a> {
         });
 
         // Add user_name only if it's not None
-        if let Some(ref user_name) = fixed_request.user_name {
-            payload["user_name"] = serde_json::json!(user_name);
+        if let Some(ref user_name) = fixed_request.user_name
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert("user_name".to_string(), serde_json::json!(user_name));
         }
 
         // Add roles only if not empty
-        if !roles_payload.is_empty() {
-            payload["roles"] = serde_json::json!(roles_payload);
+        if !roles_payload.is_empty()
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert("roles".to_string(), serde_json::json!(roles_payload));
         }
 
         // Add teams only if not empty
-        if !teams_payload.is_empty() {
-            payload["teams"] = serde_json::json!(teams_payload);
+        if !teams_payload.is_empty()
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert("teams".to_string(), serde_json::json!(teams_payload));
         }
 
         // Add permissions only if not empty
-        if !permissions_payload.is_empty() {
-            payload["permissions"] = serde_json::json!(permissions_payload);
+        if !permissions_payload.is_empty()
+            && let Some(obj) = payload.as_object_mut()
+        {
+            obj.insert(
+                "permissions".to_string(),
+                serde_json::json!(permissions_payload),
+            );
         }
 
         let response = self.client.post(endpoint, Some(&payload)).await?;
@@ -1057,7 +1063,7 @@ impl<'a> IdentityApi<'a> {
     pub async fn list_roles(&self) -> Result<Vec<Role>, IdentityError> {
         let endpoint = "/api/authn/v2/roles";
         let mut all_roles = Vec::new();
-        let mut page = 0;
+        let mut page: u32 = 0;
         let page_size = 500;
 
         // Simple pagination loop - fetch pages until empty
@@ -1091,13 +1097,13 @@ impl<'a> IdentityApi<'a> {
                         }
 
                         all_roles.extend(page_roles);
-                        page += 1;
+                        page = page.saturating_add(1);
 
                         // Check pagination info if available
                         if let Some(page_info) = roles_response.page
                             && let (Some(current_page), Some(total_pages)) =
                                 (page_info.number, page_info.total_pages)
-                            && current_page + 1 >= total_pages
+                            && current_page.saturating_add(1) >= total_pages
                         {
                             break;
                         }
@@ -1111,7 +1117,7 @@ impl<'a> IdentityApi<'a> {
                             break;
                         }
                         all_roles.extend(roles);
-                        page += 1;
+                        page = page.saturating_add(1);
                         continue;
                     }
 
@@ -1143,7 +1149,7 @@ impl<'a> IdentityApi<'a> {
     pub async fn list_teams(&self) -> Result<Vec<Team>, IdentityError> {
         let endpoint = "/api/authn/v2/teams";
         let mut all_teams = Vec::new();
-        let mut page = 0;
+        let mut page: u32 = 0;
         let page_size = 500;
 
         // Simple pagination loop - fetch pages until empty
@@ -1182,13 +1188,13 @@ impl<'a> IdentityApi<'a> {
                         }
 
                         all_teams.extend(page_teams);
-                        page += 1;
+                        page = page.saturating_add(1);
 
                         // Check pagination info if available
                         if let Some(page_info) = teams_response.page
                             && let (Some(current_page), Some(total_pages)) =
                                 (page_info.number, page_info.total_pages)
-                            && current_page + 1 >= total_pages
+                            && current_page.saturating_add(1) >= total_pages
                         {
                             break; // Last page reached
                         }
@@ -1202,7 +1208,7 @@ impl<'a> IdentityApi<'a> {
                             break;
                         }
                         all_teams.extend(teams);
-                        page += 1;
+                        page = page.saturating_add(1);
                         continue;
                     }
 
@@ -1359,7 +1365,7 @@ impl<'a> IdentityApi<'a> {
                     for (i, team) in teams.iter().enumerate() {
                         log::debug!(
                             "🔍 Team lookup response - team {}: '{}' (GUID: {})",
-                            i + 1,
+                            i.saturating_add(1),
                             team.team_name,
                             team.team_id
                         );
@@ -1636,6 +1642,7 @@ impl<'a> IdentityApi<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1659,14 +1666,20 @@ mod tests {
     #[test]
     fn test_user_type_serialization() {
         assert_eq!(
-            serde_json::to_string(&UserType::Human).unwrap(),
+            serde_json::to_string(&UserType::Human).expect("should serialize to json"),
             "\"HUMAN\""
         );
         assert_eq!(
-            serde_json::to_string(&UserType::ApiService).unwrap(),
+            serde_json::to_string(&UserType::ApiService).expect("should serialize to json"),
             "\"API\""
         );
-        assert_eq!(serde_json::to_string(&UserType::Saml).unwrap(), "\"SAML\"");
-        assert_eq!(serde_json::to_string(&UserType::Vosp).unwrap(), "\"VOSP\"");
+        assert_eq!(
+            serde_json::to_string(&UserType::Saml).expect("should serialize to json"),
+            "\"SAML\""
+        );
+        assert_eq!(
+            serde_json::to_string(&UserType::Vosp).expect("should serialize to json"),
+            "\"VOSP\""
+        );
     }
 }

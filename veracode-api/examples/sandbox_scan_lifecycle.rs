@@ -1,7 +1,10 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::app::{BusinessCriticality, CreateApplicationProfile};
 use veracode_platform::{
     CreateApplicationRequest, CreateSandboxRequest, VeracodeClient, VeracodeConfig,
     scan::{BeginPreScanRequest, BeginScanRequest, ScanError, UploadFileRequest},
+    validation::{AppGuid, AppName, Description},
 };
 
 #[tokio::main]
@@ -12,12 +15,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     );
 
     let client = VeracodeClient::new(config)?;
-    let scan_api = client.scan_api(); // Automatically uses XML API
+    let scan_api = client.scan_api()?; // Automatically uses XML API
     let sandbox_api = client.sandbox_api(); // Uses REST API
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time should be after unix epoch")
         .as_secs();
 
     println!("🔧 Complete Sandbox Scan Lifecycle Example\n");
@@ -28,8 +31,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app_name = format!("Test Application {timestamp}");
     let app_request = CreateApplicationRequest {
         profile: CreateApplicationProfile {
-            name: app_name.clone(),
-            description: Some("Test application for sandbox scan lifecycle demo".to_string()),
+            name: AppName::new(app_name.clone())?,
+            description: Some(Description::new(
+                "Test application for sandbox scan lifecycle demo",
+            )?),
             business_criticality: BusinessCriticality::Medium,
             business_unit: None,
             business_owners: None,
@@ -48,7 +53,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   Application ID: {}", app.guid);
             println!(
                 "   Application Name: {}",
-                app.profile.as_ref().map(|p| &p.name).unwrap_or(&app_name)
+                app.profile
+                    .as_ref()
+                    .map(|p| p.name.as_str())
+                    .unwrap_or(&app_name)
             );
             app.guid
         }
@@ -215,9 +223,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Display modules
                     for (i, module) in prescan_results.modules.iter().enumerate() {
+                        let i: usize = i;
                         println!(
                             "   Module {}: {} ({})",
-                            i + 1,
+                            i.saturating_add(1),
                             module.name,
                             module.module_type
                         );
@@ -229,9 +238,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                     // Display messages
                     for (i, message) in prescan_results.messages.iter().enumerate() {
+                        let i: usize = i;
                         println!(
                             "   Message {}: [{}] {}",
-                            i + 1,
+                            i.saturating_add(1),
                             message.severity,
                             message.text
                         );
@@ -318,7 +328,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(files) => {
             println!("✅ Found {} uploaded file(s):", files.len());
             for (i, file) in files.iter().enumerate() {
-                println!("   {}. {}", i + 1, file.file_name);
+                let i: usize = i;
+                println!("   {}. {}", i.saturating_add(1), file.file_name);
                 println!("      File ID: {}", file.file_id);
                 println!("      Size: {} bytes", file.file_size);
                 println!("      Status: {}", file.file_status);
@@ -372,7 +383,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Step 12: Delete the application
     println!("\n🗑️  Step 12: Deleting application...");
-    match client.delete_application(&app_id).await {
+    match client.delete_application(&AppGuid::new(app_id)?).await {
         Ok(_) => {
             println!("✅ Application deleted successfully");
         }

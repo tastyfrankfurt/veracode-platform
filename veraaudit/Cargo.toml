@@ -10,6 +10,17 @@ license = "MIT OR Apache-2.0"
 name = "veraaudit"
 path = "src/main.rs"
 
+#[lints.clippy]
+## Defensive programming essentials
+#indexing_slicing = "deny"              # Prevents direct indexing
+#fallible_impl_from = "deny"            # Catches failed conversions
+#wildcard_enum_match_arm = "deny"       # Disallows catch-alls
+#fn_params_excessive_bools = "warn"     # Flags too many booleans
+#unwrap_used = "deny"                   # Prevents unwrap() in production
+#expect_used = "warn"                   # Audit expect() usage
+#panic = "deny"                         # Prevents panic! in production
+#must_use_candidate = "warn"            # Prevents the result of a function or the value of a type from being ignored
+
 [dependencies]
 # Use workspace dependencies
 clap = { workspace = true }
