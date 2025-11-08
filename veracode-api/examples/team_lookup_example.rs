@@ -1,8 +1,8 @@
 //! Example demonstrating how to look up teams by name and use them for application creation
 //!
 //! This example shows:
-//! 1. How to find a team by name using the new get_team_by_name() method
-//! 2. How to get just the team GUID using get_team_guid_by_name()  
+//! 1. How to find a team by name using the new `get_team_by_name()` method
+//! 2. How to get just the team GUID using `get_team_guid_by_name()`  
 //! 3. How to use the team GUID when creating applications
 
 use veracode_platform::{

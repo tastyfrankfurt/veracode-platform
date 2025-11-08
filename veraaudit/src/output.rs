@@ -34,8 +34,8 @@ fn extract_first_timestamp(data: &serde_json::Value) -> Option<String> {
 
 /// Format a UTC timestamp string for use in filename
 ///
-/// Converts from "YYYY-MM-DD HH:MM:SS" or "YYYY-MM-DD HH:MM:SS.sss" format
-/// to "YYYYMMDD_HHMMSS_UTC" format for filenames
+/// Converts from `"YYYY-MM-DD HH:MM:SS"` or `"YYYY-MM-DD HH:MM:SS.sss"` format
+/// to `"YYYYMMDD_HHMMSS_UTC"` format for filenames
 fn format_timestamp_for_filename(timestamp_utc: &str) -> Option<String> {
     // Parse the timestamp (with or without milliseconds)
     let parsed = NaiveDateTime::parse_from_str(timestamp_utc, "%Y-%m-%d %H:%M:%S%.f")
@@ -48,7 +48,7 @@ fn format_timestamp_for_filename(timestamp_utc: &str) -> Option<String> {
 
 /// Parse timestamp from filename back to API format
 ///
-/// Converts from "YYYYMMDD_HHMMSS_UTC" format to "YYYY-MM-DD HH:MM:SS" format
+/// Converts from `"YYYYMMDD_HHMMSS_UTC"` format to `"YYYY-MM-DD HH:MM:SS"` format
 fn parse_timestamp_from_filename(filename_timestamp: &str) -> Option<String> {
     // Parse the timestamp from filename format
     let parsed = NaiveDateTime::parse_from_str(filename_timestamp, "%Y%m%d_%H%M%S_UTC").ok()?;
@@ -66,7 +66,7 @@ fn parse_timestamp_from_filename(filename_timestamp: &str) -> Option<String> {
 ///
 /// # Returns
 ///
-/// true if the timestamp is within max_hours from now, false otherwise
+/// true if the timestamp is within `max_hours` from now, false otherwise
 fn is_timestamp_within_hours(timestamp: &str, max_hours: i64) -> bool {
     // Parse the timestamp
     let parsed = match NaiveDateTime::parse_from_str(timestamp, "%Y-%m-%d %H:%M:%S") {
@@ -236,7 +236,7 @@ fn get_last_log_file(output_dir: &str) -> Option<PathBuf> {
 ///
 /// # Returns
 ///
-/// Vector of PathBufs for log files with timestamps >= cutoff
+/// Vector of `PathBufs` for log files with timestamps >= cutoff
 #[cfg(test)]
 #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
 fn find_log_files_newer_than(output_dir: &str, cutoff_timestamp: &str) -> Vec<PathBuf> {
@@ -296,6 +296,7 @@ fn find_log_files_newer_than(output_dir: &str, cutoff_timestamp: &str) -> Vec<Pa
 ///
 /// The timestamp from the newest log file in API format if it's within 72 hours,
 /// or None if no files found or timestamp is too old
+#[must_use]
 pub fn get_last_log_timestamp(output_dir: &str) -> Option<String> {
     // Check if directory exists
     let dir_path = std::path::Path::new(output_dir);
@@ -354,6 +355,7 @@ pub fn get_last_log_timestamp(output_dir: &str) -> Option<String> {
         // but after the last fetched log (sub-second precision issue)
         // Deduplication will filter out any duplicates from this overlap
         let parsed = NaiveDateTime::parse_from_str(&api_timestamp, "%Y-%m-%d %H:%M:%S").ok()?;
+        #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
         let overlap_start = parsed + chrono::Duration::seconds(-1);
         let overlap_timestamp = overlap_start.format("%Y-%m-%d %H:%M:%S").to_string();
 
@@ -428,7 +430,7 @@ pub fn write_audit_log_file(
                     !existing_hashes.contains(&hash)
                 });
 
-                let duplicate_count = original_count - logs_array.len();
+                let duplicate_count = original_count.saturating_sub(logs_array.len());
 
                 info!(
                     "Deduplication: {} duplicates removed, {} unique logs remaining",
@@ -487,6 +489,9 @@ pub fn write_audit_log_file(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
+#[allow(clippy::expect_used)]
+#[allow(clippy::indexing_slicing)]
 mod tests {
     use super::*;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]

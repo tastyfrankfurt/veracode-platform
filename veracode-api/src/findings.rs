@@ -343,6 +343,11 @@ impl FindingsApi {
     }
 
     /// Get findings with pagination
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_findings(
         &self,
         query: &FindingsQuery<'_>,
@@ -464,6 +469,11 @@ impl FindingsApi {
     }
 
     /// Get all findings across all pages automatically
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_all_findings(
         &self,
         query: &FindingsQuery<'_>,
@@ -523,6 +533,11 @@ impl FindingsApi {
     }
 
     /// Get policy scan findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_policy_findings(
         &self,
         app_guid: &str,
@@ -531,6 +546,11 @@ impl FindingsApi {
     }
 
     /// Get sandbox findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_sandbox_findings(
         &self,
         app_guid: &str,
@@ -541,6 +561,11 @@ impl FindingsApi {
     }
 
     /// Get all policy scan findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_all_policy_findings(
         &self,
         app_guid: &str,
@@ -549,6 +574,11 @@ impl FindingsApi {
     }
 
     /// Get all sandbox findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_all_sandbox_findings(
         &self,
         app_guid: &str,

@@ -171,7 +171,12 @@ pub struct FindingFiles {
 /// Stack dump information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StackDumps {
-    /// Array of stack dumps (optional - can be missing when stack_dumps is empty object)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Array of stack dumps (optional - can be missing when `stack_dumps` is empty object)
     pub stack_dump: Option<Vec<serde_json::Value>>,
 }
 
@@ -426,7 +431,12 @@ pub struct ScanConfig {
 pub struct Scan {
     /// Unique scan ID
     pub scan_id: String,
-    /// Current scan status (UPLOADING, VERIFYING, RUNNING, RESULTS_READY, etc.)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Current scan status (UPLOADING, VERIFYING, RUNNING, `RESULTS_READY`, etc.)
     pub scan_status: ScanStatus,
     /// API version
     pub api_version: f64,
@@ -577,6 +587,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the application ID as a string if found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn lookup_app_id_by_name(&self, app_name: &str) -> Result<String, PipelineError> {
         let applications = self.client.search_applications_by_name(app_name).await?;
 
@@ -611,16 +626,31 @@ impl PipelineApi {
         }
     }
 
-    /// Create a new pipeline scan with automatic app_id lookup
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// Create a new pipeline scan with automatic `app_id` lookup
     ///
     /// # Arguments
     ///
     /// * `request` - Scan creation request with binary details
-    /// * `app_name` - Optional application name to look up app_id automatically
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// * `app_name` - Optional application name to look up `app_id` automatically
     ///
     /// # Returns
     ///
     /// A `Result` containing the scan details if successful
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn create_scan_with_app_lookup(
         &self,
         request: &mut CreateScanRequest,
@@ -647,6 +677,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details if successful
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn create_scan(
         &self,
         request: &mut CreateScanRequest,
@@ -755,7 +790,12 @@ impl PipelineApi {
     /// The Veracode Pipeline Scan API requires files to be uploaded in a predetermined
     /// number of segments. This method follows the exact Java implementation pattern:
     /// 1. Gets segment count and upload URI from scan creation response
-    /// 2. Calculates segment size as file_size / num_segments
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// 2. Calculates segment size as `file_size` / `num_segments`
     /// 3. Updates URI after each segment upload based on API response
     ///
     /// # Arguments
@@ -768,6 +808,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn upload_binary_segments(
         &self,
         initial_upload_uri: &str,
@@ -834,6 +879,11 @@ impl PipelineApi {
     }
 
     /// Simplified upload method for backwards compatibility
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn upload_binary(
         &self,
         scan_id: &str,
@@ -926,6 +976,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn start_scan_with_uri(
         &self,
         start_uri: &str,
@@ -1011,6 +1066,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn start_scan(
         &self,
         scan_id: &str,
@@ -1091,6 +1151,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_scan_with_uri(&self, details_uri: &str) -> Result<Scan, PipelineError> {
         // Construct full URL with pipeline_scan/v1 base
         let url = if details_uri.starts_with("http") {
@@ -1130,6 +1195,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_scan(&self, scan_id: &str) -> Result<Scan, PipelineError> {
         let endpoint = format!("/scans/{scan_id}");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
@@ -1169,7 +1239,17 @@ impl PipelineApi {
     /// # HTTP Status Codes
     ///
     /// * `200` - Findings are ready and returned
-    /// * `202` - Scan accepted but findings not yet available (returns FindingsNotReady error)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// * `202` - Scan accepted but findings not yet available (returns `FindingsNotReady` error)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_findings(&self, scan_id: &str) -> Result<Vec<Finding>, PipelineError> {
         let endpoint = format!("/scans/{scan_id}/findings");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
@@ -1263,6 +1343,11 @@ impl PipelineApi {
     ///
     /// This method will return `FindingsNotReady` error if the scan findings are not yet available.
     /// Use `get_scan()` to check scan status before calling this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_results(&self, scan_id: &str) -> Result<ScanResults, PipelineError> {
         debug!("🔍 Debug - get_results() getting scan details for: {scan_id}");
         let scan = self.get_scan(scan_id).await?;
@@ -1298,6 +1383,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn cancel_scan(&self, scan_id: &str) -> Result<(), PipelineError> {
         let endpoint = format!("/scans/{scan_id}/cancel");
 
@@ -1327,6 +1417,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the completed scan or timeout error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn wait_for_completion(
         &self,
         scan_id: &str,

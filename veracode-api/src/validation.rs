@@ -113,7 +113,17 @@ impl AppGuid {
     const VALID_GUID_PATTERN: &'static str =
         r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$";
 
-    /// Validates and constructs a new AppGuid
+    /// Validates and constructs a new `AppGuid`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the GUID is empty, exceeds maximum length, contains invalid
+    /// characters, or doesn't match the expected UUID format.
+    ///
+    /// # Panics
+    ///
+    /// This function contains an `expect()` call on a compile-time constant regex pattern
+    /// which should never panic in practice.
     pub fn new(guid: impl Into<String>) -> Result<Self, ValidationError> {
         let guid = guid.into();
 
@@ -179,7 +189,15 @@ impl AsRef<str> for AppGuid {
 pub struct AppName(String);
 
 impl AppName {
-    /// Validates and constructs a new AppName
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails due to invalid input parameters.
+    /// Validates and constructs a new `AppName`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails due to invalid input parameters.
     pub fn new(name: impl Into<String>) -> Result<Self, ValidationError> {
         let name = name.into();
 
@@ -236,6 +254,10 @@ pub struct Description(String);
 
 impl Description {
     /// Validates and constructs a new Description
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails due to invalid input parameters.
     pub fn new(desc: impl Into<String>) -> Result<Self, ValidationError> {
         let desc = desc.into();
 
@@ -275,6 +297,10 @@ impl AsRef<str> for Description {
 }
 
 /// Validates a URL path segment to prevent injection
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails due to invalid input parameters.
 pub fn validate_url_segment(segment: &str, max_len: usize) -> Result<&str, ValidationError> {
     if segment.is_empty() {
         return Err(ValidationError::EmptySegment);
@@ -318,7 +344,12 @@ pub fn validate_url_segment(segment: &str, max_len: usize) -> Result<&str, Valid
 ///
 /// # Security
 ///
-/// This function prevents DoS attacks from unbounded pagination requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// This function prevents `DoS` attacks from unbounded pagination requests.
 ///
 /// # Examples
 ///
@@ -337,6 +368,10 @@ pub fn validate_url_segment(segment: &str, max_len: usize) -> Result<&str, Valid
 /// // Too large is capped (with warning log)
 /// assert_eq!(validate_page_size(Some(10000)).unwrap(), MAX_PAGE_SIZE);
 /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails due to invalid input parameters.
 pub fn validate_page_size(size: Option<u32>) -> Result<u32, ValidationError> {
     match size {
         None => Ok(DEFAULT_PAGE_SIZE),
@@ -370,7 +405,12 @@ pub fn validate_page_size(size: Option<u32>) -> Result<u32, ValidationError> {
 ///
 /// # Security
 ///
-/// This function prevents DoS attacks from unbounded pagination requests.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// This function prevents `DoS` attacks from unbounded pagination requests.
 ///
 /// # Examples
 ///
@@ -386,6 +426,10 @@ pub fn validate_page_size(size: Option<u32>) -> Result<u32, ValidationError> {
 /// // Too large is capped (with warning log)
 /// assert_eq!(validate_page_number(Some(99999)).unwrap(), Some(MAX_PAGE_NUMBER));
 /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if validation fails due to invalid input parameters.
 pub fn validate_page_number(page: Option<u32>) -> Result<Option<u32>, ValidationError> {
     match page {
         None => Ok(None),

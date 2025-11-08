@@ -27,23 +27,26 @@ const MAX_SECRET_KEYS: usize = 100; // Maximum number of keys in secret
 const MAX_KEY_LENGTH: usize = 256; // Maximum length for secret key names
 const MAX_VALUE_LENGTH: usize = 64 * 1024; // 64KB per secret value
 
-/// Secure HashMap that deserializes string values directly into SecretString
+/// Secure `HashMap` that deserializes string values directly into `SecretString`
 /// This avoids creating intermediate plain text strings during deserialization
 #[derive(Debug)]
 pub struct SecureSecretMap(HashMap<String, SecretString>);
 
 impl SecureSecretMap {
     /// Get a secret by key
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&SecretString> {
         self.0.get(key)
     }
 
     /// Get the number of secrets
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Check if empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -79,6 +82,10 @@ pub struct VaultCredentialClient {
 
 impl VaultCredentialClient {
     /// Create a new vault client from configuration
+    ///
+    /// # Errors
+    ///
+    /// Returns error if vault client creation or authentication fails
     pub async fn new(config: &VaultConfig) -> Result<Self, CredentialError> {
         let mut client = create_vault_client(config)?;
         authenticate_vault(&mut client, config).await?;
@@ -86,7 +93,11 @@ impl VaultCredentialClient {
         Ok(Self { client })
     }
 
-    /// Retrieve credentials from vault directly into VeracodeCredentials
+    /// Retrieve credentials from vault directly into `VeracodeCredentials`
+    ///
+    /// # Errors
+    ///
+    /// Returns error if vault secret retrieval or validation fails
     pub async fn get_veracode_credentials(
         &self,
         secret_path: &str,
@@ -140,7 +151,11 @@ impl VaultCredentialClient {
     }
 
     /// Retrieve optional proxy credentials from vault
-    /// Returns (proxy_url, proxy_username, proxy_password) as optional values
+    /// Returns (`proxy_url`, `proxy_username`, `proxy_password`) as optional values
+    ///
+    /// # Errors
+    ///
+    /// Returns error if vault secret retrieval or validation fails
     pub async fn get_proxy_credentials(
         &self,
         secret_path: &str,
@@ -173,12 +188,20 @@ impl VaultCredentialClient {
     }
 
     /// Revoke the vault token after use
+    ///
+    /// # Errors
+    ///
+    /// Returns error if vault token revocation fails
     pub async fn revoke_token(&self) -> Result<(), CredentialError> {
         revoke_vault_token(&self.client).await
     }
 }
 
 /// Load vault configuration from environment variables
+///
+/// # Errors
+///
+/// Returns error if required environment variables are missing or validation fails
 pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
     debug!("Attempting to load vault configuration from environment");
 
@@ -218,8 +241,12 @@ pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
     })
 }
 
-/// Load VeracodeCredentials and proxy configuration from Vault with environment fallback
-/// Returns (credentials, proxy_url, proxy_username, proxy_password)
+/// Load `VeracodeCredentials` and proxy configuration from Vault with environment fallback
+/// Returns (credentials, `proxy_url`, `proxy_username`, `proxy_password`)
+///
+/// # Errors
+///
+/// Returns error if vault configuration loading, authentication, or credential retrieval fails
 pub async fn load_credentials_and_proxy_from_vault() -> Result<
     (
         veracode_platform::VeracodeCredentials,
@@ -499,8 +526,8 @@ async fn retrieve_vault_secret(
 /// Parse secret path to extract engine name and path
 fn parse_secret_path(full_path: &str) -> (String, String) {
     if let Some(at_pos) = full_path.rfind('@') {
-        let secret_path = full_path[..at_pos].to_string();
-        let secret_engine = full_path[at_pos + 1..].to_string();
+        let secret_path = full_path.get(..at_pos).unwrap_or(full_path).to_string();
+        let secret_engine = full_path.get(at_pos.saturating_add(1)..).unwrap_or("").to_string();
         if secret_engine.is_empty() {
             // If @ is present but engine is empty, default to kvv2
             (secret_path, "kvv2".to_string())
@@ -534,7 +561,7 @@ fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError>
         });
     }
 
-    let mut total_size = 0;
+    let mut total_size: usize = 0;
 
     for (key, value) in secret.iter() {
         // Validate key length
@@ -593,7 +620,7 @@ fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError>
         }
 
         // Accumulate total size
-        total_size += key.len() + value_len;
+        total_size = total_size.saturating_add(key.len()).saturating_add(value_len);
     }
 
     // Check total size limit
@@ -690,6 +717,7 @@ fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
     while let Some(err) = current {
         // Check for io::Error with retryable kinds
         if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            #[allow(clippy::wildcard_enum_match_arm)]
             match io_err.kind() {
                 std::io::ErrorKind::ConnectionRefused
                 | std::io::ErrorKind::ConnectionReset
@@ -714,7 +742,7 @@ fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// Determine if a ClientError should be retried based on error type
+/// Determine if a `ClientError` should be retried based on error type
 ///
 /// Returns true for transient/retryable errors, false for permanent errors
 fn is_retryable_vault_error(error: &ClientError) -> bool {
@@ -770,11 +798,11 @@ fn is_retryable_vault_error(error: &ClientError) -> bool {
     }
 }
 
-/// Classify a ClientError and create a CredentialError with proper context
+/// Classify a `ClientError` and create a `CredentialError` with proper context
 ///
 /// This function implements proper error handling based on:
 /// - Vault API documentation for HTTP status codes
-/// - vaultrs ClientError variants
+/// - vaultrs `ClientError` variants
 /// - Provides detailed error messages for debugging
 fn classify_vault_error<E>(
     error: &ClientError,
@@ -974,11 +1002,11 @@ fn classify_vault_error<E>(
             // Log the full error chain for debugging
             error!("{operation_context}: REST client error: {source}");
             let mut error_source = source.source();
-            let mut level = 1;
+            let mut level: usize = 1;
             while let Some(err) = error_source {
                 error!("Error source level {level}: {err}");
                 error_source = err.source();
-                level += 1;
+                level = level.saturating_add(1);
             }
 
             if is_certificate_error(source) {
@@ -998,6 +1026,7 @@ fn classify_vault_error<E>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

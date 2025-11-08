@@ -31,11 +31,11 @@ struct Cli {
     #[arg(long, default_value = "info")]
     log_level: String,
 
-    /// Veracode API ID (can also be set via VERACODE_API_ID environment variable)
+    /// Veracode API ID (can also be set via `VERACODE_API_ID` environment variable)
     #[arg(long)]
     api_id: Option<String>,
 
-    /// Veracode API Key (can also be set via VERACODE_API_KEY environment variable)
+    /// Veracode API Key (can also be set via `VERACODE_API_KEY` environment variable)
     #[arg(long)]
     api_key: Option<String>,
 
@@ -506,9 +506,9 @@ async fn bulk_enable_encryption(
     info!("Found {} applications to process", apps.len());
 
     let mut results = Vec::new();
-    let mut processed = 0;
-    let mut skipped = 0;
-    let mut failed = 0;
+    let mut processed: usize = 0;
+    let mut skipped: usize = 0;
+    let mut failed: usize = 0;
     let apps_len = apps.len();
 
     for app in &apps {
@@ -525,7 +525,7 @@ async fn bulk_enable_encryption(
                 .await
         {
             info!("Skipping {} - already encrypted", app_name);
-            skipped += 1;
+            skipped = skipped.saturating_add(1);
             continue;
         }
 
@@ -549,7 +549,7 @@ async fn bulk_enable_encryption(
             {
                 Ok(_) => {
                     info!("✅ Enabled CMEK encryption on: {} ({})", app_name, app.guid);
-                    processed += 1;
+                    processed = processed.saturating_add(1);
                     results.push(serde_json::json!({
                         "action": "enabled",
                         "success": true,
@@ -565,7 +565,7 @@ async fn bulk_enable_encryption(
                         "❌ Failed to enable CMEK encryption on: {} ({}): {}",
                         app_name, app.guid, e
                     );
-                    failed += 1;
+                    failed = failed.saturating_add(1);
                     results.push(serde_json::json!({
                         "action": "enable",
                         "success": false,
@@ -638,16 +638,16 @@ async fn process_from_file(
     info!("Found {} applications in file", app_list.applications.len());
 
     let mut results = Vec::new();
-    let mut processed = 0;
-    let mut skipped = 0;
-    let mut failed = 0;
+    let mut processed: usize = 0;
+    let mut skipped: usize = 0;
+    let mut failed: usize = 0;
     let total_apps = app_list.applications.len();
 
     for app_config in &app_list.applications {
         // Validate KMS alias
         if let Err(e) = validate_kms_alias(&app_config.kms_alias) {
             warn!("❌ Invalid KMS alias for {}: {}", app_config.app, e);
-            failed += 1;
+            failed = failed.saturating_add(1);
             continue;
         }
 
@@ -656,7 +656,7 @@ async fn process_from_file(
             Ok(app) => app,
             Err(e) => {
                 warn!("❌ Failed to find application {}: {}", app_config.app, e);
-                failed += 1;
+                failed = failed.saturating_add(1);
                 continue;
             }
         };
@@ -674,7 +674,7 @@ async fn process_from_file(
                 .await
         {
             info!("Skipping {} - already encrypted", app_name);
-            skipped += 1;
+            skipped = skipped.saturating_add(1);
             continue;
         }
 
@@ -698,7 +698,7 @@ async fn process_from_file(
             {
                 Ok(_) => {
                     info!("✅ Enabled CMEK encryption on: {} ({})", app_name, app.guid);
-                    processed += 1;
+                    processed = processed.saturating_add(1);
                     results.push(serde_json::json!({
                         "action": "enabled",
                         "success": true,
@@ -714,7 +714,7 @@ async fn process_from_file(
                         "❌ Failed to enable CMEK encryption on: {} ({}): {}",
                         app_name, app.guid, e
                     );
-                    failed += 1;
+                    failed = failed.saturating_add(1);
                     results.push(serde_json::json!({
                         "action": "enable",
                         "success": false,
@@ -829,8 +829,8 @@ async fn show_encryption_status(
                 .unwrap_or_default();
 
             let mut results = Vec::new();
-            let mut encrypted_count = 0;
-            let mut unencrypted_count = 0;
+            let mut encrypted_count: usize = 0;
+            let mut unencrypted_count: usize = 0;
 
             for app in apps {
                 let app_name = app
@@ -846,9 +846,9 @@ async fn show_encryption_status(
                     Ok(status) => {
                         let encrypted = status.is_some();
                         if encrypted {
-                            encrypted_count += 1;
+                            encrypted_count = encrypted_count.saturating_add(1);
                         } else {
-                            unencrypted_count += 1;
+                            unencrypted_count = unencrypted_count.saturating_add(1);
                         }
 
                         results.push(serde_json::json!({

@@ -1,4 +1,4 @@
-//! DateTime validation and handling for audit log retrieval
+//! `DateTime` validation and handling for audit log retrieval
 use crate::error::{AuditError, Result};
 use crate::validation::Region;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
@@ -9,6 +9,12 @@ const FORMAT_DATETIME_SECOND: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Maximum date range allowed by Veracode API (6 months)
 const MAX_RANGE_DAYS: i64 = 180;
+
+/// Midnight time constant (00:00:00)
+const MIDNIGHT: NaiveTime = match NaiveTime::from_hms_opt(0, 0, 0) {
+    Some(time) => time,
+    None => unreachable!(),
+};
 
 /// Convert a datetime string from local timezone to UTC
 ///
@@ -49,7 +55,7 @@ pub fn convert_local_to_utc(datetime_str: &str, _region: &Region) -> Result<Stri
             (dt, FORMAT_DATETIME_SECOND)
         } else if let Ok(date) = NaiveDate::parse_from_str(datetime_str, FORMAT_DATE) {
             (
-                date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
+                date.and_time(MIDNIGHT),
                 FORMAT_DATE,
             )
         } else {
@@ -97,7 +103,7 @@ pub fn convert_local_to_utc(datetime_str: &str, _region: &Region) -> Result<Stri
 ///
 /// # Returns
 ///
-/// The validated datetime string (converted to UTC if utc_mode is false)
+/// The validated datetime string (converted to UTC if `utc_mode` is false)
 ///
 /// # Errors
 ///
@@ -136,6 +142,10 @@ pub fn validate_datetime_format(
 }
 
 /// Try to parse a datetime string using all supported formats
+///
+/// # Errors
+///
+/// Returns error if the datetime format is invalid
 pub fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
     // Try format: YYYY-MM-DD HH:MM:SS
     if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_str, FORMAT_DATETIME_SECOND) {
@@ -144,7 +154,7 @@ pub fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
 
     // Try format: YYYY-MM-DD (date only, time = 00:00:00)
     if let Ok(date) = NaiveDate::parse_from_str(datetime_str, FORMAT_DATE) {
-        let dt = date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let dt = date.and_time(MIDNIGHT);
         return Ok(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc));
     }
 
@@ -170,7 +180,7 @@ pub fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
 ///
 /// # Returns
 ///
-/// Tuple of validated (start, end) strings (converted to UTC if utc_mode is false)
+/// Tuple of validated (start, end) strings (converted to UTC if `utc_mode` is false)
 ///
 /// # Errors
 ///
@@ -198,6 +208,7 @@ pub fn validate_date_range(
     }
 
     // Check 6-month maximum range
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let range_days = (end_dt - start_dt).num_days();
     if range_days > MAX_RANGE_DAYS {
         return Err(AuditError::DateRangeInvalid(format!(
@@ -209,19 +220,22 @@ pub fn validate_date_range(
     Ok((start_validated, end_validated))
 }
 
-/// Internal helper to format a DateTime<Utc> as YYYY-MM-DD HH:MM:SS
+/// Internal helper to format a `DateTime<Utc>` as YYYY-MM-DD HH:MM:SS
 /// This is separate from the public API to allow testing without system time access
 fn format_datetime_utc(dt: DateTime<Utc>) -> String {
     dt.format(FORMAT_DATETIME_SECOND).to_string()
 }
 
 /// Format current UTC time as YYYY-MM-DD HH:MM:SS
+#[must_use]
 pub fn format_now_utc() -> String {
     format_datetime_utc(Utc::now())
 }
 
 /// Format UTC time minus specified minutes as YYYY-MM-DD HH:MM:SS
+#[must_use]
 pub fn format_utc_minus_minutes(minutes: i64) -> String {
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let dt = Utc::now() - Duration::minutes(minutes);
     format_datetime_utc(dt)
 }
@@ -292,7 +306,12 @@ pub fn parse_time_offset(offset_str: &str) -> Result<i64> {
             ));
         }
 
-        Ok(hours * 60)
+        hours.checked_mul(60).ok_or_else(|| {
+            AuditError::InvalidConfig(format!(
+                "Offset value too large: '{}' hours would overflow",
+                hours
+            ))
+        })
     } else if offset_str.ends_with('d') {
         // Days
         let num_str = offset_str.trim_end_matches('d');
@@ -309,7 +328,14 @@ pub fn parse_time_offset(offset_str: &str) -> Result<i64> {
             ));
         }
 
-        Ok(days * 24 * 60)
+        days.checked_mul(24)
+            .and_then(|h| h.checked_mul(60))
+            .ok_or_else(|| {
+                AuditError::InvalidConfig(format!(
+                    "Offset value too large: '{}' days would overflow",
+                    days
+                ))
+            })
     } else {
         // No unit specified, assume minutes
         let minutes: i64 = offset_str.parse().map_err(|_| {
@@ -381,6 +407,7 @@ pub fn add_interval_to_datetime(datetime_str: &str, interval_str: &str) -> Resul
     let parsed_dt = try_parse_datetime(datetime_str)?;
 
     // Add the interval
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let end_dt = parsed_dt + Duration::minutes(minutes);
 
     // Format back to string in the same format
@@ -418,6 +445,7 @@ pub fn subtract_minutes_from_datetime(datetime_str: &str, minutes: i64) -> Resul
     let parsed_dt = try_parse_datetime(datetime_str)?;
 
     // Subtract the minutes
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let result_dt = parsed_dt - Duration::minutes(minutes);
 
     // Format back to string in the same format
@@ -425,6 +453,7 @@ pub fn subtract_minutes_from_datetime(datetime_str: &str, minutes: i64) -> Resul
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

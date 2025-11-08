@@ -1,4 +1,4 @@
-//! JSON validation utilities to prevent DoS attacks
+//! JSON validation utilities to prevent `DoS` attacks
 //!
 //! This module provides functions to validate JSON structure before deserialization,
 //! preventing Denial of Service attacks through deeply nested JSON structures.
@@ -7,7 +7,7 @@ use serde_json::Value;
 
 /// Maximum allowed JSON nesting depth
 ///
-/// This limit prevents DoS attacks via deeply nested JSON that can cause:
+/// This limit prevents `DoS` attacks via deeply nested `JSON` that can cause:
 /// - Stack overflow
 /// - Excessive memory consumption
 /// - CPU exhaustion during parsing
@@ -16,7 +16,7 @@ use serde_json::Value;
 /// against malicious payloads. Most real-world APIs use <10 levels of nesting.
 pub const MAX_JSON_DEPTH: usize = 32;
 
-/// Validate JSON nesting depth to prevent DoS attacks
+/// Validate JSON nesting depth to prevent `DoS` attacks
 ///
 /// # Arguments
 ///
@@ -49,6 +49,10 @@ pub const MAX_JSON_DEPTH: usize = 32;
 /// - Stack overflow from recursive parsing
 /// - CPU exhaustion from excessive nesting
 /// - Memory exhaustion from deeply nested structures
+///
+/// # Errors
+///
+/// Returns an error if the JSON is invalid or exceeds the maximum nesting depth.
 pub fn validate_json_depth(json_str: &str, max_depth: usize) -> Result<(), String> {
     // First, try to parse the JSON
     let value: Value =

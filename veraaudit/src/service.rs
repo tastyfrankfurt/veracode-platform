@@ -51,6 +51,8 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
     let interval_minutes = crate::datetime::parse_time_offset(&config.interval)?;
 
     // Main service loop
+    #[allow(clippy::arithmetic_side_effects)] // interval_minutes is validated, multiplication won't overflow
+    #[allow(clippy::cast_sign_loss)] // interval_minutes is validated to be positive
     let mut interval_timer = interval(TokioDuration::from_secs((interval_minutes * 60) as u64));
     interval_timer.tick().await; // First tick happens immediately
 
@@ -91,9 +93,9 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
 
 /// Run a single audit log retrieval cycle
 ///
-/// Service mode retrieves audit logs based on configured start_offset and interval,
+/// Service mode retrieves audit logs based on configured `start_offset` and interval,
 /// but will use the timestamp from the last log file if it exists, is within 72 hours,
-/// and the no_file_timestamp flag is not set
+/// and the `no_file_timestamp` flag is not set
 async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Result<()> {
     // Determine start datetime with the following priority:
     // 1. If --no-file-timestamp is not set, check for last log file timestamp (if within 72 hours)

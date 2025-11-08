@@ -23,6 +23,7 @@ pub enum AuditAction {
 
 impl AuditAction {
     /// Get the string representation for API calls
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Self::Create => "Create",
@@ -43,6 +44,7 @@ impl AuditAction {
     }
 
     /// List all valid values for help text
+    #[must_use]
     pub fn valid_values() -> &'static str {
         "Create, Delete, Update, Error, Email, Success, Failed, Locked, Unlocked, 'Logged out', Undelete, 'Maintain Schedule', 'Permanent Delete', 'Update for Internal Only'"
     }
@@ -87,6 +89,7 @@ pub enum ActionType {
 
 impl ActionType {
     /// Get the string representation for API calls
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Self::LoginAccount => "Login Account",
@@ -97,6 +100,7 @@ impl ActionType {
     }
 
     /// List all valid values for help text
+    #[must_use]
     pub fn valid_values() -> &'static str {
         "'Login Account', Admin, Auth, Login"
     }
@@ -130,6 +134,7 @@ pub enum Region {
 
 impl Region {
     /// Get the string representation for configuration
+    #[must_use]
     pub fn as_str(&self) -> &str {
         match self {
             Self::Commercial => "commercial",
@@ -139,6 +144,7 @@ impl Region {
     }
 
     /// List all valid values for help text
+    #[must_use]
     pub fn valid_values() -> &'static str {
         "commercial, european, federal"
     }
@@ -162,6 +168,10 @@ impl FromStr for Region {
 }
 
 /// Validate cleanup count (must be > 0)
+///
+/// # Errors
+///
+/// Returns error if count is 0
 pub fn validate_cleanup_count(count: usize) -> Result<usize, AuditError> {
     if count == 0 {
         return Err(AuditError::InvalidConfig(
@@ -172,6 +182,10 @@ pub fn validate_cleanup_count(count: usize) -> Result<usize, AuditError> {
 }
 
 /// Validate cleanup hours (must be > 0)
+///
+/// # Errors
+///
+/// Returns error if hours is 0
 pub fn validate_cleanup_hours(hours: u64) -> Result<u64, AuditError> {
     if hours == 0 {
         return Err(AuditError::InvalidConfig(
@@ -182,6 +196,7 @@ pub fn validate_cleanup_hours(hours: u64) -> Result<u64, AuditError> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

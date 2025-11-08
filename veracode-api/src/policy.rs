@@ -268,7 +268,12 @@ pub struct FindingsSummary {
     pub by_category: Option<HashMap<String, u32>>,
 }
 
-/// Summary report data structure matching Veracode summary_report API response
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// Summary report data structure matching Veracode `summary_report` API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryReport {
     /// Application ID
@@ -613,7 +618,12 @@ pub struct PolicyApi<'a> {
 }
 
 impl<'a> PolicyApi<'a> {
-    /// Create a new PolicyApi instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Create a new `PolicyApi` instance
     #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
@@ -628,6 +638,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of policies or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn list_policies(
         &self,
         params: Option<PolicyListParams>,
@@ -675,6 +690,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_policy(&self, policy_guid: &str) -> Result<SecurityPolicy, PolicyError> {
         let endpoint = format!("/appsec/v1/policies/{policy_guid}");
 
@@ -708,6 +728,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the default policy or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_default_policy(&self) -> Result<SecurityPolicy, PolicyError> {
         let params = PolicyListParams {
             default_only: Some(true),
@@ -736,6 +761,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_buildinfo(
         &self,
         app_id: &str,
@@ -760,6 +790,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_buildinfo_with_retry(
         &self,
         app_id: &str,
@@ -876,7 +911,12 @@ impl<'a> PolicyApi<'a> {
 
     /// Get summary report for an application build using the REST API
     ///
-    /// This uses the /appsec/v2/applications/{app_guid}/summary_report endpoint
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// This uses the `/appsec/v2/applications/{app_guid}/summary_report` endpoint
     /// to get policy compliance status and scan results.
     ///
     /// # Arguments
@@ -888,6 +928,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the summary report or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_summary_report(
         &self,
         app_guid: &str,
@@ -947,9 +992,24 @@ impl<'a> PolicyApi<'a> {
     ///
     /// # Returns
     ///
-    /// A `Result` containing a tuple of (SummaryReport, Option<compliance_status>) or an error.
-    /// The compliance_status is Some(status) if break_build evaluation is needed, None otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// A `Result` containing a tuple of (`SummaryReport`, Option<`compliance_status`>) or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// The `compliance_status` is Some(status) if `break_build` evaluation is needed, None otherwise.
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_summary_report_with_policy_retry(
         &self,
         app_guid: &str,
@@ -998,7 +1058,7 @@ impl<'a> PolicyApi<'a> {
                 return Ok((summary_report, None));
             }
 
-            // For break_build evaluation, check if policy compliance status is ready
+            // For `break_build` evaluation, check if policy compliance status is ready
             let status = summary_report.policy_compliance_status.clone();
 
             // If status is ready (not empty and not "Not Assessed"), return both report and status
@@ -1028,7 +1088,12 @@ impl<'a> PolicyApi<'a> {
 
     /// Evaluates policy compliance using the summary report API with retry logic
     ///
-    /// This function uses the summary_report endpoint instead of the buildinfo XML API
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// This function uses the `summary_report` endpoint instead of the buildinfo XML API
     /// and will retry when results are not ready yet.
     ///
     /// # Arguments
@@ -1042,6 +1107,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_summary_report_with_retry(
         &self,
         app_guid: &str,
@@ -1100,6 +1170,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_summary_report(
         &self,
         app_guid: &str,
@@ -1125,6 +1200,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the scan result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn initiate_policy_scan(
         &self,
         request: PolicyScanRequest,
@@ -1162,6 +1242,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the scan result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_policy_scan_result(
         &self,
         scan_id: u64,
@@ -1195,6 +1280,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a boolean indicating completion status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn is_policy_scan_complete(&self, scan_id: u64) -> Result<bool, PolicyError> {
         let scan_result = self.get_policy_scan_result(scan_id).await?;
         Ok(matches!(
@@ -1224,10 +1314,25 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A tuple containing:
-    /// - Optional SummaryReport (None if fallback was used)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// - Optional `SummaryReport` (None if fallback was used)
     /// - Policy compliance status string
-    /// - ApiSource indicating which API was used
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// - `ApiSource` indicating which API was used
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_policy_status_with_fallback(
         &self,
         app_guid: &str,
@@ -1311,6 +1416,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of active policies or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_active_policies(&self) -> Result<Vec<SecurityPolicy>, PolicyError> {
         // Note: The active/inactive concept may need to be handled differently
         // based on the actual API response structure

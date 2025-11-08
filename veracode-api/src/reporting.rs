@@ -164,7 +164,12 @@ pub struct PageMetadata {
 pub struct AuditLogEntry {
     /// Raw JSON string of the log entry (as received from API)
     pub raw_log: String,
-    /// Timestamp converted to UTC (computed from the timestamp field in raw_log)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Timestamp converted to UTC (computed from the timestamp field in `raw_log`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_utc: Option<String>,
     /// xxHash (128-bit) of the raw log entry for fast duplicate detection
@@ -216,13 +221,23 @@ pub struct ReportResponse {
 /// Convert a timestamp from region-specific timezone to UTC
 ///
 /// Each Veracode API region returns timestamps in its corresponding timezone:
-/// - **Commercial** (api.veracode.com): America/New_York (US-East-1)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// - **Commercial** (api.veracode.com): `America/New_York` (US-East-1)
 ///   - EST (Eastern Standard Time): UTC-5 (winter)
 ///   - EDT (Eastern Daylight Time): UTC-4 (summer)
 /// - **European** (api.veracode.eu): Europe/Berlin (eu-central-1)
 ///   - CET (Central European Time): UTC+1 (winter)
 ///   - CEST (Central European Summer Time): UTC+2 (summer)
-/// - **Federal** (api.veracode.us): America/New_York (US-East-1)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// - **Federal** (api.veracode.us): `America/New_York` (US-East-1)
 ///   - EST/EDT same as Commercial
 ///
 /// This function automatically handles Daylight Saving Time (DST) transitions
@@ -293,7 +308,12 @@ fn convert_regional_timestamp_to_utc(
 
 /// Generate a fast hash of a raw log entry JSON string for duplicate detection
 ///
-/// Uses xxHash (xxh3_128) which is significantly faster than SHA256 while still
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// Uses xxHash (`xxh3_128`) which is significantly faster than SHA256 while still
 /// providing excellent collision resistance for deduplication purposes. This is
 /// NOT a cryptographic hash - use only for duplicate detection, not security.
 ///
@@ -343,7 +363,12 @@ impl ReportingApi {
 
     /// Generate an audit report (step 1 of the process)
     ///
-    /// This sends a request to generate the report. The API returns a report_id
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// This sends a request to generate the report. The API returns a `report_id`
     /// which can be used to retrieve the report after it's generated.
     ///
     /// # Arguments

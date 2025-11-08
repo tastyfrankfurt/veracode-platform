@@ -78,6 +78,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A new `VeracodeClient` instance ready to make API calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub fn new(config: VeracodeConfig) -> Result<Self, VeracodeError> {
         let mut client_builder = Client::builder();
 
@@ -139,12 +144,22 @@ impl VeracodeClient {
     ///
     /// # Arguments
     ///
-    /// * `request_builder` - A closure that creates the reqwest::RequestBuilder
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// * `request_builder` - A closure that creates the `reqwest::RequestBuilder`
     /// * `operation_name` - A human-readable name for logging/error messages
     ///
     /// # Returns
     ///
-    /// A `Result` containing the HTTP response or a VeracodeError.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// A `Result` containing the HTTP response or a `VeracodeError`.
     async fn execute_with_retry<F>(
         &self,
         request_builder: F,
@@ -376,6 +391,11 @@ impl VeracodeClient {
     }
 
     /// Generate authorization header for HMAC authentication
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub fn generate_auth_header(&self, method: &str, url: &str) -> Result<String, VeracodeError> {
         #[allow(clippy::cast_possible_truncation)]
         let timestamp = SystemTime::now()
@@ -408,6 +428,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get(
         &self,
         endpoint: &str,
@@ -472,6 +497,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn post<T: Serialize>(
         &self,
         endpoint: &str,
@@ -529,6 +559,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn put<T: Serialize>(
         &self,
         endpoint: &str,
@@ -585,6 +620,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn delete(&self, endpoint: &str) -> Result<reqwest::Response, VeracodeError> {
         let mut url = String::with_capacity(
             self.config.base_url.len().saturating_add(endpoint.len())
@@ -631,6 +671,11 @@ impl VeracodeClient {
     ///
     /// This method enhances error messages with context about the failed operation
     /// to improve debugging and user experience.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn handle_response(
         response: reqwest::Response,
         context: &str,
@@ -658,6 +703,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response, pre-processed for success/failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_with_query(
         &self,
         endpoint: &str,
@@ -678,6 +728,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response, pre-processed for success/failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn post_with_response<T: Serialize>(
         &self,
         endpoint: &str,
@@ -697,6 +752,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response, pre-processed for success/failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn put_with_response<T: Serialize>(
         &self,
         endpoint: &str,
@@ -715,6 +775,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the HTTP response, pre-processed for success/failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn delete_with_response(
         &self,
         endpoint: &str,
@@ -737,6 +802,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing all paginated results as a single response body string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_paginated(
         &self,
         endpoint: &str,
@@ -831,6 +901,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_with_params(
         &self,
         endpoint: &str,
@@ -875,6 +950,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn post_form(
         &self,
         endpoint: &str,
@@ -916,6 +996,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn upload_file_multipart(
         &self,
         endpoint: &str,
@@ -973,6 +1058,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn upload_file_multipart_put(
         &self,
         url: &str,
@@ -1028,6 +1118,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn upload_file_with_query_params(
         &self,
         endpoint: &str,
@@ -1106,6 +1201,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn post_with_query_params(
         &self,
         endpoint: &str,
@@ -1140,6 +1240,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_with_query_params(
         &self,
         endpoint: &str,
@@ -1177,6 +1282,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn upload_large_file_chunked<F>(
         &self,
         endpoint: &str,
@@ -1282,6 +1392,11 @@ impl VeracodeClient {
     /// # Returns
     ///
     /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
     pub async fn upload_file_binary(
         &self,
         endpoint: &str,

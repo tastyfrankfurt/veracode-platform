@@ -167,7 +167,12 @@ pub struct ApiCredential {
     pub created_date: Option<DateTime<Utc>>,
 }
 
-/// Custom Debug implementation for ApiCredential that redacts sensitive information
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+/// Custom Debug implementation for `ApiCredential` that redacts sensitive information
 impl std::fmt::Debug for ApiCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ApiCredential")
@@ -556,7 +561,12 @@ pub struct IdentityApi<'a> {
 }
 
 impl<'a> IdentityApi<'a> {
-    /// Create a new IdentityApi instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Create a new `IdentityApi` instance
     #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
@@ -571,6 +581,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of users or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn list_users(&self, query: Option<UserQuery>) -> Result<Vec<User>, IdentityError> {
         let endpoint = "/api/authn/v2/users";
         let query_params = query.as_ref().map(Vec::from);
@@ -622,6 +637,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the user or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_user(&self, user_id: &str) -> Result<User, IdentityError> {
         let endpoint = format!("/api/authn/v2/users/{user_id}");
 
@@ -652,6 +672,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created user or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn create_user(&self, request: CreateUserRequest) -> Result<User, IdentityError> {
         let endpoint = "/api/authn/v2/users";
 
@@ -968,6 +993,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the updated user or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn update_user(
         &self,
         user_id: &str,
@@ -1033,6 +1063,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn delete_user(&self, user_id: &str) -> Result<(), IdentityError> {
         let endpoint = format!("/api/authn/v2/users/{user_id}");
 
@@ -1060,6 +1095,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of roles or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn list_roles(&self) -> Result<Vec<Role>, IdentityError> {
         let endpoint = "/api/authn/v2/roles";
         let mut all_roles = Vec::new();
@@ -1146,6 +1186,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of all teams across all pages or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn list_teams(&self) -> Result<Vec<Team>, IdentityError> {
         let endpoint = "/api/authn/v2/teams";
         let mut all_teams = Vec::new();
@@ -1242,6 +1287,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created team or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn create_team(&self, request: CreateTeamRequest) -> Result<Team, IdentityError> {
         let endpoint = "/api/authn/v2/teams";
 
@@ -1283,6 +1333,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn delete_team(&self, team_id: &str) -> Result<(), IdentityError> {
         let endpoint = format!("/api/authn/v2/teams/{team_id}");
 
@@ -1318,6 +1373,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing an `Option<Team>` if found, or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_team_by_name(&self, team_name: &str) -> Result<Option<Team>, IdentityError> {
         let endpoint = "/api/authn/v2/teams";
 
@@ -1449,6 +1509,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing an `Option<String>` with the team's GUID if found, or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn get_team_guid_by_name(
         &self,
         team_name: &str,
@@ -1468,6 +1533,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created API credentials or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn create_api_credentials(
         &self,
         request: CreateApiCredentialRequest,
@@ -1508,6 +1578,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn revoke_api_credentials(&self, api_creds_id: &str) -> Result<(), IdentityError> {
         let endpoint = format!("/api/authn/v2/api_credentials/{api_creds_id}");
 
@@ -1542,6 +1617,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the user if found, or None if not found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn find_user_by_email(&self, email: &str) -> Result<Option<User>, IdentityError> {
         let query = UserQuery::new().with_email(email);
         let users = self.list_users(Some(query)).await?;
@@ -1557,6 +1637,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the user if found, or None if not found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn find_user_by_username(
         &self,
         username: &str,
@@ -1579,6 +1664,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created user or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn create_simple_user(
         &self,
         email: &str,
@@ -1616,6 +1706,11 @@ impl<'a> IdentityApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created user or an error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the identity resource is not found,
+    /// or authentication/authorization fails.
     pub async fn create_api_service_account(
         &self,
         email: &str,

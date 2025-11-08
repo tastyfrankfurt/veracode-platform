@@ -50,13 +50,13 @@ pub fn cleanup_by_count(output_dir: &str, keep_count: usize) -> Result<usize> {
     files.reverse(); // Newest first
 
     // Delete older files
-    let mut deleted_count = 0;
+    let mut deleted_count: usize = 0;
     for file in files.iter().skip(keep_count) {
         let filepath = file.path();
         match fs::remove_file(&filepath) {
             Ok(_) => {
                 info!("Deleted old audit log: {}", filepath.display());
-                deleted_count += 1;
+                deleted_count = deleted_count.saturating_add(1);
             }
             Err(e) => {
                 warn!("Failed to delete {}: {}", filepath.display(), e);
@@ -89,7 +89,9 @@ pub fn cleanup_by_age(output_dir: &str, max_age_hours: u64) -> Result<usize> {
     }
 
     let now = Utc::now();
+    #[allow(clippy::cast_possible_wrap)] // max_age_hours is user-controlled but validated elsewhere
     let max_age = Duration::hours(max_age_hours as i64);
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let cutoff_time = now - max_age;
 
     // Get all audit log files
@@ -103,7 +105,7 @@ pub fn cleanup_by_age(output_dir: &str, max_age_hours: u64) -> Result<usize> {
                 .unwrap_or(false)
         });
 
-    let mut deleted_count = 0;
+    let mut deleted_count: usize = 0;
     for file in files {
         let filepath = file.path();
 
@@ -116,12 +118,14 @@ pub fn cleanup_by_age(output_dir: &str, max_age_hours: u64) -> Result<usize> {
             if file_time < cutoff_time {
                 match fs::remove_file(&filepath) {
                     Ok(_) => {
+                        #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
+                        let age_hours = (now - file_time).num_hours();
                         info!(
                             "Deleted old audit log (age: {} hours): {}",
-                            (now - file_time).num_hours(),
+                            age_hours,
                             filepath.display()
                         );
-                        deleted_count += 1;
+                        deleted_count = deleted_count.saturating_add(1);
                     }
                     Err(e) => {
                         warn!("Failed to delete {}: {}", filepath.display(), e);
@@ -139,6 +143,7 @@ pub fn cleanup_by_age(output_dir: &str, max_age_hours: u64) -> Result<usize> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;

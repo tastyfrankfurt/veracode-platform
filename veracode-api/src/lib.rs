@@ -546,7 +546,7 @@ impl From<validation::ValidationError> for VeracodeError {
 ///
 /// This struct provides secure credential storage with the following protections:
 /// - Fields are private to prevent direct access
-/// - SecretString provides memory protection and debug redaction
+/// - `SecretString` provides memory protection and debug redaction
 /// - ARC allows safe sharing across threads
 /// - Access is only possible through controlled expose_* methods
 #[derive(Clone)]
@@ -570,9 +570,9 @@ impl VeracodeCredentials {
     /// Get API ID via memory pointer (ARC) - USE WITH CAUTION
     ///
     /// # Security Warning
-    /// This returns an `Arc<SecretString>` which allows the caller to call expose_secret().
+    /// This returns an `Arc<SecretString>` which allows the caller to call `expose_secret()`.
     /// Only use this method when you need to share credentials across thread boundaries.
-    /// For authentication, prefer using expose_api_id() directly.
+    /// For authentication, prefer using `expose_api_id()` directly.
     #[must_use]
     pub fn api_id_ptr(&self) -> Arc<SecretString> {
         Arc::clone(&self.api_id)
@@ -580,10 +580,10 @@ impl VeracodeCredentials {
 
     /// Get API key via memory pointer (ARC) - USE WITH CAUTION
     ///
-    /// # Security Warning  
-    /// This returns an `Arc<SecretString>` which allows the caller to call expose_secret().
+    /// # Security Warning
+    /// This returns an `Arc<SecretString>` which allows the caller to call `expose_secret()`.
     /// Only use this method when you need to share credentials across thread boundaries.
-    /// For authentication, prefer using expose_api_key() directly.
+    /// For authentication, prefer using `expose_api_key()` directly.
     #[must_use]
     pub fn api_key_ptr(&self) -> Arc<SecretString> {
         Arc::clone(&self.api_key)
@@ -651,7 +651,7 @@ pub struct VeracodeConfig {
     pub proxy_password: Option<SecretString>,
 }
 
-/// Custom Debug implementation for VeracodeConfig that redacts sensitive information
+/// Custom Debug implementation for `VeracodeConfig` that redacts sensitive information
 impl std::fmt::Debug for VeracodeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Redact proxy URL if it contains credentials
@@ -724,7 +724,7 @@ impl VeracodeConfig {
     /// Create a new configuration for the Commercial region.
     ///
     /// This creates a configuration that supports both REST API (api.veracode.*)
-    /// and XML API (analysiscenter.veracode.*) endpoints. The base_url defaults
+    /// and XML API (analysiscenter.veracode.*) endpoints. The `base_url` defaults
     /// to REST API for most modules, while sandbox scan operations automatically
     /// use the XML API endpoint.
     ///
@@ -959,7 +959,7 @@ impl VeracodeConfig {
     ///
     /// Configures username and password for proxy authentication using HTTP Basic Auth.
     /// This is more secure than embedding credentials in the proxy URL as the credentials
-    /// are stored using SecretString and properly redacted in debug output.
+    /// are stored using `SecretString` and properly redacted in debug output.
     ///
     /// # Arguments
     ///

@@ -89,8 +89,8 @@ impl TempDir {
         let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
         let pid = std::process::id();
 
         format!("{}_{}_{:016x}_{}", prefix, pid, nanos, counter)
@@ -116,6 +116,7 @@ impl TempDir {
     }
 
     /// Get the path to the temporary directory
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -123,6 +124,7 @@ impl TempDir {
     /// Persist the directory (don't clean up on drop)
     ///
     /// Returns the path to the directory
+    #[must_use]
     #[allow(dead_code)]
     pub fn into_path(mut self) -> PathBuf {
         self.persist = true;
@@ -148,6 +150,7 @@ impl AsRef<Path> for TempDir {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]

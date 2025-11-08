@@ -213,6 +213,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the workflow result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn execute_complete_workflow(
         &self,
         config: WorkflowConfig,
@@ -472,6 +477,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing application and sandbox information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn ensure_app_and_sandbox(
         &self,
         app_name: &str,
@@ -500,6 +510,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the application or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn get_application_by_name(&self, app_name: &str) -> WorkflowResult<Application> {
         match self.client.get_application_by_name(app_name).await? {
             Some(app) => Ok(app),
@@ -519,6 +534,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn get_sandbox_by_name(
         &self,
         app_guid: &str,
@@ -548,6 +568,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn delete_sandbox_builds(
         &self,
         app_name: &str,
@@ -604,6 +629,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn delete_sandbox(&self, app_name: &str, sandbox_name: &str) -> WorkflowResult<()> {
         info!("🗑️  Deleting sandbox '{sandbox_name}'...");
 
@@ -648,6 +678,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn delete_application(&self, app_name: &str) -> WorkflowResult<()> {
         info!("🗑️  Deleting application '{app_name}'...");
 
@@ -716,6 +751,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn complete_cleanup(&self, app_name: &str) -> WorkflowResult<()> {
         info!("🧹 Starting complete cleanup for application '{app_name}'");
         info!("   ⚠️  WARNING: This will delete ALL data associated with this application");
@@ -751,6 +791,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn ensure_build_exists(
         &self,
         app_id: &str,
@@ -778,6 +823,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn ensure_build_exists_with_policy(
         &self,
         app_id: &str,
@@ -1024,6 +1074,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn upload_large_file_with_build_management(
         &self,
         app_id: &str,
@@ -1089,6 +1144,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn upload_large_file_with_progress_and_build_management<F>(
         &self,
         app_id: &str,
@@ -1152,6 +1212,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn upload_file_with_smart_build_management(
         &self,
         app_id: &str,
@@ -1214,6 +1279,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn get_or_create_build(
         &self,
         app_id: &str,

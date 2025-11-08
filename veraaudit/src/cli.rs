@@ -312,8 +312,8 @@ fn validate_interval(s: &str) -> Result<String, String> {
     // Convert to minutes for range check
     let minutes = match unit {
         "m" => value,
-        "h" => value * 60,
-        "d" => value * 60 * 24,
+        "h" => value.saturating_mul(60),
+        "d" => value.saturating_mul(60).saturating_mul(24),
         _ => value, // Default to minutes
     };
 
@@ -364,7 +364,7 @@ fn validate_backend_window(s: &str) -> Result<String, String> {
     // Convert to minutes for range check
     let minutes = match unit {
         "m" => value,
-        "h" => value * 60,
+        "h" => value.saturating_mul(60),
         _ => value,
     };
 
@@ -499,6 +499,7 @@ fn validate_directory(s: &str) -> Result<String, String> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
     use crate::test_utils::TempDir;

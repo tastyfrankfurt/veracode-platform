@@ -10,7 +10,7 @@ use veracode_platform::{AuditReportRequest, VeracodeClient};
 ///
 /// * `client` - Veracode API client
 /// * `start_datetime` - Start datetime (format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
-/// * `end_datetime` - Optional end datetime (same formats as start_datetime)
+/// * `end_datetime` - Optional end datetime (same formats as `start_datetime`)
 /// * `audit_actions` - Optional list of audit actions to filter
 /// * `action_types` - Optional list of action types to filter
 ///
@@ -124,13 +124,14 @@ pub async fn retrieve_audit_logs_chunked(
     // Prepare to aggregate logs
     let mut all_logs: Vec<serde_json::Value> = Vec::new();
     let mut current_start = start_dt;
-    let mut chunk_count = 0;
+    let mut chunk_count: usize = 0;
 
     // Loop through chunks
     while current_start < effective_end {
-        chunk_count += 1;
+        chunk_count = chunk_count.saturating_add(1);
 
         // Calculate chunk end: current_start + interval (but not beyond effective_end)
+        #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
         let chunk_end_calculated = current_start + chrono::Duration::minutes(interval_minutes);
         let chunk_end = if chunk_end_calculated > effective_end {
             effective_end
@@ -164,6 +165,7 @@ pub async fn retrieve_audit_logs_chunked(
 
         if chunk_logs.is_empty() {
             // Check if chunk end is within backend refresh window from now
+            #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
             let minutes_from_now = (now_dt - chunk_end).num_minutes().abs();
 
             if minutes_from_now <= backend_window_minutes {
