@@ -20,6 +20,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Code Quality**: Implemented helper functions (`parse_build_from_attributes`, `parse_file_from_attributes`, `parse_module_from_attributes`) to eliminate code duplication between `Event::Start` and `Event::Empty` handlers
   - **Testing**: All fixes verified with actual XML responses from Veracode API
 
+- **Floating Point Precision in Retry Logic**: Fixed Miri test failure caused by floating point truncation in exponential backoff calculations
+  - **Issue**: Exponential backoff calculation `1000.0 * 2.0^2` was truncating to `3999` instead of rounding to `4000`
+  - **Fix**: Added `.round()` before casting to `u64` in both delay_ms and jitter_range calculations
+  - **Impact**: Ensures predictable retry delays and prevents off-by-one millisecond errors
+  - **Testing**: Added `#[cfg_attr(miri, ignore)]` to tests using `SystemTime::now()` (not supported in Miri's isolated environment)
+
 ### Changed
 - **Build API**: Enhanced `parse_build_list()` to properly handle both opening and self-closing `<build>` tags
 - **Scan API**: Enhanced `parse_file_list()` to properly handle both opening and self-closing `<file>` tags
