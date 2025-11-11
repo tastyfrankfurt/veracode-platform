@@ -866,7 +866,12 @@ impl BuildApi {
     /// Parse build attributes from XML element (handles both opening and self-closing tags)
     fn parse_build_from_attributes<'a>(
         &self,
-        attributes: impl Iterator<Item = Result<quick_xml::events::attributes::Attribute<'a>, quick_xml::events::attributes::AttrError>>,
+        attributes: impl Iterator<
+            Item = Result<
+                quick_xml::events::attributes::Attribute<'a>,
+                quick_xml::events::attributes::AttrError,
+            >,
+        >,
         app_id: &str,
         app_name: &Option<String>,
     ) -> Build {
@@ -902,9 +907,7 @@ impl BuildApi {
                 "version" => build.version = Some(value.into_owned()),
                 "sandbox_id" => build.sandbox_id = Some(value.into_owned()),
                 "sandbox_name" => build.sandbox_name = Some(value.into_owned()),
-                "lifecycle_stage" => {
-                    build.lifecycle_stage = Some(value.into_owned())
-                }
+                "lifecycle_stage" => build.lifecycle_stage = Some(value.into_owned()),
                 "submitter" => build.submitter = Some(value.into_owned()),
                 "platform" => build.platform = Some(value.into_owned()),
                 "analysis_unit" => build.analysis_unit = Some(value.into_owned()),
@@ -924,17 +927,13 @@ impl BuildApi {
                     build.legacy_scan_engine = value.parse::<bool>().ok();
                 }
                 "launch_date" => {
-                    if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y")
-                    {
+                    if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y") {
                         build.launch_date = Some(date);
                     }
                 }
                 "policy_updated_date" => {
-                    if let Ok(datetime) =
-                        chrono::DateTime::parse_from_rfc3339(&value)
-                    {
-                        build.policy_updated_date =
-                            Some(datetime.with_timezone(&Utc));
+                    if let Ok(datetime) = chrono::DateTime::parse_from_rfc3339(&value) {
+                        build.policy_updated_date = Some(datetime.with_timezone(&Utc));
                     }
                 }
                 _ => {

@@ -1256,7 +1256,12 @@ impl ScanApi {
     /// Helper function to parse module attributes from XML element
     fn parse_module_from_attributes<'a>(
         &self,
-        attributes: impl Iterator<Item = Result<quick_xml::events::attributes::Attribute<'a>, quick_xml::events::attributes::AttrError>>,
+        attributes: impl Iterator<
+            Item = Result<
+                quick_xml::events::attributes::Attribute<'a>,
+                quick_xml::events::attributes::AttrError,
+            >,
+        >,
         has_fatal_errors: &mut bool,
     ) -> ScanModule {
         let mut module = ScanModule {
@@ -1349,10 +1354,8 @@ impl ScanApi {
                 Ok(Event::Empty(ref e)) => {
                     // Handle self-closing module tags like <module ... />
                     if e.name().as_ref() == b"module" {
-                        let module = self.parse_module_from_attributes(
-                            e.attributes(),
-                            &mut has_fatal_errors,
-                        );
+                        let module = self
+                            .parse_module_from_attributes(e.attributes(), &mut has_fatal_errors);
                         modules.push(module);
                     }
                 }
@@ -1393,7 +1396,12 @@ impl ScanApi {
     /// Helper function to parse file attributes from XML element
     fn parse_file_from_attributes<'a>(
         &self,
-        attributes: impl Iterator<Item = Result<quick_xml::events::attributes::Attribute<'a>, quick_xml::events::attributes::AttrError>>,
+        attributes: impl Iterator<
+            Item = Result<
+                quick_xml::events::attributes::Attribute<'a>,
+                quick_xml::events::attributes::AttrError,
+            >,
+        >,
     ) -> UploadedFile {
         let mut file = UploadedFile {
             file_id: String::new(),
@@ -1414,9 +1422,7 @@ impl ScanApi {
                     }
                 }
                 b"file_status" => file.file_status = attr_to_string(&attr.value),
-                b"md5" => {
-                    file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string())
-                }
+                b"md5" => file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string()),
                 _ => {}
             }
         }
