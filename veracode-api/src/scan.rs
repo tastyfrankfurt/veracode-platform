@@ -1253,6 +1253,47 @@ impl ScanApi {
         }
     }
 
+    /// Helper function to parse module attributes from XML element
+    fn parse_module_from_attributes<'a>(
+        &self,
+        attributes: impl Iterator<Item = Result<quick_xml::events::attributes::Attribute<'a>, quick_xml::events::attributes::AttrError>>,
+        has_fatal_errors: &mut bool,
+    ) -> ScanModule {
+        let mut module = ScanModule {
+            id: String::new(),
+            name: String::new(),
+            module_type: String::new(),
+            is_fatal: false,
+            selected: false,
+            size: None,
+            platform: None,
+        };
+
+        for attr in attributes.flatten() {
+            match attr.key.as_ref() {
+                b"id" => module.id = attr_to_string(&attr.value),
+                b"name" => module.name = attr_to_string(&attr.value),
+                b"type" => module.module_type = attr_to_string(&attr.value),
+                b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
+                b"selected" => module.selected = attr.value.as_ref() == b"true",
+                b"has_fatal_errors" => {
+                    if attr.value.as_ref() == b"true" {
+                        *has_fatal_errors = true;
+                    }
+                }
+                b"size" => {
+                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
+                        module.size = size_str.parse().ok();
+                    }
+                }
+                b"platform" => module.platform = Some(attr_to_string(&attr.value)),
+                _ => {}
+            }
+        }
+
+        module
+    }
+
     fn parse_prescan_results(
         &self,
         xml: &str,
@@ -1296,43 +1337,23 @@ impl ScanApi {
                             }
                         }
                         b"module" => {
-                            let mut module = ScanModule {
-                                id: String::new(),
-                                name: String::new(),
-                                module_type: String::new(),
-                                is_fatal: false,
-                                selected: false,
-                                size: None,
-                                platform: None,
-                            };
-
-                            for attr in e.attributes().flatten() {
-                                match attr.key.as_ref() {
-                                    b"id" => module.id = attr_to_string(&attr.value),
-                                    b"name" => module.name = attr_to_string(&attr.value),
-                                    b"type" => module.module_type = attr_to_string(&attr.value),
-                                    b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
-                                    b"selected" => module.selected = attr.value.as_ref() == b"true",
-                                    b"has_fatal_errors" => {
-                                        if attr.value.as_ref() == b"true" {
-                                            has_fatal_errors = true;
-                                        }
-                                    }
-                                    b"size" => {
-                                        if let Ok(size_str) = String::from_utf8(attr.value.to_vec())
-                                        {
-                                            module.size = size_str.parse().ok();
-                                        }
-                                    }
-                                    b"platform" => {
-                                        module.platform = Some(attr_to_string(&attr.value))
-                                    }
-                                    _ => {}
-                                }
-                            }
+                            let module = self.parse_module_from_attributes(
+                                e.attributes(),
+                                &mut has_fatal_errors,
+                            );
                             modules.push(module);
                         }
                         _ => {}
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing module tags like <module ... />
+                    if e.name().as_ref() == b"module" {
+                        let module = self.parse_module_from_attributes(
+                            e.attributes(),
+                            &mut has_fatal_errors,
+                        );
+                        modules.push(module);
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -1369,6 +1390,40 @@ impl ScanApi {
         })
     }
 
+    /// Helper function to parse file attributes from XML element
+    fn parse_file_from_attributes<'a>(
+        &self,
+        attributes: impl Iterator<Item = Result<quick_xml::events::attributes::Attribute<'a>, quick_xml::events::attributes::AttrError>>,
+    ) -> UploadedFile {
+        let mut file = UploadedFile {
+            file_id: String::new(),
+            file_name: String::new(),
+            file_size: 0,
+            uploaded: Utc::now(),
+            file_status: "Unknown".to_string(),
+            md5: None,
+        };
+
+        for attr in attributes.flatten() {
+            match attr.key.as_ref() {
+                b"file_id" => file.file_id = attr_to_string(&attr.value),
+                b"file_name" => file.file_name = attr_to_string(&attr.value),
+                b"file_size" => {
+                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
+                        file.file_size = size_str.parse().unwrap_or(0);
+                    }
+                }
+                b"file_status" => file.file_status = attr_to_string(&attr.value),
+                b"md5" => {
+                    file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string())
+                }
+                _ => {}
+            }
+        }
+
+        file
+    }
+
     fn parse_file_list(&self, xml: &str) -> Result<Vec<UploadedFile>, ScanError> {
         let mut reader = Reader::from_str(xml);
         reader.config_mut().trim_text(true);
@@ -1380,32 +1435,14 @@ impl ScanApi {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == b"file" {
-                        let mut file = UploadedFile {
-                            file_id: String::new(),
-                            file_name: String::new(),
-                            file_size: 0,
-                            uploaded: Utc::now(),
-                            file_status: "Unknown".to_string(),
-                            md5: None,
-                        };
-
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"file_id" => file.file_id = attr_to_string(&attr.value),
-                                b"file_name" => file.file_name = attr_to_string(&attr.value),
-                                b"file_size" => {
-                                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
-                                        file.file_size = size_str.parse().unwrap_or(0);
-                                    }
-                                }
-                                b"file_status" => file.file_status = attr_to_string(&attr.value),
-                                b"md5" => {
-                                    file.md5 =
-                                        Some(String::from_utf8_lossy(&attr.value).to_string())
-                                }
-                                _ => {}
-                            }
-                        }
+                        let file = self.parse_file_from_attributes(e.attributes());
+                        files.push(file);
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing file tags like <file ... />
+                    if e.name().as_ref() == b"file" {
+                        let file = self.parse_file_from_attributes(e.attributes());
                         files.push(file);
                     }
                 }

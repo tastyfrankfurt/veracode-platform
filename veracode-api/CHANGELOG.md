@@ -5,6 +5,32 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.3] - 2025-11-12
+
+### Fixed
+- **XML Parsing Bug - Self-Closing Tags** (HIGH SEVERITY): Fixed critical bug where self-closing XML tags were being silently ignored
+  - **Issue**: XML parsers only handled `Event::Start` (opening tags like `<build>`) but not `Event::Empty` (self-closing tags like `<build ... />`)
+  - **Impact**: API responses using self-closing tags returned zero results despite data being present
+  - **Root Cause**: Veracode API `/api/5.0/getbuildlist.do` returns self-closing `<build />` tags, which were falling through to catch-all `_ => {}` handler
+  - **Fix**: Added `Event::Empty` handling to all affected XML parsers with helper functions to eliminate code duplication
+  - **Affected Modules**:
+    - `src/build.rs` - `parse_build_list()` method (build retrieval completely broken)
+    - `src/scan.rs` - `parse_file_list()` method (file list retrieval broken)
+    - `src/scan.rs` - `parse_prescan_results()` method (prescan module detection broken)
+  - **Code Quality**: Implemented helper functions (`parse_build_from_attributes`, `parse_file_from_attributes`, `parse_module_from_attributes`) to eliminate code duplication between `Event::Start` and `Event::Empty` handlers
+  - **Testing**: All fixes verified with actual XML responses from Veracode API
+
+### Changed
+- **Build API**: Enhanced `parse_build_list()` to properly handle both opening and self-closing `<build>` tags
+- **Scan API**: Enhanced `parse_file_list()` to properly handle both opening and self-closing `<file>` tags
+- **Scan API**: Enhanced `parse_prescan_results()` to properly handle both opening and self-closing `<module>` tags
+
+### Technical Details
+- **Helper Functions**: Added reusable attribute parsing functions that accept `Iterator<Item = Result<Attribute, AttrError>>` for type safety
+- **DRY Principle**: Eliminated 150+ lines of duplicated XML parsing code by extracting shared logic into helper methods
+- **Backward Compatible**: Existing code using opening tags continues to work unchanged
+- **Performance**: No performance impact - helper functions are inlined by compiler
+
 ## [0.7.1] - 2025-11-03
 
 ### Security

@@ -863,6 +863,91 @@ impl BuildApi {
         Ok(build)
     }
 
+    /// Parse build attributes from XML element (handles both opening and self-closing tags)
+    fn parse_build_from_attributes<'a>(
+        &self,
+        attributes: impl Iterator<Item = Result<quick_xml::events::attributes::Attribute<'a>, quick_xml::events::attributes::AttrError>>,
+        app_id: &str,
+        app_name: &Option<String>,
+    ) -> Build {
+        let mut build = Build {
+            build_id: String::new(),
+            app_id: app_id.to_string(),
+            version: None,
+            app_name: app_name.clone(),
+            sandbox_id: None,
+            sandbox_name: None,
+            lifecycle_stage: None,
+            launch_date: None,
+            submitter: None,
+            platform: None,
+            analysis_unit: None,
+            policy_name: None,
+            policy_version: None,
+            policy_compliance_status: None,
+            rules_status: None,
+            grace_period_expired: None,
+            scan_overdue: None,
+            policy_updated_date: None,
+            legacy_scan_engine: None,
+            attributes: HashMap::new(),
+        };
+
+        for attr in attributes.flatten() {
+            let key = String::from_utf8_lossy(attr.key.as_ref());
+            let value = String::from_utf8_lossy(&attr.value);
+
+            match key.as_ref() {
+                "build_id" => build.build_id = value.into_owned(),
+                "version" => build.version = Some(value.into_owned()),
+                "sandbox_id" => build.sandbox_id = Some(value.into_owned()),
+                "sandbox_name" => build.sandbox_name = Some(value.into_owned()),
+                "lifecycle_stage" => {
+                    build.lifecycle_stage = Some(value.into_owned())
+                }
+                "submitter" => build.submitter = Some(value.into_owned()),
+                "platform" => build.platform = Some(value.into_owned()),
+                "analysis_unit" => build.analysis_unit = Some(value.into_owned()),
+                "policy_name" => build.policy_name = Some(value.into_owned()),
+                "policy_version" => build.policy_version = Some(value.into_owned()),
+                "policy_compliance_status" => {
+                    build.policy_compliance_status = Some(value.into_owned())
+                }
+                "rules_status" => build.rules_status = Some(value.into_owned()),
+                "grace_period_expired" => {
+                    build.grace_period_expired = value.parse::<bool>().ok();
+                }
+                "scan_overdue" => {
+                    build.scan_overdue = value.parse::<bool>().ok();
+                }
+                "legacy_scan_engine" => {
+                    build.legacy_scan_engine = value.parse::<bool>().ok();
+                }
+                "launch_date" => {
+                    if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y")
+                    {
+                        build.launch_date = Some(date);
+                    }
+                }
+                "policy_updated_date" => {
+                    if let Ok(datetime) =
+                        chrono::DateTime::parse_from_rfc3339(&value)
+                    {
+                        build.policy_updated_date =
+                            Some(datetime.with_timezone(&Utc));
+                    }
+                }
+                _ => {
+                    build
+                        .attributes
+                        .insert(key.into_owned(), value.into_owned());
+                }
+            }
+        }
+
+        build
+    }
+
     /// Parse build list XML response
     fn parse_build_list(&self, xml: &str) -> Result<BuildList, BuildError> {
         let mut reader = Reader::from_str(xml);
@@ -893,80 +978,11 @@ impl BuildApi {
                         }
                     }
                     b"build" => {
-                        let mut build = Build {
-                            build_id: String::new(),
-                            app_id: build_list.app_id.clone(),
-                            version: None,
-                            app_name: build_list.app_name.clone(),
-                            sandbox_id: None,
-                            sandbox_name: None,
-                            lifecycle_stage: None,
-                            launch_date: None,
-                            submitter: None,
-                            platform: None,
-                            analysis_unit: None,
-                            policy_name: None,
-                            policy_version: None,
-                            policy_compliance_status: None,
-                            rules_status: None,
-                            grace_period_expired: None,
-                            scan_overdue: None,
-                            policy_updated_date: None,
-                            legacy_scan_engine: None,
-                            attributes: HashMap::new(),
-                        };
-
-                        for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
-
-                            match key.as_ref() {
-                                "build_id" => build.build_id = value.into_owned(),
-                                "version" => build.version = Some(value.into_owned()),
-                                "sandbox_id" => build.sandbox_id = Some(value.into_owned()),
-                                "sandbox_name" => build.sandbox_name = Some(value.into_owned()),
-                                "lifecycle_stage" => {
-                                    build.lifecycle_stage = Some(value.into_owned())
-                                }
-                                "submitter" => build.submitter = Some(value.into_owned()),
-                                "platform" => build.platform = Some(value.into_owned()),
-                                "analysis_unit" => build.analysis_unit = Some(value.into_owned()),
-                                "policy_name" => build.policy_name = Some(value.into_owned()),
-                                "policy_version" => build.policy_version = Some(value.into_owned()),
-                                "policy_compliance_status" => {
-                                    build.policy_compliance_status = Some(value.into_owned())
-                                }
-                                "rules_status" => build.rules_status = Some(value.into_owned()),
-                                "grace_period_expired" => {
-                                    build.grace_period_expired = value.parse::<bool>().ok();
-                                }
-                                "scan_overdue" => {
-                                    build.scan_overdue = value.parse::<bool>().ok();
-                                }
-                                "legacy_scan_engine" => {
-                                    build.legacy_scan_engine = value.parse::<bool>().ok();
-                                }
-                                "launch_date" => {
-                                    if let Ok(date) = NaiveDate::parse_from_str(&value, "%m/%d/%Y")
-                                    {
-                                        build.launch_date = Some(date);
-                                    }
-                                }
-                                "policy_updated_date" => {
-                                    if let Ok(datetime) =
-                                        chrono::DateTime::parse_from_rfc3339(&value)
-                                    {
-                                        build.policy_updated_date =
-                                            Some(datetime.with_timezone(&Utc));
-                                    }
-                                }
-                                _ => {
-                                    build
-                                        .attributes
-                                        .insert(key.into_owned(), value.into_owned());
-                                }
-                            }
-                        }
+                        let build = self.parse_build_from_attributes(
+                            e.attributes(),
+                            &build_list.app_id,
+                            &build_list.app_name,
+                        );
 
                         if !build.build_id.is_empty() {
                             build_list.builds.push(build);
@@ -974,6 +990,20 @@ impl BuildApi {
                     }
                     _ => {}
                 },
+                Ok(Event::Empty(ref e)) => {
+                    // Handle self-closing build tags like <build ... />
+                    if e.name().as_ref() == b"build" {
+                        let build = self.parse_build_from_attributes(
+                            e.attributes(),
+                            &build_list.app_id,
+                            &build_list.app_name,
+                        );
+
+                        if !build.build_id.is_empty() {
+                            build_list.builds.push(build);
+                        }
+                    }
+                }
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
                 _ => {}
