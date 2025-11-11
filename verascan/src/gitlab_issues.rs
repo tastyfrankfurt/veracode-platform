@@ -1113,6 +1113,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_resolve_file_path_basic() {
         let client = GitLabIssuesClient {
             client: Client::new(),
@@ -1163,6 +1164,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_severity_name_conversion() {
         let _client = GitLabIssuesClient {
             client: Client::new(),
@@ -1472,6 +1474,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_is_retryable_error() {
         let _client = Client::new();
         let retry_config = RetryConfig::default();
@@ -1490,6 +1493,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_jitter_calculation() {
         let _client = Client::new();
         let retry_config = RetryConfig::default();
@@ -1544,6 +1548,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_pipeline_url_generation_integration() {
         // Test that the client properly uses the shared utility for pipeline URL generation
         let client = GitLabIssuesClient {

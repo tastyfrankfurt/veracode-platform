@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::sandbox::{CreateSandboxRequest, SandboxApi, SandboxError};
 use veracode_platform::{VeracodeClient, VeracodeConfig, VeracodeError};
 
@@ -231,7 +233,7 @@ mod tests {
 
         let config = VeracodeConfig::new("test-api-id", "test-api-key");
 
-        let client = VeracodeClient::new(config).unwrap();
+        let client = VeracodeClient::new(config).expect("should create client");
         let sandbox_api = SandboxApi::new(&client);
 
         // Test creating a request with invalid name

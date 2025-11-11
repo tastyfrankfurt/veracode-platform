@@ -1,7 +1,7 @@
 use crate::credentials::{
     CredentialError, CredentialSource, SecureApiCredentials, VaultConfig, validate_api_credential,
 };
-use backoff::{ExponentialBackoff, future::retry};
+use backon::{ExponentialBuilder, Retryable};
 use log::{debug, error, info, warn};
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer};
@@ -493,14 +493,6 @@ async fn authenticate_vault(
 ) -> Result<(), CredentialError> {
     info!("Authenticating with vault using OIDC");
 
-    let backoff = ExponentialBackoff {
-        initial_interval: Duration::from_millis(500),
-        max_interval: Duration::from_secs(10),
-        max_elapsed_time: Some(Duration::from_secs(60)),
-        multiplier: 2.0,
-        ..Default::default()
-    };
-
     // Extract mount point from configurable auth path
     let auth_path = &config.auth_path;
     let mount_point = if let Some(stripped) = auth_path.strip_prefix("auth/") {
@@ -513,107 +505,27 @@ async fn authenticate_vault(
         config.role
     );
 
-    let operation = || async {
+    let auth_info = (|| async {
         debug!("Attempting JWT login...");
-        match oidc::login(client, mount_point, &config.jwt, Some(config.role.clone())).await {
-            Ok(auth_info) => {
-                info!("JWT authentication successful");
-                Ok(auth_info)
-            }
-            Err(e) => {
-                warn!("JWT authentication failed: {e}");
+        oidc::login(client, mount_point, &config.jwt, Some(config.role.clone())).await
+    })
+    .retry(
+        ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(500))
+            .with_max_delay(Duration::from_secs(10))
+            .with_max_times(10) // Approximately 60 seconds with exponential backoff
+            .with_factor(2.0),
+    )
+    .when(|e: &ClientError| is_retryable_vault_error(e))
+    .await
+    .map_err(|e| {
+        warn!("JWT authentication failed: {e}");
+        classify_vault_error(&e, "Authentication", |context| {
+            CredentialError::VaultAuthError { context }
+        })
+    })?;
 
-                // Pattern match on specific error types for better error handling
-                match &e {
-                    // Certificate/TLS errors should not be retried
-                    ClientError::RestClientBuildError { source } => {
-                        error!(
-                            "REST client build error (likely TLS/certificate issue) - not retrying: {source}"
-                        );
-                        Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                            context: format!("TLS/certificate error: {source}"),
-                        }))
-                    }
-                    // API errors (like 401 Unauthorized) should not be retried
-                    ClientError::APIError { code, errors: _ } if *code == 401 || *code == 403 => {
-                        error!("Authentication failed with HTTP {code} - not retrying");
-                        Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                            context: format!("Authentication failed with HTTP {code}"),
-                        }))
-                    }
-                    // Other API errors might be retryable (5xx server errors)
-                    ClientError::APIError { code, errors: _ } if *code >= 500 => {
-                        debug!("Server error HTTP {code} - retrying");
-                        Err(backoff::Error::transient(CredentialError::VaultAuthError {
-                            context: format!("Server error HTTP {code}"),
-                        }))
-                    }
-                    // Handle RestClientError with detailed TLS/certificate detection
-                    ClientError::RestClientError { source } => {
-                        // Log the full error chain for debugging
-                        error!("REST client error details: {source}");
-                        let mut error_source = source.source();
-                        let mut level = 1;
-                        while let Some(err) = error_source {
-                            error!("Error source level {level}: {err}");
-                            error_source = err.source();
-                            level += 1;
-                        }
-
-                        // Check the underlying error message for TLS/certificate issues
-                        let error_msg = format!("{source}");
-                        if error_msg.contains("certificate")
-                            || error_msg.contains("tls")
-                            || error_msg.contains("ssl")
-                            || error_msg.contains("Certificate")
-                            || error_msg.contains("TLS")
-                            || error_msg.contains("SSL")
-                        {
-                            error!("Certificate/TLS error in request - not retrying: {source}");
-                            Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                                context: format!("TLS/certificate error: {source}"),
-                            }))
-                        } else if error_msg.contains("connection")
-                            || error_msg.contains("timeout")
-                            || error_msg.contains("rate limit")
-                            || error_msg.contains("server error")
-                        {
-                            debug!("Retryable request error - retrying: {source}");
-                            Err(backoff::Error::transient(CredentialError::VaultAuthError {
-                                context: format!("Network error: {source}"),
-                            }))
-                        } else {
-                            debug!("Unknown request error - retrying: {source}");
-                            Err(backoff::Error::transient(CredentialError::VaultAuthError {
-                                context: format!("Request error: {source}"),
-                            }))
-                        }
-                    }
-                    // Parse certificate errors should not be retried
-                    ClientError::ParseCertificateError { source, path } => {
-                        error!("Certificate parsing error at {path} - not retrying: {source}");
-                        Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                            context: format!("Certificate parsing error at {path}: {source}"),
-                        }))
-                    }
-                    // All other errors - default to retrying
-                    _ => {
-                        debug!("Other error during authentication - retrying: {e}");
-                        Err(backoff::Error::transient(CredentialError::VaultAuthError {
-                            context: format!("Authentication error: {e}"),
-                        }))
-                    }
-                }
-            }
-        }
-    };
-
-    let auth_info =
-        retry(backoff, operation)
-            .await
-            .map_err(|_| CredentialError::VaultAuthError {
-                context: "Authentication failed after all retry attempts".to_string(),
-            })?;
+    info!("JWT authentication successful");
 
     // CRITICAL FIX: Set the token on the client for subsequent requests
     client.set_token(&auth_info.client_token);
@@ -631,113 +543,31 @@ async fn retrieve_vault_secret(
 ) -> Result<SecureSecretMap, CredentialError> {
     debug!("Retrieving secret from vault path: {secret_path} using engine: {secret_engine}");
 
-    let backoff = ExponentialBackoff {
-        initial_interval: Duration::from_millis(500),
-        max_interval: Duration::from_secs(8),
-        max_elapsed_time: Some(Duration::from_secs(45)),
-        multiplier: 2.0,
-        ..Default::default()
-    };
-
-    let operation = || async {
+    (|| async {
         debug!("Attempting secret retrieval...");
-        match kv2::read::<SecureSecretMap>(client, secret_engine, secret_path).await {
-            Ok(secure_secret) => {
-                info!("Successfully retrieved secret from path: {secret_path}");
-                Ok(secure_secret)
+        kv2::read::<SecureSecretMap>(client, secret_engine, secret_path).await
+    })
+    .retry(
+        ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(500))
+            .with_max_delay(Duration::from_secs(8))
+            .with_max_times(8) // Approximately 45 seconds with exponential backoff
+            .with_factor(2.0),
+    )
+    .when(|e: &ClientError| is_retryable_vault_error(e))
+    .await
+    .map_err(|e| {
+        warn!("Secret retrieval failed: {e}");
+        classify_vault_error(&e, "Secret retrieval", |context| {
+            CredentialError::VaultSecretError {
+                path: secret_path.to_string(),
+                context,
             }
-            Err(e) => {
-                warn!("Secret retrieval failed: {e}");
-
-                // Pattern match on specific error types for better error handling
-                match &e {
-                    // API errors (like 401 Unauthorized, 403 Forbidden) should not be retried
-                    ClientError::APIError { code, errors: _ } if *code == 401 || *code == 403 => {
-                        error!("Access denied with HTTP {code} - not retrying");
-                        Err(backoff::Error::permanent(
-                            CredentialError::VaultSecretError {
-                                path: secret_path.to_string(),
-                                context: format!("Access denied with HTTP {code}"),
-                            },
-                        ))
-                    }
-                    // 404 Not Found should not be retried
-                    ClientError::APIError { code, errors: _ } if *code == 404 => {
-                        error!("Secret not found with HTTP {code} - not retrying");
-                        Err(backoff::Error::permanent(
-                            CredentialError::VaultSecretError {
-                                path: secret_path.to_string(),
-                                context: format!("Secret not found with HTTP {code}"),
-                            },
-                        ))
-                    }
-                    // Other 4xx client errors should not be retried
-                    ClientError::APIError { code, errors: _ } if *code >= 400 && *code < 500 => {
-                        error!("Client error HTTP {code} - not retrying");
-                        Err(backoff::Error::permanent(
-                            CredentialError::VaultSecretError {
-                                path: secret_path.to_string(),
-                                context: format!("Client error HTTP {code}"),
-                            },
-                        ))
-                    }
-                    // 5xx server errors might be retryable
-                    ClientError::APIError { code, errors: _ } if *code >= 500 => {
-                        debug!("Server error HTTP {code} - retrying");
-                        Err(backoff::Error::transient(
-                            CredentialError::VaultSecretError {
-                                path: secret_path.to_string(),
-                                context: format!("Server error HTTP {code}"),
-                            },
-                        ))
-                    }
-                    // For non-API errors, check error message content
-                    _ => {
-                        let error_msg = format!("{e}");
-                        if error_msg.contains("connection")
-                            || error_msg.contains("timeout")
-                            || error_msg.contains("rate limit")
-                            || error_msg.contains("server error")
-                        {
-                            debug!("Retryable error during secret retrieval - retrying...");
-                            Err(backoff::Error::transient(
-                                CredentialError::VaultSecretError {
-                                    path: secret_path.to_string(),
-                                    context: error_msg,
-                                },
-                            ))
-                        } else if error_msg.contains("not found")
-                            || error_msg.contains("forbidden")
-                            || error_msg.contains("unauthorized")
-                        {
-                            debug!("Permanent error during secret retrieval - not retrying");
-                            Err(backoff::Error::permanent(
-                                CredentialError::VaultSecretError {
-                                    path: secret_path.to_string(),
-                                    context: error_msg,
-                                },
-                            ))
-                        } else {
-                            debug!("Unknown error during secret retrieval - retrying...");
-                            Err(backoff::Error::transient(
-                                CredentialError::VaultSecretError {
-                                    path: secret_path.to_string(),
-                                    context: error_msg,
-                                },
-                            ))
-                        }
-                    }
-                }
-            }
-        }
-    };
-
-    retry(backoff, operation)
-        .await
-        .map_err(|_| CredentialError::VaultSecretError {
-            path: secret_path.to_string(),
-            context: "Secret retrieval failed after all retry attempts".to_string(),
         })
+    })
+    .inspect(|_| {
+        info!("Successfully retrieved secret from path: {secret_path}");
+    })
 }
 
 /// Parse secret path to extract engine name and path
@@ -857,76 +687,388 @@ fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError>
 async fn revoke_vault_token(client: &VaultClient) -> Result<(), CredentialError> {
     debug!("Attempting to revoke Vault token with retry logic...");
 
-    let backoff = ExponentialBackoff {
-        initial_interval: Duration::from_millis(250),
-        max_interval: Duration::from_secs(5),
-        max_elapsed_time: Some(Duration::from_secs(30)),
-        multiplier: 2.0,
-        ..Default::default()
-    };
-
-    let operation = || async {
+    (|| async {
         debug!("Attempting token revocation...");
-        match token::revoke_self(client).await {
-            Ok(_) => {
-                info!("Successfully revoked Vault token");
-                Ok(())
-            }
-            Err(e) => {
-                warn!("Token revocation failed: {e}");
+        token::revoke_self(client).await
+    })
+    .retry(
+        ExponentialBuilder::default()
+            .with_min_delay(Duration::from_millis(250))
+            .with_max_delay(Duration::from_secs(5))
+            .with_max_times(7) // Approximately 30 seconds with exponential backoff
+            .with_factor(2.0),
+    )
+    .when(|e: &ClientError| is_retryable_vault_error(e))
+    .await
+    .map_err(|e| {
+        warn!("Token revocation failed: {e}");
+        classify_vault_error(&e, "Token revocation", |context| {
+            CredentialError::VaultAuthError { context }
+        })
+    })
+    .map(|_| {
+        info!("Successfully revoked Vault token");
+    })
+}
 
-                // Pattern match on specific error types for better error handling
-                match &e {
-                    // API errors (like 401 Unauthorized, 403 Forbidden) should not be retried
-                    ClientError::APIError { code, errors: _ } if *code == 401 || *code == 403 => {
-                        error!("Token revocation access denied with HTTP {code} - not retrying");
-                        Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                            context: format!("Token revocation access denied with HTTP {code}"),
-                        }))
-                    }
-                    // Other 4xx client errors should not be retried
-                    ClientError::APIError { code, errors: _ } if *code >= 400 && *code < 500 => {
-                        error!("Token revocation client error HTTP {code} - not retrying");
-                        Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                            context: format!("Token revocation client error with HTTP {code}"),
-                        }))
-                    }
-                    // 5xx server errors might be retryable
-                    ClientError::APIError { code, errors: _ } if *code >= 500 => {
-                        debug!("Token revocation server error HTTP {code} - retrying");
-                        Err(backoff::Error::transient(CredentialError::VaultAuthError {
-                            context: format!("Token revocation server error with HTTP {code}"),
-                        }))
-                    }
-                    // For non-API errors, check error message content
-                    _ => {
-                        let error_msg = format!("{e}");
-                        if error_msg.contains("connection")
-                            || error_msg.contains("timeout")
-                            || error_msg.contains("rate limit")
-                            || error_msg.contains("server error")
-                        {
-                            debug!("Retryable error during token revocation - retrying...");
-                            Err(backoff::Error::transient(CredentialError::VaultAuthError {
-                                context: format!("Network error during revocation: {error_msg}"),
-                            }))
-                        } else {
-                            debug!("Non-retryable revocation error - failing permanently");
-                            Err(backoff::Error::permanent(CredentialError::VaultAuthError {
-                                context: format!("Token revocation error: {error_msg}"),
-                            }))
-                        }
-                    }
+/// Checks if an error chain contains a certificate/TLS error by traversing
+/// the error source chain and checking for specific rustls error types.
+///
+/// This uses proper type-based error detection instead of fragile string matching.
+fn is_certificate_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current: Option<&dyn std::error::Error> = Some(error);
+
+    while let Some(err) = current {
+        // Check for rustls::Error - requires rustls to be in scope
+        // We check the error type name as a fallback since rustls is a transitive dependency
+        let error_type = format!("{:?}", err);
+
+        // Check for io::Error with InvalidData kind (often wraps rustls errors)
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>()
+            && io_err.kind() == std::io::ErrorKind::InvalidData
+        {
+            // Check the inner error recursively
+            if let Some(inner) = io_err.get_ref()
+                && is_certificate_error(inner)
+            {
+                return true;
+            }
+            // Also check if this InvalidData error mentions certificate issues
+            let io_msg = format!("{}", io_err).to_lowercase();
+            if io_msg.contains("certificate") || io_msg.contains("invalidcertificate") {
+                return true;
+            }
+        }
+
+        // Check error debug representation for rustls certificate errors
+        // This catches rustls::Error::InvalidCertificate and related variants
+        if error_type.contains("InvalidCertificate")
+            || error_type.contains("NoCertificatesPresented")
+            || error_type.contains("UnsupportedNameType")
+        {
+            return true;
+        }
+
+        // Move to next error in chain
+        current = err.source();
+    }
+
+    false
+}
+
+/// Checks if an error chain contains a retryable network error
+/// by traversing the error source chain and checking for specific error types.
+fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
+    let mut current: Option<&dyn std::error::Error> = Some(error);
+
+    while let Some(err) = current {
+        // Check for io::Error with retryable kinds
+        if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+            match io_err.kind() {
+                std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::WouldBlock => return true,
+                _ => {}
+            }
+        }
+
+        // Check error debug representation for network-related errors
+        let error_type = format!("{:?}", err);
+        if error_type.contains("Timeout") || error_type.contains("TimedOut") {
+            return true;
+        }
+
+        // Move to next error in chain
+        current = err.source();
+    }
+
+    false
+}
+
+/// Determine if a ClientError should be retried based on error type
+///
+/// Returns true for transient/retryable errors, false for permanent errors
+fn is_retryable_vault_error(error: &ClientError) -> bool {
+    match error {
+        // Certificate/TLS Errors - NEVER retry
+        ClientError::RestClientBuildError { .. } |
+        ClientError::ParseCertificateError { .. } |
+        // File Errors - NEVER retry
+        ClientError::FileNotFoundError { .. } |
+        ClientError::FileReadError { .. } |
+        ClientError::FileWriteError { .. } |
+        // Configuration/Validation Errors - NEVER retry
+        ClientError::InvalidLoginMethodError |
+        ClientError::InvalidUpdateParameter |
+        ClientError::WrapInvalidError |
+        // Data Parsing/Response Errors - NEVER retry
+        ClientError::JsonParseError { .. } |
+        ClientError::ResponseEmptyError |
+        ClientError::ResponseDataEmptyError |
+        ClientError::ResponseWrapError => false,
+
+        // HTTP API Errors - Classify by status code
+        ClientError::APIError { code, .. } => {
+            match *code {
+                // Transient Errors (Retryable)
+                412 | 429 | 472 | 473 | 500 | 502 | 503 => true,
+                // Permanent 4xx errors (client errors)
+                400..=499 => false,
+                // Permanent 501 - Vault not initialized
+                501 => false,
+                // Other 5xx errors are transient (server errors)
+                500..=599 => true,
+                // Unexpected status codes - default to permanent (safe default)
+                _ => false,
+            }
+        }
+
+        // RestClientError - Type-based error detection
+        ClientError::RestClientError { source } => {
+            // Certificate/TLS errors are not retryable
+            if is_certificate_error(source) {
+                false
+            }
+            // Network errors are retryable
+            else if is_network_error(source) {
+                true
+            }
+            // Unknown REST client errors - default to permanent (safe default)
+            else {
+                false
+            }
+        }
+    }
+}
+
+/// Classify a ClientError and create a CredentialError with proper context
+///
+/// This function implements proper error handling based on:
+/// - Vault API documentation for HTTP status codes
+/// - vaultrs ClientError variants
+/// - Provides detailed error messages for debugging
+fn classify_vault_error<E>(
+    error: &ClientError,
+    operation_context: &str,
+    error_constructor: impl Fn(String) -> E,
+) -> E {
+    match error {
+        // Certificate/TLS Errors
+        ClientError::RestClientBuildError { source } => {
+            error!(
+                "{operation_context}: REST client build error (likely TLS/certificate) - not retrying: {source}"
+            );
+            error_constructor(format!("REST client build error: {source}"))
+        }
+
+        ClientError::ParseCertificateError { source, path } => {
+            error!(
+                "{operation_context}: Certificate parsing error at {path} - not retrying: {source}"
+            );
+            error_constructor(format!("Certificate parsing error at {path}: {source}"))
+        }
+
+        // File Errors
+        ClientError::FileNotFoundError { path } => {
+            error!("{operation_context}: File not found: {path} - not retrying");
+            error_constructor(format!("File not found: {path}"))
+        }
+
+        ClientError::FileReadError { source, path } => {
+            error!("{operation_context}: File read error at {path} - not retrying: {source}");
+            error_constructor(format!("File read error at {path}: {source}"))
+        }
+
+        ClientError::FileWriteError { source, path } => {
+            error!("{operation_context}: File write error at {path} - not retrying: {source}");
+            error_constructor(format!("File write error at {path}: {source}"))
+        }
+
+        // Configuration/Validation Errors
+        ClientError::InvalidLoginMethodError => {
+            error!("{operation_context}: Invalid login method - not retrying");
+            error_constructor("Invalid login method".to_string())
+        }
+
+        ClientError::InvalidUpdateParameter => {
+            error!("{operation_context}: Invalid update parameter - not retrying");
+            error_constructor("Invalid update parameter".to_string())
+        }
+
+        ClientError::WrapInvalidError => {
+            error!("{operation_context}: Invalid wrap operation - not retrying");
+            error_constructor("Invalid wrap operation".to_string())
+        }
+
+        // Data Parsing/Response Errors
+        ClientError::JsonParseError { source } => {
+            error!("{operation_context}: JSON parsing error - not retrying: {source}");
+            error_constructor(format!("JSON parsing error: {source}"))
+        }
+
+        ClientError::ResponseEmptyError => {
+            error!("{operation_context}: Response empty - not retrying");
+            error_constructor("Empty response when data expected".to_string())
+        }
+
+        ClientError::ResponseDataEmptyError => {
+            error!("{operation_context}: Response data empty - not retrying");
+            error_constructor("Empty response data".to_string())
+        }
+
+        ClientError::ResponseWrapError => {
+            error!("{operation_context}: Response wrap error - not retrying");
+            error_constructor("Response wrap error".to_string())
+        }
+
+        // HTTP API Errors
+        ClientError::APIError { code, errors } => {
+            let error_details = if !errors.is_empty() {
+                format!(": {}", errors.join(", "))
+            } else {
+                String::new()
+            };
+
+            match *code {
+                // Transient Errors (Retryable)
+                412 => {
+                    debug!(
+                        "{operation_context}: Precondition failed (HTTP 412){error_details} - retrying"
+                    );
+                    error_constructor(format!(
+                        "Precondition failed - eventually consistent data missing (HTTP 412){error_details}"
+                    ))
+                }
+                429 => {
+                    debug!(
+                        "{operation_context}: Standby node (HTTP 429){error_details} - retrying"
+                    );
+                    error_constructor(format!("Standby node status (HTTP 429){error_details}"))
+                }
+                472 => {
+                    debug!(
+                        "{operation_context}: DR replication secondary (HTTP 472){error_details} - retrying"
+                    );
+                    error_constructor(format!(
+                        "DR replication secondary (HTTP 472){error_details}"
+                    ))
+                }
+                473 => {
+                    debug!(
+                        "{operation_context}: Performance standby (HTTP 473){error_details} - retrying"
+                    );
+                    error_constructor(format!("Performance standby (HTTP 473){error_details}"))
+                }
+                500 => {
+                    debug!(
+                        "{operation_context}: Internal server error (HTTP 500){error_details} - retrying"
+                    );
+                    error_constructor(format!("Internal server error (HTTP 500){error_details}"))
+                }
+                502 => {
+                    debug!("{operation_context}: Bad gateway (HTTP 502){error_details} - retrying");
+                    error_constructor(format!(
+                        "Third-party service error (HTTP 502){error_details}"
+                    ))
+                }
+                503 => {
+                    debug!(
+                        "{operation_context}: Service unavailable (HTTP 503){error_details} - retrying"
+                    );
+                    error_constructor(format!(
+                        "Vault sealed or maintenance (HTTP 503){error_details}"
+                    ))
+                }
+
+                // Permanent Errors (Client Errors)
+                400 => {
+                    error!(
+                        "{operation_context}: Bad request (HTTP 400){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Bad request (HTTP 400){error_details}"))
+                }
+                401 => {
+                    error!(
+                        "{operation_context}: Unauthorized (HTTP 401){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Unauthorized (HTTP 401){error_details}"))
+                }
+                403 => {
+                    error!(
+                        "{operation_context}: Forbidden (HTTP 403){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Forbidden/Access denied (HTTP 403){error_details}"))
+                }
+                404 => {
+                    error!(
+                        "{operation_context}: Not found (HTTP 404){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Not found (HTTP 404){error_details}"))
+                }
+                405 => {
+                    error!(
+                        "{operation_context}: Method not allowed (HTTP 405){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Method not allowed (HTTP 405){error_details}"))
+                }
+                501 => {
+                    error!(
+                        "{operation_context}: Vault not initialized (HTTP 501){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Vault not initialized (HTTP 501){error_details}"))
+                }
+
+                // Catch-all Patterns
+                code if (400..500).contains(&code) => {
+                    error!(
+                        "{operation_context}: Client error (HTTP {code}){error_details} - not retrying"
+                    );
+                    error_constructor(format!("Client error (HTTP {code}){error_details}"))
+                }
+                code if (500..600).contains(&code) => {
+                    debug!(
+                        "{operation_context}: Server error (HTTP {code}){error_details} - retrying"
+                    );
+                    error_constructor(format!("Server error (HTTP {code}){error_details}"))
+                }
+                code => {
+                    error!(
+                        "{operation_context}: Unexpected HTTP {code}{error_details} - not retrying"
+                    );
+                    error_constructor(format!("Unexpected HTTP status {code}{error_details}"))
                 }
             }
         }
-    };
 
-    retry(backoff, operation)
-        .await
-        .map_err(|_| CredentialError::VaultAuthError {
-            context: "Token revocation failed after all retry attempts".to_string(),
-        })
+        // RestClientError - Type-based error detection
+        ClientError::RestClientError { source } => {
+            // Log the full error chain for debugging
+            error!("{operation_context}: REST client error: {source}");
+            let mut error_source = source.source();
+            let mut level = 1;
+            while let Some(err) = error_source {
+                error!("Error source level {level}: {err}");
+                error_source = err.source();
+                level += 1;
+            }
+
+            if is_certificate_error(source) {
+                error!(
+                    "{operation_context}: Certificate/TLS error detected - not retrying: {source}"
+                );
+                error_constructor(format!("TLS/certificate error: {source}"))
+            } else if is_network_error(source) {
+                debug!("{operation_context}: Network error - retrying: {source}");
+                error_constructor(format!("Network error: {source}"))
+            } else {
+                error!("{operation_context}: Unknown REST client error - not retrying: {source}");
+                error_constructor(format!("REST client error: {source}"))
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1193,5 +1335,192 @@ mod tests {
 
         let missing = secret.remove("nonexistent");
         assert!(missing.is_none());
+    }
+
+    // Tests for is_retryable_vault_error function
+
+    #[test]
+    fn test_is_retryable_http_403_forbidden() {
+        let error = ClientError::APIError {
+            code: 403,
+            errors: vec!["access denied".to_string()],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_http_401_unauthorized() {
+        let error = ClientError::APIError {
+            code: 401,
+            errors: vec![],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_http_404_not_found() {
+        let error = ClientError::APIError {
+            code: 404,
+            errors: vec![],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_http_400_bad_request() {
+        let error = ClientError::APIError {
+            code: 400,
+            errors: vec!["invalid request".to_string()],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_http_405_method_not_allowed() {
+        let error = ClientError::APIError {
+            code: 405,
+            errors: vec![],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_http_501_vault_not_initialized() {
+        let error = ClientError::APIError {
+            code: 501,
+            errors: vec![],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_http_412_precondition_failed() {
+        let error = ClientError::APIError {
+            code: 412,
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_http_429_standby_node() {
+        let error = ClientError::APIError {
+            code: 429,
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_http_472_dr_replication() {
+        let error = ClientError::APIError {
+            code: 472,
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_http_473_performance_standby() {
+        let error = ClientError::APIError {
+            code: 473,
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_http_500_internal_server_error() {
+        let error = ClientError::APIError {
+            code: 500,
+            errors: vec!["internal error".to_string()],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_http_502_bad_gateway() {
+        let error = ClientError::APIError {
+            code: 502,
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_http_503_service_unavailable() {
+        let error = ClientError::APIError {
+            code: 503,
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_file_not_found() {
+        let error = ClientError::FileNotFoundError {
+            path: "/path/to/file".to_string(),
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_invalid_login_method() {
+        let error = ClientError::InvalidLoginMethodError;
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_response_empty() {
+        let error = ClientError::ResponseEmptyError;
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_response_data_empty() {
+        let error = ClientError::ResponseDataEmptyError;
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_invalid_update_parameter() {
+        let error = ClientError::InvalidUpdateParameter;
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_wrap_invalid() {
+        let error = ClientError::WrapInvalidError;
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_generic_4xx_is_permanent() {
+        // Test that other 4xx errors (not explicitly handled) are permanent
+        let error = ClientError::APIError {
+            code: 409, // Conflict
+            errors: vec![],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
+    }
+
+    #[test]
+    fn test_is_retryable_generic_5xx_is_transient() {
+        // Test that other 5xx errors (not explicitly handled) are transient
+        let error = ClientError::APIError {
+            code: 504, // Gateway Timeout
+            errors: vec![],
+        };
+        assert!(is_retryable_vault_error(&error)); // Retryable (transient)
+    }
+
+    #[test]
+    fn test_is_retryable_unexpected_status_is_permanent() {
+        // Test that unexpected status codes default to permanent (safe default)
+        let error = ClientError::APIError {
+            code: 999,
+            errors: vec![],
+        };
+        assert!(!is_retryable_vault_error(&error)); // Not retryable (permanent)
     }
 }

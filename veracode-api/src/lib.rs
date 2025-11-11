@@ -93,11 +93,13 @@ pub mod build;
 pub mod client;
 pub mod findings;
 pub mod identity;
+pub mod json_validator;
 pub mod pipeline;
 pub mod policy;
 pub mod reporting;
 pub mod sandbox;
 pub mod scan;
+pub mod validation;
 pub mod workflow;
 
 use reqwest::Error as ReqwestError;
@@ -125,6 +127,7 @@ pub use identity::{
     IdentityApi, IdentityError, Role, Team, UpdateTeamRequest, UpdateUserRequest, User, UserQuery,
     UserType,
 };
+pub use json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 pub use pipeline::{
     CreateScanRequest, DevStage, Finding, FindingsSummary, PipelineApi, PipelineError, Scan,
     ScanConfig, ScanResults, ScanStage, ScanStatus, SecurityStandards, Severity,
@@ -142,6 +145,10 @@ pub use scan::{
     BeginPreScanRequest, BeginScanRequest, PreScanMessage, PreScanResults, ScanApi, ScanError,
     ScanInfo, ScanModule, UploadFileRequest, UploadLargeFileRequest, UploadProgress,
     UploadProgressCallback, UploadedFile,
+};
+pub use validation::{
+    AppGuid, AppName, DEFAULT_PAGE_SIZE, Description, MAX_APP_NAME_LEN, MAX_DESCRIPTION_LEN,
+    MAX_GUID_LEN, MAX_PAGE_NUMBER, MAX_PAGE_SIZE, ValidationError, validate_url_segment,
 };
 pub use workflow::{VeracodeWorkflow, WorkflowConfig, WorkflowError, WorkflowResultData};
 /// Retry configuration for HTTP requests
@@ -275,17 +282,30 @@ impl RetryConfig {
             return Duration::from_millis(0);
         }
 
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss,
+            clippy::cast_possible_wrap
+        )]
         let delay_ms = (self.initial_delay_ms as f64
-            * self.backoff_multiplier.powi((attempt - 1) as i32)) as u64;
+            * self
+                .backoff_multiplier
+                .powi(attempt.saturating_sub(1) as i32)) as u64;
 
         let mut capped_delay = delay_ms.min(self.max_delay_ms);
 
         // Apply jitter if enabled (±25% randomization)
         if self.jitter_enabled {
             use rand::Rng;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::cast_precision_loss
+            )]
             let jitter_range = (capped_delay as f64 * 0.25) as u64;
             let min_delay = capped_delay.saturating_sub(jitter_range);
-            let max_delay = capped_delay + jitter_range;
+            let max_delay = capped_delay.saturating_add(jitter_range);
             capped_delay = rand::rng().random_range(min_delay..=max_delay);
         }
 
@@ -311,9 +331,11 @@ impl RetryConfig {
             let current_second = now.as_secs() % 60;
 
             // Wait until the next minute window + configurable buffer to ensure window has reset
-            let seconds_until_next_minute = 60 - current_second;
+            let seconds_until_next_minute = 60_u64.saturating_sub(current_second);
 
-            Duration::from_secs(seconds_until_next_minute + self.rate_limit_buffer_seconds)
+            Duration::from_secs(
+                seconds_until_next_minute.saturating_add(self.rate_limit_buffer_seconds),
+            )
         }
     }
 
@@ -347,9 +369,10 @@ impl RetryConfig {
                     true
                 }
             }
-            // Don't retry authentication, serialization, or configuration errors
+            // Don't retry authentication, serialization, validation, or configuration errors
             VeracodeError::Authentication(_)
             | VeracodeError::Serialization(_)
+            | VeracodeError::Validation(_)
             | VeracodeError::InvalidConfig(_) => false,
             // InvalidResponse could be temporary (like malformed JSON due to network issues)
             VeracodeError::InvalidResponse(_) => true,
@@ -368,6 +391,7 @@ impl RetryConfig {
 /// This enum represents all possible errors that can occur when interacting
 /// with the Veracode Applications API.
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum VeracodeError {
     /// HTTP request failed
     Http(ReqwestError),
@@ -390,6 +414,8 @@ pub enum VeracodeError {
         /// The original HTTP error response
         message: String,
     },
+    /// Input validation failed
+    Validation(validation::ValidationError),
 }
 
 impl VeracodeClient {
@@ -455,22 +481,26 @@ impl VeracodeClient {
 
     /// Get a scan API instance.
     /// Uses XML API (analysiscenter.veracode.*) for both sandbox and application scans.
-    #[must_use]
-    pub fn scan_api(&self) -> ScanApi {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the XML client cannot be created.
+    pub fn scan_api(&self) -> Result<ScanApi, VeracodeError> {
         // Create a specialized XML client for scan operations
-        let xml_client = Self::new_xml_client(self.config().clone())
-            .expect("XML client creation should not fail if main client was created successfully");
-        ScanApi::new(xml_client)
+        let xml_client = Self::new_xml_client(self.config().clone())?;
+        Ok(ScanApi::new(xml_client))
     }
 
     /// Get a build API instance.
     /// Uses XML API (analysiscenter.veracode.*) for build management operations.
-    #[must_use]
-    pub fn build_api(&self) -> build::BuildApi {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the XML client cannot be created.
+    pub fn build_api(&self) -> Result<build::BuildApi, VeracodeError> {
         // Create a specialized XML client for build operations
-        let xml_client = Self::new_xml_client(self.config().clone())
-            .expect("XML client creation should not fail if main client was created successfully");
-        build::BuildApi::new(xml_client)
+        let xml_client = Self::new_xml_client(self.config().clone())?;
+        Ok(build::BuildApi::new(xml_client))
     }
 
     /// Get a workflow helper instance.
@@ -500,6 +530,7 @@ impl fmt::Display for VeracodeError {
                 }
                 None => write!(f, "Rate limit exceeded: {message}"),
             },
+            VeracodeError::Validation(e) => write!(f, "Validation error: {e}"),
         }
     }
 }
@@ -518,11 +549,17 @@ impl From<serde_json::Error> for VeracodeError {
     }
 }
 
+impl From<validation::ValidationError> for VeracodeError {
+    fn from(error: validation::ValidationError) -> Self {
+        VeracodeError::Validation(error)
+    }
+}
+
 /// ARC-based credential storage for thread-safe access via memory pointers
 ///
 /// This struct provides secure credential storage with the following protections:
 /// - Fields are private to prevent direct access
-/// - SecretString provides memory protection and debug redaction
+/// - `SecretString` provides memory protection and debug redaction
 /// - ARC allows safe sharing across threads
 /// - Access is only possible through controlled expose_* methods
 #[derive(Clone)]
@@ -546,9 +583,9 @@ impl VeracodeCredentials {
     /// Get API ID via memory pointer (ARC) - USE WITH CAUTION
     ///
     /// # Security Warning
-    /// This returns an `Arc<SecretString>` which allows the caller to call expose_secret().
+    /// This returns an `Arc<SecretString>` which allows the caller to call `expose_secret()`.
     /// Only use this method when you need to share credentials across thread boundaries.
-    /// For authentication, prefer using expose_api_id() directly.
+    /// For authentication, prefer using `expose_api_id()` directly.
     #[must_use]
     pub fn api_id_ptr(&self) -> Arc<SecretString> {
         Arc::clone(&self.api_id)
@@ -556,10 +593,10 @@ impl VeracodeCredentials {
 
     /// Get API key via memory pointer (ARC) - USE WITH CAUTION
     ///
-    /// # Security Warning  
-    /// This returns an `Arc<SecretString>` which allows the caller to call expose_secret().
+    /// # Security Warning
+    /// This returns an `Arc<SecretString>` which allows the caller to call `expose_secret()`.
     /// Only use this method when you need to share credentials across thread boundaries.
-    /// For authentication, prefer using expose_api_key() directly.
+    /// For authentication, prefer using `expose_api_key()` directly.
     #[must_use]
     pub fn api_key_ptr(&self) -> Arc<SecretString> {
         Arc::clone(&self.api_key)
@@ -627,7 +664,7 @@ pub struct VeracodeConfig {
     pub proxy_password: Option<SecretString>,
 }
 
-/// Custom Debug implementation for VeracodeConfig that redacts sensitive information
+/// Custom Debug implementation for `VeracodeConfig` that redacts sensitive information
 impl std::fmt::Debug for VeracodeConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         // Redact proxy URL if it contains credentials
@@ -636,7 +673,10 @@ impl std::fmt::Debug for VeracodeConfig {
                 // URL contains credentials, redact them
                 if let Some(at_pos) = url.rfind('@') {
                     if let Some(proto_end) = url.find("://") {
-                        format!("{}://[REDACTED]@{}", &url[..proto_end], &url[at_pos + 1..])
+                        // Use safe string slicing methods that respect UTF-8 boundaries
+                        let protocol = url.get(..proto_end).unwrap_or("");
+                        let host_part = url.get(at_pos.saturating_add(1)..).unwrap_or("");
+                        format!("{}://[REDACTED]@{}", protocol, host_part)
                     } else {
                         "[REDACTED]".to_string()
                     }
@@ -697,7 +737,7 @@ impl VeracodeConfig {
     /// Create a new configuration for the Commercial region.
     ///
     /// This creates a configuration that supports both REST API (api.veracode.*)
-    /// and XML API (analysiscenter.veracode.*) endpoints. The base_url defaults
+    /// and XML API (analysiscenter.veracode.*) endpoints. The `base_url` defaults
     /// to REST API for most modules, while sandbox scan operations automatically
     /// use the XML API endpoint.
     ///
@@ -932,7 +972,7 @@ impl VeracodeConfig {
     ///
     /// Configures username and password for proxy authentication using HTTP Basic Auth.
     /// This is more secure than embedding credentials in the proxy URL as the credentials
-    /// are stored using SecretString and properly redacted in debug output.
+    /// are stored using `SecretString` and properly redacted in debug output.
     ///
     /// # Arguments
     ///
@@ -965,6 +1005,7 @@ impl VeracodeConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1182,7 +1223,7 @@ mod tests {
         // Test non-retryable errors
         assert!(!config.is_retryable_error(&VeracodeError::Authentication("bad auth".to_string())));
         assert!(!config.is_retryable_error(&VeracodeError::Serialization(
-            serde_json::from_str::<i32>("invalid").unwrap_err()
+            serde_json::from_str::<i32>("invalid").expect_err("should fail to deserialize")
         )));
         assert!(
             !config.is_retryable_error(&VeracodeError::InvalidConfig("bad config".to_string()))
@@ -1362,7 +1403,17 @@ mod tests {
         let delay = config.calculate_delay(1);
 
         // The delay should be within the expected range (±25% jitter)
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let min_expected = (base_delay as f64 * 0.75) as u64;
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let max_expected = (base_delay as f64 * 1.25) as u64;
 
         assert!(delay.as_millis() >= min_expected as u128);

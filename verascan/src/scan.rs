@@ -1681,6 +1681,7 @@ async fn execute_assessment_scan_async(
         teamname,
         bus_cri,
         repo_url,
+        cmek,
         ..
     } = &args.command
     {
@@ -1721,6 +1722,7 @@ async fn execute_assessment_scan_async(
                 Some("Application created for assessment scanning".to_string()),
                 team_names,
                 resolved_repo_url,
+                cmek.clone(),
             )
             .await
         {
@@ -1786,10 +1788,12 @@ async fn execute_assessment_scan_async(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+    use crate::test_utils::TempDir;
     use std::collections::HashSet;
-    use tempfile::TempDir;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_adds_extension() {
         let result = ensure_extension("test-file", "json").unwrap();
         assert_eq!(result.extension().unwrap(), "json");
@@ -1797,6 +1801,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_preserves_existing_extension() {
         let result = ensure_extension("test-file.json", "json").unwrap();
         assert_eq!(result.extension().unwrap(), "json");
@@ -1804,6 +1809,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_replaces_wrong_extension() {
         let result = ensure_extension("test-file.txt", "json").unwrap();
         assert_eq!(result.extension().unwrap(), "json");
@@ -1811,6 +1817,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_rejects_directory() {
         let temp_dir = TempDir::new().unwrap();
         let dir_path = temp_dir.path().to_str().unwrap();
@@ -1821,6 +1828,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_rejects_nonexistent_parent() {
         let result = ensure_extension("/nonexistent/dir/file.json", "json");
         assert!(result.is_err());
@@ -1828,6 +1836,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_works_with_existing_parent() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test-file");
@@ -1838,6 +1847,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_validate_export_paths_early_success() {
         let temp_dir = TempDir::new().unwrap();
         let file_path = temp_dir.path().join("test-report");

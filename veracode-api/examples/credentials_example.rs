@@ -85,11 +85,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n7️⃣ Proper credential usage:");
     println!(
         "   API ID (exposed for auth): {}",
-        &credentials.expose_api_id()[..8]
+        credentials
+            .expose_api_id()
+            .chars()
+            .take(8)
+            .collect::<String>()
     );
     println!(
         "   API Key (exposed for auth): {}...",
-        &credentials.expose_api_key()[..8]
+        credentials
+            .expose_api_key()
+            .chars()
+            .take(8)
+            .collect::<String>()
     );
 
     println!("\n✅ ARC-based credential example completed successfully!");

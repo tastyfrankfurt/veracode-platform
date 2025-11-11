@@ -12,6 +12,11 @@ pub mod service;
 pub mod validation;
 pub mod vault_client;
 
+// Test utilities module - internal use for tests and benchmarks only
+// This module is public to allow benchmark access, but is not part of the public API
+#[doc(hidden)]
+pub mod test_utils;
+
 // Re-export commonly used types
 pub use error::{AuditError, Result};
 pub use service::ServiceConfig;

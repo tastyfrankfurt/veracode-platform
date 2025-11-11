@@ -5,6 +5,55 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2025-11-03
+
+### Security
+- **HTML Parser XSS Vulnerability Fix** (HIGH SEVERITY): Fixed XSS vulnerability in `strip_html_tags()` function
+  - **Issue**: Script tags were removed but script content was preserved, allowing potential XSS attacks
+  - **Fix**: Enhanced parser to properly remove ALL content within script tags (not just the tags themselves)
+  - **Detection**: Uses character-by-character state machine parser to track script tag boundaries
+  - **Testing**: Added 7+ comprehensive security tests covering nested tags, unclosed tags, and malicious content
+  - **Impact**: All pipeline scan finding descriptions are now properly sanitized
+  - **Modified Files**: `src/pipeline.rs`
+
+- **JSON Depth Validation** (MEDIUM SEVERITY): Added DoS prevention for deeply nested JSON structures
+  - **New Module**: Created `src/json_validator.rs` with depth validation functionality
+  - **Depth Limits**: Enforces maximum nesting depth to prevent stack overflow attacks
+  - **Protection**: Prevents DoS attacks from maliciously crafted deeply nested API responses
+  - **API Coverage**: Can be applied to all JSON deserialization points across the API client
+  - **Testing**: Comprehensive test coverage for depth validation and edge cases
+  - **Modified Files**: `src/lib.rs` (added json_validator module export), `src/json_validator.rs` (new file)
+
+### Testing
+- **15+ New Security Tests**: Comprehensive coverage of security-critical functionality
+  - HTML parser XSS tests (7 tests): nested tags, unclosed tags, malicious content
+  - JSON depth validation tests (5+ tests): deep nesting, edge cases
+  - All tests passing with 100% success rate
+
+## [0.7.0] - 2025-10-30
+
+### Added
+- **Customer Managed Encryption Key (CMEK) Support**: Full support for AWS KMS encryption during application profile creation
+  - **API Enhancement**: Added `custom_kms_alias` parameter to `create_application_if_not_exists()` method
+  - **Smart Updates**: Automatically updates `custom_kms_alias` on existing applications if not already set
+  - **Optional Field**: Only included in API payload when explicitly provided (via `#[serde(skip_serializing_if = "Option::is_none")]`)
+  - **Validation**: Character set validation for AWS KMS alias format: `[a-zA-Z0-9-/_]`, length 8-256 characters
+  - **Examples**: Added comprehensive examples showing JSON payload structure with and without CMEK
+  - **Modified Files**: `src/app.rs`, `src/workflow.rs`, `examples/xml_api_workflow_validation.rs`
+
+### Testing
+- **11 New CMEK Tests**: Comprehensive test coverage for CMEK functionality
+  - `test_cmek_enabled_payload_structure`: Documents exact JSON structure WITH CMEK
+  - `test_cmek_disabled_payload_structure`: Documents exact JSON structure WITHOUT CMEK
+  - `test_cmek_alias_format_variations`: Tests various valid alias formats
+  - `test_complete_application_profile_with_cmek`: Full profile with all optional fields
+  - Additional tests for serialization, deserialization, and backward compatibility
+
+### API Contract
+- **With CMEK**: `{"profile": {"name": "...", "custom_kms_alias": "alias/my-key", ...}}`
+- **Without CMEK**: Field is completely excluded from payload (not included as `null`)
+- **Backward Compatible**: Existing code without CMEK continues to work unchanged
+
 ## [0.6.0] - 2025-10-23
 
 ### Enhanced

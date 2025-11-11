@@ -14,6 +14,7 @@ const PLUGIN_VERSION: &str = "25.2.0-0";
 
 /// Error types specific to pipeline scan operations
 #[derive(Debug, thiserror::Error)]
+#[must_use = "Need to handle all error enum types."]
 pub enum PipelineError {
     #[error("Pipeline scan not found")]
     ScanNotFound,
@@ -170,7 +171,12 @@ pub struct FindingFiles {
 /// Stack dump information
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StackDumps {
-    /// Array of stack dumps (optional - can be missing when stack_dumps is empty object)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Array of stack dumps (optional - can be missing when `stack_dumps` is empty object)
     pub stack_dump: Option<Vec<serde_json::Value>>,
 }
 
@@ -271,6 +277,10 @@ impl Finding {
 }
 
 /// Strip HTML tags from display text to get plain text message
+///
+/// Security: This function removes `<script>` and `<style>` tags AND their content
+/// to prevent script injection. Other HTML tags are removed but their text content
+/// is preserved.
 fn strip_html_tags(html: &str) -> Cow<'_, str> {
     // Check if HTML tags are present to avoid unnecessary allocation
     if !html.contains('<') {
@@ -280,17 +290,61 @@ fn strip_html_tags(html: &str) -> Cow<'_, str> {
     // Simple HTML tag removal without regex dependency
     let mut result = String::new();
     let mut in_tag = false;
+    let mut in_script_or_style = false;
+    let mut tag_name = String::new();
+    let mut collecting_tag_name = false;
+    let mut just_closed_tag = false;
 
     for ch in html.chars() {
         match ch {
-            '<' => in_tag = true,
-            '>' => in_tag = false,
-            _ if !in_tag => result.push(ch),
-            _ => {}
+            '<' => {
+                // Add space before tag if we just had content (for word boundaries)
+                if !result.is_empty() && !result.ends_with(char::is_whitespace) {
+                    result.push(' ');
+                }
+                in_tag = true;
+                collecting_tag_name = true;
+                just_closed_tag = false;
+                tag_name.clear();
+            }
+            '>' => {
+                in_tag = false;
+
+                // Check if we're entering or leaving a script/style block
+                let tag_lower = tag_name.trim().to_lowercase();
+                if tag_lower.starts_with("script") || tag_lower.starts_with("style") {
+                    in_script_or_style = true;
+                } else if tag_lower.starts_with("/script") || tag_lower.starts_with("/style") {
+                    in_script_or_style = false;
+                }
+                collecting_tag_name = false;
+                just_closed_tag = true;
+                tag_name.clear();
+            }
+            ' ' if in_tag && collecting_tag_name => {
+                // Space in tag (e.g., <script type="...">), stop collecting tag name
+                collecting_tag_name = false;
+            }
+            _ if (ch == '/' || ch.is_alphanumeric()) && collecting_tag_name => {
+                // Collect tag name to detect script/style tags
+                tag_name.push(ch);
+            }
+            _ if in_tag || in_script_or_style => {
+                // Skip content inside tags and inside script/style blocks
+            }
+            _ => {
+                // Keep text content (not in tags, not in script/style blocks)
+                // Add space after tag if needed (for word boundaries)
+                if just_closed_tag && !result.is_empty() && !result.ends_with(char::is_whitespace) {
+                    result.push(' ');
+                }
+                just_closed_tag = false;
+                result.push(ch);
+            }
         }
     }
 
-    // Clean up extra whitespace
+    // Clean up extra whitespace (collapse multiple spaces into one)
     let cleaned = result.split_whitespace().collect::<Vec<&str>>().join(" ");
     Cow::Owned(cleaned)
 }
@@ -377,7 +431,12 @@ pub struct ScanConfig {
 pub struct Scan {
     /// Unique scan ID
     pub scan_id: String,
-    /// Current scan status (UPLOADING, VERIFYING, RUNNING, RESULTS_READY, etc.)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Current scan status (UPLOADING, VERIFYING, RUNNING, `RESULTS_READY`, etc.)
     pub scan_status: ScanStatus,
     /// API version
     pub api_version: f64,
@@ -528,12 +587,21 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the application ID as a string if found
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn lookup_app_id_by_name(&self, app_name: &str) -> Result<String, PipelineError> {
         let applications = self.client.search_applications_by_name(app_name).await?;
 
         match applications.len() {
             0 => Err(PipelineError::ApplicationNotFound(app_name.to_owned())),
-            1 => Ok(applications[0].id.to_string()),
+            1 => Ok(applications
+                .first()
+                .ok_or_else(|| PipelineError::ApplicationNotFound(app_name.to_owned()))?
+                .id
+                .to_string()),
             _ => {
                 // Print the found applications to help the user
                 error!(
@@ -543,9 +611,19 @@ impl PipelineApi {
                 );
                 for (i, app) in applications.iter().enumerate() {
                     if let Some(ref profile) = app.profile {
-                        error!("   {}. ID: {} - Name: '{}'", i + 1, app.id, profile.name);
+                        error!(
+                            "   {}. ID: {} - Name: '{}'",
+                            i.saturating_add(1),
+                            app.id,
+                            profile.name
+                        );
                     } else {
-                        error!("   {}. ID: {} - GUID: {}", i + 1, app.id, app.guid);
+                        error!(
+                            "   {}. ID: {} - GUID: {}",
+                            i.saturating_add(1),
+                            app.id,
+                            app.guid
+                        );
                     }
                 }
                 error!(
@@ -558,16 +636,31 @@ impl PipelineApi {
         }
     }
 
-    /// Create a new pipeline scan with automatic app_id lookup
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// Create a new pipeline scan with automatic `app_id` lookup
     ///
     /// # Arguments
     ///
     /// * `request` - Scan creation request with binary details
-    /// * `app_name` - Optional application name to look up app_id automatically
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// * `app_name` - Optional application name to look up `app_id` automatically
     ///
     /// # Returns
     ///
     /// A `Result` containing the scan details if successful
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn create_scan_with_app_lookup(
         &self,
         request: &mut CreateScanRequest,
@@ -594,6 +687,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details if successful
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn create_scan(
         &self,
         request: &mut CreateScanRequest,
@@ -658,6 +756,7 @@ impl PipelineApi {
                 .map(str::to_owned);
 
             // Extract expected segments
+            #[allow(clippy::cast_possible_truncation)]
             let expected_segments = json_value
                 .get("binary_segments_expected")
                 .and_then(|segments| segments.as_u64())
@@ -701,7 +800,12 @@ impl PipelineApi {
     /// The Veracode Pipeline Scan API requires files to be uploaded in a predetermined
     /// number of segments. This method follows the exact Java implementation pattern:
     /// 1. Gets segment count and upload URI from scan creation response
-    /// 2. Calculates segment size as file_size / num_segments
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// 2. Calculates segment size as `file_size` / `num_segments`
     /// 3. Updates URI after each segment upload based on API response
     ///
     /// # Arguments
@@ -714,6 +818,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn upload_binary_segments(
         &self,
         initial_upload_uri: &str,
@@ -722,6 +831,11 @@ impl PipelineApi {
         file_name: &str,
     ) -> Result<(), PipelineError> {
         let total_size = binary_data.len();
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let segment_size = ((total_size as f64) / (expected_segments as f64)).ceil() as usize;
 
         debug!("📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)");
@@ -730,13 +844,19 @@ impl PipelineApi {
         let mut current_upload_uri = initial_upload_uri.to_string();
 
         for segment_num in 0..expected_segments {
-            let start_idx = (segment_num as usize) * segment_size;
-            let end_idx = std::cmp::min(start_idx + segment_size, total_size);
-            let segment_data = &binary_data[start_idx..end_idx];
+            #[allow(clippy::cast_sign_loss)]
+            let start_idx = (segment_num as usize).saturating_mul(segment_size);
+            let end_idx = std::cmp::min(start_idx.saturating_add(segment_size), total_size);
+            let segment_data = binary_data.get(start_idx..end_idx).ok_or_else(|| {
+                PipelineError::InvalidRequest(format!(
+                    "Invalid segment range: {}..{}",
+                    start_idx, end_idx
+                ))
+            })?;
 
             debug!(
                 "   Uploading segment {}/{} ({} bytes)...",
-                segment_num + 1,
+                segment_num.saturating_add(1),
                 expected_segments,
                 segment_data.len()
             );
@@ -746,10 +866,13 @@ impl PipelineApi {
                 .await
             {
                 Ok(response_text) => {
-                    debug!("   ✅ Segment {} uploaded successfully", segment_num + 1);
+                    debug!(
+                        "   ✅ Segment {} uploaded successfully",
+                        segment_num.saturating_add(1)
+                    );
 
                     // Parse response to get next upload URI (like Java implementation)
-                    if segment_num < expected_segments - 1 {
+                    if segment_num < expected_segments.saturating_sub(1) {
                         match self.extract_next_upload_uri(&response_text) {
                             Some(next_uri) => {
                                 current_upload_uri = next_uri;
@@ -762,7 +885,11 @@ impl PipelineApi {
                     }
                 }
                 Err(e) => {
-                    error!("   ❌ Failed to upload segment {}: {}", segment_num + 1, e);
+                    error!(
+                        "   ❌ Failed to upload segment {}: {}",
+                        segment_num.saturating_add(1),
+                        e
+                    );
                     return Err(e);
                 }
             }
@@ -773,6 +900,11 @@ impl PipelineApi {
     }
 
     /// Simplified upload method for backwards compatibility
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn upload_binary(
         &self,
         scan_id: &str,
@@ -865,6 +997,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn start_scan_with_uri(
         &self,
         start_uri: &str,
@@ -877,14 +1014,29 @@ impl PipelineApi {
 
         // Add scan config fields if provided
         if let Some(config) = config {
-            if let Some(timeout) = config.timeout {
-                payload["timeout"] = serde_json::Value::Number(timeout.into());
+            if let Some(timeout) = config.timeout
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number(timeout.into()),
+                );
             }
-            if let Some(include_low_severity) = config.include_low_severity {
-                payload["include_low_severity"] = serde_json::Value::Bool(include_low_severity);
+            if let Some(include_low_severity) = config.include_low_severity
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "include_low_severity".to_string(),
+                    serde_json::Value::Bool(include_low_severity),
+                );
             }
-            if let Some(max_findings) = config.max_findings {
-                payload["max_findings"] = serde_json::Value::Number(max_findings.into());
+            if let Some(max_findings) = config.max_findings
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "max_findings".to_string(),
+                    serde_json::Value::Number(max_findings.into()),
+                );
             }
         }
 
@@ -935,6 +1087,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn start_scan(
         &self,
         scan_id: &str,
@@ -950,14 +1107,29 @@ impl PipelineApi {
 
         // Add scan config fields if provided
         if let Some(config) = config {
-            if let Some(timeout) = config.timeout {
-                payload["timeout"] = serde_json::Value::Number(timeout.into());
+            if let Some(timeout) = config.timeout
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "timeout".to_string(),
+                    serde_json::Value::Number(timeout.into()),
+                );
             }
-            if let Some(include_low_severity) = config.include_low_severity {
-                payload["include_low_severity"] = serde_json::Value::Bool(include_low_severity);
+            if let Some(include_low_severity) = config.include_low_severity
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "include_low_severity".to_string(),
+                    serde_json::Value::Bool(include_low_severity),
+                );
             }
-            if let Some(max_findings) = config.max_findings {
-                payload["max_findings"] = serde_json::Value::Number(max_findings.into());
+            if let Some(max_findings) = config.max_findings
+                && let Some(obj) = payload.as_object_mut()
+            {
+                obj.insert(
+                    "max_findings".to_string(),
+                    serde_json::Value::Number(max_findings.into()),
+                );
             }
         }
 
@@ -1000,6 +1172,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_scan_with_uri(&self, details_uri: &str) -> Result<Scan, PipelineError> {
         // Construct full URL with pipeline_scan/v1 base
         let url = if details_uri.starts_with("http") {
@@ -1039,6 +1216,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the scan details
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_scan(&self, scan_id: &str) -> Result<Scan, PipelineError> {
         let endpoint = format!("/scans/{scan_id}");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
@@ -1078,7 +1260,17 @@ impl PipelineApi {
     /// # HTTP Status Codes
     ///
     /// * `200` - Findings are ready and returned
-    /// * `202` - Scan accepted but findings not yet available (returns FindingsNotReady error)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
+    /// * `202` - Scan accepted but findings not yet available (returns `FindingsNotReady` error)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_findings(&self, scan_id: &str) -> Result<Vec<Finding>, PipelineError> {
         let endpoint = format!("/scans/{scan_id}/findings");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
@@ -1172,6 +1364,11 @@ impl PipelineApi {
     ///
     /// This method will return `FindingsNotReady` error if the scan findings are not yet available.
     /// Use `get_scan()` to check scan status before calling this method.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn get_results(&self, scan_id: &str) -> Result<ScanResults, PipelineError> {
         debug!("🔍 Debug - get_results() getting scan details for: {scan_id}");
         let scan = self.get_scan(scan_id).await?;
@@ -1207,6 +1404,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` indicating success or failure
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn cancel_scan(&self, scan_id: &str) -> Result<(), PipelineError> {
         let endpoint = format!("/scans/{scan_id}/cancel");
 
@@ -1236,6 +1438,11 @@ impl PipelineApi {
     /// # Returns
     ///
     /// A `Result` containing the completed scan or timeout error
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the pipeline scan fails,
+    /// or authentication/authorization fails.
     pub async fn wait_for_completion(
         &self,
         scan_id: &str,
@@ -1244,7 +1451,10 @@ impl PipelineApi {
     ) -> Result<Scan, PipelineError> {
         let timeout = timeout_minutes.unwrap_or(60);
         let interval = poll_interval_seconds.unwrap_or(10);
-        let max_polls = (timeout * 60) / interval;
+        let max_polls = timeout
+            .saturating_mul(60)
+            .checked_div(interval)
+            .unwrap_or(u32::MAX);
 
         for _ in 0..max_polls {
             let scan = self.get_scan(scan_id).await?;
@@ -1263,6 +1473,7 @@ impl PipelineApi {
 
     /// Calculate findings summary from a list of findings
     fn calculate_summary(&self, findings: &[Finding]) -> FindingsSummary {
+        #[allow(clippy::cast_possible_truncation)]
         let mut summary = FindingsSummary {
             very_high: 0,
             high: 0,
@@ -1275,16 +1486,115 @@ impl PipelineApi {
 
         for finding in findings {
             match finding.severity {
-                5 => summary.very_high += 1,
-                4 => summary.high += 1,
-                3 => summary.medium += 1,
-                2 => summary.low += 1,
-                1 => summary.very_low += 1,
-                0 => summary.informational += 1,
+                5 => summary.very_high = summary.very_high.saturating_add(1),
+                4 => summary.high = summary.high.saturating_add(1),
+                3 => summary.medium = summary.medium.saturating_add(1),
+                2 => summary.low = summary.low.saturating_add(1),
+                1 => summary.very_low = summary.very_low.saturating_add(1),
+                0 => summary.informational = summary.informational.saturating_add(1),
                 _ => {} // Unknown severity
             }
         }
 
         summary
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_strip_html_tags_no_tags() {
+        let input = "This is plain text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "This is plain text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_simple() {
+        let input = "This is <b>bold</b> text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "This is bold text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_removes_script_content() {
+        // SECURITY: Script content must be removed, not just tags
+        let input = "<script>alert('XSS')</script>This is safe";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "This is safe");
+    }
+
+    #[test]
+    fn test_strip_html_tags_removes_script_with_attributes() {
+        let input = "<script type='text/javascript'>alert('XSS')</script>Safe text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Safe text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_removes_style_content() {
+        let input = "<style>body { color: red; }</style>Visible text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Visible text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_multiple_scripts() {
+        let input = "<script>evil1()</script>Good<script>evil2()</script>Text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Good Text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_nested_tags() {
+        let input = "<div><p>Paragraph <b>bold</b> text</p></div>";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Paragraph bold text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_mixed_content() {
+        let input = "Before<script>bad()</script>Middle<b>bold</b>After";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Before Middle bold After");
+    }
+
+    #[test]
+    fn test_strip_html_tags_case_insensitive_script() {
+        let input = "<SCRIPT>evil()</SCRIPT>Safe";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Safe");
+    }
+
+    #[test]
+    fn test_strip_html_tags_case_insensitive_style() {
+        let input = "<STYLE>css</STYLE>Text";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Text");
+    }
+
+    #[test]
+    fn test_strip_html_tags_whitespace_cleanup() {
+        // When HTML tags are present, extra whitespace is collapsed
+        let input = "Text   <b>with</b>    extra     <i>spaces</i>";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Text with extra spaces");
+    }
+
+    #[test]
+    fn test_strip_html_tags_no_html_preserves_whitespace() {
+        // When no HTML tags, original whitespace is preserved (Cow::Borrowed)
+        let input = "Text   with    extra     spaces";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "Text   with    extra     spaces");
+    }
+
+    #[test]
+    fn test_strip_html_tags_preserves_normal_content_order() {
+        let input = "First <p>Second</p> Third <b>Fourth</b> Fifth";
+        let result = strip_html_tags(input);
+        assert_eq!(result, "First Second Third Fourth Fifth");
     }
 }

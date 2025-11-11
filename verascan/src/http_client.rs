@@ -864,6 +864,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_http_client_creation() {
         let config = HttpClientConfig::new("https://api.example.com".to_string());
 
@@ -875,6 +876,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_jitter_calculation() {
         let config = HttpClientConfig::new("https://api.example.com".to_string());
         let client = RobustHttpClient::new(config).unwrap();

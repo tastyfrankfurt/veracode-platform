@@ -202,6 +202,7 @@ impl From<&UploadFileRequest> for UploadLargeFileRequest {
 
 /// Scan specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum ScanError {
     /// Veracode API error
     Api(VeracodeError),
@@ -295,7 +296,12 @@ pub struct ScanApi {
 }
 
 impl ScanApi {
-    /// Create a new ScanApi instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Create a new `ScanApi` instance
     #[must_use]
     pub fn new(client: VeracodeClient) -> Self {
         Self { client }
@@ -310,6 +316,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_file(
         &self,
         request: &UploadFileRequest,
@@ -389,6 +400,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_large_file(
         &self,
         request: UploadLargeFileRequest,
@@ -471,17 +487,32 @@ impl ScanApi {
 
     /// Upload a large file with progress tracking
     ///
-    /// This method provides the same functionality as upload_large_file but with
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
+    /// This method provides the same functionality as `upload_large_file` but with
     /// progress tracking capabilities through a callback function.
     ///
     /// # Arguments
     ///
     /// * `request` - The upload large file request
-    /// * `progress_callback` - Callback function for progress updates (bytes_uploaded, total_bytes, percentage)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
+    /// * `progress_callback` - Callback function for progress updates (`bytes_uploaded`, `total_bytes`, percentage)
     ///
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_large_file_with_progress<F>(
         &self,
         request: UploadLargeFileRequest,
@@ -581,6 +612,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_file_smart(
         &self,
         request: &UploadFileRequest,
@@ -625,6 +661,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn begin_prescan(&self, request: &BeginPreScanRequest) -> Result<(), ScanError> {
         let endpoint = "/api/5.0/beginprescan.do";
 
@@ -698,6 +739,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the pre-scan results or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn get_prescan_results(
         &self,
         app_id: &str,
@@ -752,6 +798,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn begin_scan(&self, request: &BeginScanRequest) -> Result<(), ScanError> {
         let endpoint = "/api/5.0/beginscan.do";
 
@@ -832,6 +883,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the list of uploaded files or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn get_file_list(
         &self,
         app_id: &str,
@@ -888,6 +944,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn remove_file(
         &self,
         app_id: &str,
@@ -939,6 +1000,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn delete_build(
         &self,
         app_id: &str,
@@ -990,6 +1056,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn delete_all_builds(
         &self,
         app_id: &str,
@@ -1018,6 +1089,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the scan information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn get_build_info(
         &self,
         app_id: &str,
@@ -1122,7 +1198,12 @@ impl ScanApi {
         })
     }
 
-    /// Validate scan response for basic success without parsing build_id
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
+    /// Validate scan response for basic success without parsing `build_id`
     fn validate_scan_response(&self, xml: &str) -> Result<(), ScanError> {
         // Check for basic error conditions in the response
         if xml.contains("<error>") {
@@ -1473,6 +1554,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_file_to_sandbox(
         &self,
         app_id: &str,
@@ -1499,6 +1585,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_file_to_app(
         &self,
         app_id: &str,
@@ -1526,6 +1617,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_large_file_to_sandbox(
         &self,
         app_id: &str,
@@ -1554,6 +1650,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_large_file_to_app(
         &self,
         app_id: &str,
@@ -1583,6 +1684,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_large_file_to_sandbox_with_progress<F>(
         &self,
         app_id: &str,
@@ -1615,6 +1721,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the build ID or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn begin_sandbox_prescan(
         &self,
         app_id: &str,
@@ -1641,6 +1752,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the build ID or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn begin_sandbox_scan_all_modules(
         &self,
         app_id: &str,
@@ -1669,6 +1785,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` containing the scan build ID or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn upload_and_scan_sandbox(
         &self,
         app_id: &str,
@@ -1711,6 +1832,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn delete_sandbox_build(
         &self,
         app_id: &str,
@@ -1730,6 +1856,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn delete_all_sandbox_builds(
         &self,
         app_id: &str,
@@ -1748,6 +1879,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn delete_app_build(&self, app_id: &str, build_id: &str) -> Result<(), ScanError> {
         self.delete_build(app_id, build_id, None).await
     }
@@ -1761,6 +1897,11 @@ impl ScanApi {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the scan operation fails,
+    /// or authentication/authorization fails.
     pub async fn delete_all_app_builds(&self, app_id: &str) -> Result<(), ScanError> {
         self.delete_all_builds(app_id, None).await
     }
@@ -1823,7 +1964,7 @@ mod tests {
         async fn _test_delete_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
-            let api = client.scan_api();
+            let api = client.scan_api()?;
 
             // These calls won't actually execute due to test environment,
             // but they validate the method signatures exist
@@ -1890,7 +2031,7 @@ mod tests {
         async fn _test_large_file_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
-            let api = client.scan_api();
+            let api = client.scan_api()?;
 
             // Test that the method signatures exist and compile
             let request = UploadLargeFileRequest {

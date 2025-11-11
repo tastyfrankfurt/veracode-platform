@@ -653,7 +653,7 @@ impl AssessmentSubmitter {
             debug!("   Using standard upload (<100MB)");
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
 
         // Choose upload method based on file size and scan type
         let upload_result = if file_size > SIZE_THRESHOLD {
@@ -773,7 +773,7 @@ impl AssessmentSubmitter {
             info!("🔍 Starting prescan analysis...");
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
 
         let prescan_result = match self.config.scan_type {
             ScanType::Sandbox => {
@@ -842,7 +842,7 @@ impl AssessmentSubmitter {
             info!("   Build ID: {}", build_id.id());
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
 
         let scan_result = match self.config.scan_type {
             ScanType::Sandbox => {
@@ -1023,7 +1023,7 @@ impl AssessmentSubmitter {
             info!("⏳ Waiting for prescan to complete...");
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 30; // Poll every 30 seconds
         let max_polls = (timeout_minutes * 60) / poll_interval;
@@ -1094,7 +1094,7 @@ impl AssessmentSubmitter {
             info!("⏳ Waiting for main scan to complete...");
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 60; // Poll every 60 seconds for main scan (longer than prescan)
         let max_polls = (timeout_minutes * 60) / poll_interval;
@@ -1233,7 +1233,7 @@ impl AssessmentSubmitter {
             info!("🔄 Phase 1: Monitoring prescan status...");
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 30; // Java uses 30-second intervals for prescan
         let max_polls = (timeout_minutes * 60) / poll_interval;
@@ -1301,7 +1301,7 @@ impl AssessmentSubmitter {
             info!("🔄 Phase 2: Monitoring build status...");
         }
 
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 60; // Java uses 60-second intervals for build monitoring
         let max_polls = (timeout_minutes * 60) / poll_interval;

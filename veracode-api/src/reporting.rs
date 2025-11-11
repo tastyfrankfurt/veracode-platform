@@ -164,7 +164,12 @@ pub struct PageMetadata {
 pub struct AuditLogEntry {
     /// Raw JSON string of the log entry (as received from API)
     pub raw_log: String,
-    /// Timestamp converted to UTC (computed from the timestamp field in raw_log)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Timestamp converted to UTC (computed from the timestamp field in `raw_log`)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub timestamp_utc: Option<String>,
     /// xxHash (128-bit) of the raw log entry for fast duplicate detection
@@ -216,13 +221,23 @@ pub struct ReportResponse {
 /// Convert a timestamp from region-specific timezone to UTC
 ///
 /// Each Veracode API region returns timestamps in its corresponding timezone:
-/// - **Commercial** (api.veracode.com): America/New_York (US-East-1)
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
+/// - **Commercial** (api.veracode.com): `America/New_York` (US-East-1)
 ///   - EST (Eastern Standard Time): UTC-5 (winter)
 ///   - EDT (Eastern Daylight Time): UTC-4 (summer)
 /// - **European** (api.veracode.eu): Europe/Berlin (eu-central-1)
 ///   - CET (Central European Time): UTC+1 (winter)
 ///   - CEST (Central European Summer Time): UTC+2 (summer)
-/// - **Federal** (api.veracode.us): America/New_York (US-East-1)
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
+/// - **Federal** (api.veracode.us): `America/New_York` (US-East-1)
 ///   - EST/EDT same as Commercial
 ///
 /// This function automatically handles Daylight Saving Time (DST) transitions
@@ -293,7 +308,12 @@ fn convert_regional_timestamp_to_utc(
 
 /// Generate a fast hash of a raw log entry JSON string for duplicate detection
 ///
-/// Uses xxHash (xxh3_128) which is significantly faster than SHA256 while still
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
+/// Uses xxHash (`xxh3_128`) which is significantly faster than SHA256 while still
 /// providing excellent collision resistance for deduplication purposes. This is
 /// NOT a cryptographic hash - use only for duplicate detection, not security.
 ///
@@ -343,7 +363,12 @@ impl ReportingApi {
 
     /// Generate an audit report (step 1 of the process)
     ///
-    /// This sends a request to generate the report. The API returns a report_id
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// This sends a request to generate the report. The API returns a `report_id`
     /// which can be used to retrieve the report after it's generated.
     ///
     /// # Arguments
@@ -436,11 +461,11 @@ impl ReportingApi {
         let max_attempts = max_attempts.unwrap_or(30);
         let initial_delay = initial_delay_secs.unwrap_or(2);
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         let mut delay_secs = initial_delay;
 
         loop {
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
 
             // Get current report status
             let report = self.get_audit_report(report_id, None).await?;
@@ -477,7 +502,7 @@ impl ReportingApi {
                     tokio::time::sleep(tokio::time::Duration::from_secs(delay_secs)).await;
 
                     // Exponential backoff with max delay of 30 seconds
-                    delay_secs = std::cmp::min(delay_secs * 2, 30);
+                    delay_secs = std::cmp::min(delay_secs.saturating_mul(2), 30);
                 }
             }
         }
@@ -558,7 +583,7 @@ impl ReportingApi {
             for page_num in 1..page_metadata.total_pages {
                 log::debug!(
                     "Retrieving page {}/{}",
-                    page_num + 1,
+                    page_num.saturating_add(1),
                     page_metadata.total_pages
                 );
 
@@ -567,20 +592,20 @@ impl ReportingApi {
 
                 log::info!(
                     "Retrieved page {}/{}",
-                    page_num + 1,
+                    page_num.saturating_add(1),
                     page_metadata.total_pages
                 );
             }
         }
 
         // Process all raw log entries efficiently
-        let mut conversion_stats = (0, 0); // (successes, failures)
-        let mut total_entries = 0;
+        let mut conversion_stats: (u32, u32) = (0, 0); // (successes, failures)
+        let mut total_entries: u32 = 0;
 
         for page_value in all_pages_raw {
             if let Some(logs_array) = page_value.as_array() {
                 for log_value in logs_array {
-                    total_entries += 1;
+                    total_entries = total_entries.saturating_add(1);
 
                     // Get raw JSON string (canonical form for hashing)
                     let raw_log =
@@ -596,12 +621,12 @@ impl ReportingApi {
                         if let Some(timestamp) = extractor.timestamp {
                             match convert_regional_timestamp_to_utc(&timestamp, &self.region) {
                                 Some(utc) => {
-                                    conversion_stats.0 += 1;
+                                    conversion_stats.0 = conversion_stats.0.saturating_add(1);
                                     Some(utc)
                                 }
                                 None => {
                                     log::warn!("Failed to convert timestamp to UTC: {}", timestamp);
-                                    conversion_stats.1 += 1;
+                                    conversion_stats.1 = conversion_stats.1.saturating_add(1);
                                     None
                                 }
                             }
@@ -750,6 +775,7 @@ impl ReportingApi {
 
 /// Error type for reporting operations
 #[derive(Debug, thiserror::Error)]
+#[must_use = "Need to handle all error enum types."]
 pub enum ReportingError {
     /// Wraps a Veracode API error
     #[error("Veracode API error: {0}")]
@@ -765,6 +791,7 @@ pub enum ReportingError {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -795,7 +822,7 @@ mod tests {
     #[test]
     fn test_audit_report_request_serialization() {
         let request = AuditReportRequest::new("2025-01-01", Some("2025-01-31".to_string()));
-        let json = serde_json::to_string(&request).unwrap();
+        let json = serde_json::to_string(&request).expect("should serialize to json");
 
         assert!(json.contains("\"report_type\":\"AUDIT\""));
         assert!(json.contains("\"start_date\":\"2025-01-01\""));
@@ -805,7 +832,7 @@ mod tests {
     #[test]
     fn test_audit_report_request_serialization_without_optional_fields() {
         let request = AuditReportRequest::new("2025-01-01", None);
-        let json = serde_json::to_string(&request).unwrap();
+        let json = serde_json::to_string(&request).expect("should serialize to json");
 
         // Optional fields should not be present when None
         assert!(!json.contains("end_date"));
@@ -821,7 +848,10 @@ mod tests {
         assert!(result.is_some());
         // 10:00 CET = 09:00 UTC
         // Note: %.f format drops trailing zeros
-        assert_eq!(result.unwrap(), "2025-01-15 09:00:00");
+        assert_eq!(
+            result.expect("should convert timestamp"),
+            "2025-01-15 09:00:00"
+        );
     }
 
     #[test]
@@ -831,7 +861,10 @@ mod tests {
             convert_regional_timestamp_to_utc("2025-06-15 10:00:00.000", &VeracodeRegion::European);
         assert!(result.is_some());
         // 10:00 CEST = 08:00 UTC
-        assert_eq!(result.unwrap(), "2025-06-15 08:00:00");
+        assert_eq!(
+            result.expect("should convert timestamp"),
+            "2025-06-15 08:00:00"
+        );
     }
 
     #[test]
@@ -843,7 +876,10 @@ mod tests {
         );
         assert!(result.is_some());
         // 14:30 EST = 19:30 UTC
-        assert_eq!(result.unwrap(), "2025-01-15 19:30:00");
+        assert_eq!(
+            result.expect("should convert timestamp"),
+            "2025-01-15 19:30:00"
+        );
     }
 
     #[test]
@@ -855,7 +891,10 @@ mod tests {
         );
         assert!(result.is_some());
         // 14:30 EDT = 18:30 UTC
-        assert_eq!(result.unwrap(), "2025-06-15 18:30:00");
+        assert_eq!(
+            result.expect("should convert timestamp"),
+            "2025-06-15 18:30:00"
+        );
     }
 
     #[test]
@@ -865,7 +904,10 @@ mod tests {
             convert_regional_timestamp_to_utc("2025-12-15 14:30:00.000", &VeracodeRegion::Federal);
         assert!(result.is_some());
         // 14:30 EST = 19:30 UTC
-        assert_eq!(result.unwrap(), "2025-12-15 19:30:00");
+        assert_eq!(
+            result.expect("should convert timestamp"),
+            "2025-12-15 19:30:00"
+        );
     }
 
     #[test]
@@ -875,7 +917,10 @@ mod tests {
             convert_regional_timestamp_to_utc("2025-01-15 10:00:00", &VeracodeRegion::European);
         assert!(result.is_some());
         // Should not have milliseconds in output
-        assert_eq!(result.unwrap(), "2025-01-15 09:00:00");
+        assert_eq!(
+            result.expect("should convert timestamp"),
+            "2025-01-15 09:00:00"
+        );
     }
 
     #[test]

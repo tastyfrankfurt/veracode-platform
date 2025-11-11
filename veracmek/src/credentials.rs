@@ -47,7 +47,7 @@ pub fn validate_api_credential(value: &str, field_name: &str) -> Result<(), Stri
     Ok(())
 }
 
-/// Load credentials directly into VeracodeCredentials from environment variables
+/// Load credentials directly into `VeracodeCredentials` from environment variables
 pub fn load_veracode_credentials_from_env() -> Result<VeracodeCredentials, CredentialError> {
     debug!("Loading credentials directly into VeracodeCredentials from environment variables");
 
@@ -81,9 +81,9 @@ pub fn load_veracode_credentials_from_env() -> Result<VeracodeCredentials, Crede
     Ok(VeracodeCredentials::new(api_id, api_key))
 }
 
-/// Create VeracodeConfig directly from VeracodeCredentials
+/// Create `VeracodeConfig` directly from `VeracodeCredentials`
 ///
-/// This function creates a VeracodeConfig using ARC-based credentials for optimal memory sharing.
+/// This function creates a `VeracodeConfig` using ARC-based credentials for optimal memory sharing.
 pub fn create_veracode_config_from_credentials(
     credentials: VeracodeCredentials,
     region_str: &str,
@@ -102,9 +102,9 @@ pub fn create_veracode_config_from_credentials(
     Ok(base_config)
 }
 
-/// Create VeracodeConfig with Vault proxy credentials
+/// Create `VeracodeConfig` with Vault proxy credentials
 ///
-/// This function creates a VeracodeConfig and applies optional proxy credentials from Vault.
+/// This function creates a `VeracodeConfig` and applies optional proxy credentials from Vault.
 /// Vault proxy configuration takes priority over environment variables.
 pub fn create_veracode_config_with_proxy(
     credentials: VeracodeCredentials,
@@ -140,16 +140,16 @@ pub fn create_veracode_config_with_proxy(
     Ok(base_config)
 }
 
-/// Configure VeracodeConfig with environment variables
+/// Configure `VeracodeConfig` with environment variables
 ///
-/// This function applies various environment variable settings to the VeracodeConfig.
+/// This function applies various environment variable settings to the `VeracodeConfig`.
 fn configure_veracode_with_env_vars(config: VeracodeConfig) -> VeracodeConfig {
     configure_veracode_with_env_vars_conditional(config, true)
 }
 
-/// Configure VeracodeConfig with environment variables (with conditional proxy loading)
+/// Configure `VeracodeConfig` with environment variables (with conditional proxy loading)
 ///
-/// This function applies various environment variable settings to the VeracodeConfig.
+/// This function applies various environment variable settings to the `VeracodeConfig`.
 /// If `include_proxy` is false, proxy configuration from env vars is skipped.
 fn configure_veracode_with_env_vars_conditional(
     mut config: VeracodeConfig,
@@ -197,7 +197,7 @@ fn configure_veracode_with_env_vars_conditional(
     config
 }
 
-/// Parse region string to VeracodeRegion enum
+/// Parse region string to `VeracodeRegion` enum
 fn parse_region_from_str(region_str: &str) -> Result<VeracodeRegion, i32> {
     let region = match region_str {
         s if s.eq_ignore_ascii_case("commercial") => VeracodeRegion::Commercial,

@@ -41,8 +41,14 @@ veracode-workspace/
 │   ├── src/               # Application source code
 │   ├── examples/          # CLI usage examples
 │   └── gitlab/            # GitLab integration samples
+├── veraaudit/             # 📊 CLI audit log retrieval tool
+│   └── src/               # Application source code
 ├── veracmek/              # 🔐 CLI CMEK encryption management tool
 │   └── src/               # Application source code
+├── fuzz/                  # 🔍 Fuzzing infrastructure and targets
+│   ├── fuzz_targets/      # 9 fuzz targets covering 65+ functions
+│   ├── corpus/            # Seed corpus for fuzzing
+│   └── *.md               # Comprehensive fuzzing documentation
 └── resources/             # 📦 Test files and samples
 ```
 
@@ -64,6 +70,19 @@ A comprehensive Rust client library for the Veracode security platform APIs:
 
 A powerful command-line application for security scanning and Veracode integration.
 
+### Veraaudit CLI Application (`veraaudit`)
+
+A production-ready tool for retrieving and archiving Veracode audit logs for compliance and monitoring.
+
+**Key Capabilities:**
+- **📊 Audit Log Retrieval** - Automated collection of Veracode platform audit logs
+- **🔄 Service Mode** - Continuous monitoring with configurable intervals
+- **📁 Timestamped Archival** - UTC-based file naming for chronological organization
+- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault
+- **🧹 Automatic Cleanup** - Configurable retention policies by count and age
+- **🌍 Multi-Regional** - Support for all Veracode regions with timezone handling
+- **🛡️ Production Ready** - Comprehensive error handling and retry logic
+
 ### Veracmek CLI Application (`veracmek`)
 
 A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles.
@@ -72,10 +91,23 @@ A specialized command-line tool for managing Customer Managed Encryption Keys (C
 - **🔐 CMEK Management** - Enable, change, and monitor encryption keys across applications
 - **🔄 Bulk Operations** - Process multiple applications with dry-run support
 - **📁 File-Based Configuration** - JSON-based batch processing for complex scenarios
-- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault
+- **🔑 Vault Integration** - Secure credential management with HashiCorp Vault and Vault API-compliant retry logic
 - **📊 Multiple Output Formats** - Table and JSON output for different use cases
 - **🌍 Multi-Regional** - Support for all Veracode regions (Commercial, European, Federal)
-- **🛡️ Production Ready** - Robust error handling, retry logic, and comprehensive logging
+- **🛡️ Production Ready** - Intelligent error handling with fast failure on auth errors and automatic retry for transient issues
+
+### Fuzzing Infrastructure (`fuzz/`)
+
+Comprehensive fuzzing infrastructure for security testing and vulnerability discovery.
+
+**Key Capabilities:**
+- **🔍 9 Fuzz Targets** - Covering 65+ security-critical functions across all applications
+- **🎯 Prioritized Testing** - High-priority targets for URL validation, HTML parsing, and credential handling
+- **📊 Comprehensive Coverage** - CLI validators, API deserializers, datetime parsing, and Vault integration
+- **🔐 Security Focused** - Discovered and fixed multiple high-severity vulnerabilities (XSS, injection attacks)
+- **📚 Extensive Documentation** - Quick start guides, run commands, and results interpretation
+- **🚀 Automated Scripts** - Pre-configured test suites for quick/standard/comprehensive testing
+- **✅ 90+ Security Tests** - All fuzzing discoveries converted to permanent unit tests
 
 ## ✨ Key Features
 
@@ -484,7 +516,7 @@ veracmek --region commercial bulk --kms-alias "alias/commercial-key" --dry-run
 
 #### Vault Integration
 
-Use HashiCorp Vault for secure credential management:
+Use HashiCorp Vault for secure credential management with production-grade error handling:
 
 ```bash
 # Set up Vault environment variables
@@ -501,6 +533,14 @@ veracmek enable --app "MyApp" --kms-alias "alias/my-key"
 # Get help on environment variables and configuration
 veracmek help-env
 ```
+
+**Improved Vault Reliability:**
+- ✅ **Smart Retry Logic**: Follows HashiCorp Vault API best practices using modern `backon` crate
+- ✅ **Fast Failure**: Authentication errors (401, 403) exit immediately - no unnecessary retries
+- ✅ **Automatic Recovery**: Server errors (500, 503) and standby nodes (429) retry with exponential backoff
+- ✅ **Certificate Validation**: TLS/certificate errors fail fast when trust is enforced
+- ✅ **Safe Defaults**: Unknown errors don't retry to prevent retry storms
+- ✅ **Maintained Dependencies**: Uses actively maintained retry libraries with no security advisories
 
 #### Development and Debugging
 
@@ -954,7 +994,50 @@ cargo test -p veracmek
 
 # Run with output
 cargo test -- --nocapture
+
+# Run tests with miri (undefined behavior detection)
+cargo +nightly miri test
+
+# Run miri on specific package
+cargo +nightly miri test -p veracode-api
+cargo +nightly miri test -p verascan
+cargo +nightly miri test -p veracmek
 ```
+
+### Miri Setup
+
+[Miri](https://github.com/rust-lang/miri) is an interpreter for Rust's mid-level intermediate representation (MIR) that can detect certain classes of undefined behavior.
+
+```bash
+# Install miri (requires nightly toolchain)
+rustup +nightly component add miri
+
+# Run tests with miri to detect undefined behavior
+cargo +nightly miri test
+
+# Run miri on specific package
+cargo +nightly miri test -p veracode-api
+
+# Run miri with custom flags for more comprehensive checking
+MIRIFLAGS="-Zmiri-backtrace=full -Zmiri-disable-isolation" cargo +nightly miri test
+
+# Run with strict provenance and symbolic alignment checks (default in .cargo/config.toml)
+cargo +nightly miri test
+```
+
+The project includes miri configuration in `.cargo/config.toml` with sensible defaults:
+- **Strict Provenance**: Catches pointer provenance violations
+- **Symbolic Alignment Check**: Detects unaligned memory access
+
+Additional useful miri flags you can set via `MIRIFLAGS`:
+- `-Zmiri-backtrace=full` - Full backtraces for debugging
+- `-Zmiri-disable-isolation` - Allow filesystem/network access in tests
+- `-Zmiri-tree-borrows` - Use the Tree Borrows aliasing model (experimental)
+
+The dedicated `test` profile provides:
+- Debug symbols enabled for better diagnostics
+- Overflow checks to catch arithmetic errors
+- No optimizations for easier debugging
 
 ### Linting and Formatting
 
@@ -969,6 +1052,22 @@ cargo fmt
 cargo fmt -- --check
 ```
 
+### Security Auditing
+
+```bash
+# Check for security vulnerabilities in dependencies
+cargo audit
+
+# Install cargo-audit if not already installed
+cargo install cargo-audit
+```
+
+**Dependency Security:**
+- ✅ **Zero Security Advisories**: All dependencies are actively maintained
+- ✅ **Modern Retry Library**: Uses `backon` v1.3+ (actively maintained, replaces unmaintained `backoff`)
+- ✅ **Regular Updates**: Dependencies are regularly reviewed and updated
+- ✅ **Best Practices**: Follows Rust security best practices for dependency management
+
 ### Building Documentation
 
 ```bash
@@ -978,6 +1077,36 @@ cargo doc --open
 # Build documentation for all packages
 cargo doc --workspace
 ```
+
+### Fuzzing
+
+The workspace includes comprehensive fuzzing infrastructure for security testing:
+
+```bash
+# Quick security check (2 minutes per high-priority target)
+cd fuzz && ./run_all_fuzz_tests.sh 120 quick
+
+# Standard fuzzing run (10 minutes per target)
+cd fuzz && ./run_all_fuzz_tests.sh 600 standard
+
+# Comprehensive overnight test
+cd fuzz && nohup ./run_all_fuzz_tests.sh 28800 comprehensive > fuzz.log 2>&1 &
+
+# Manual fuzzing of specific target
+cd /home/admin/code/veracode-workspace
+cargo +nightly fuzz run fuzz_verascan_validators -- -max_total_time=600
+```
+
+**Available Targets:**
+- **High Priority**: `fuzz_verascan_validators` (URL/CMEK validation), `fuzz_html_parser` (XSS prevention), `fuzz_vault_parsers` (auth security)
+- **Medium Priority**: `fuzz_api_deserializers` (JSON parsing), `fuzz_datetime` (timezone handling), `fuzz_cli_validators` (veraaudit CLI)
+- **Low Priority**: `fuzz_output_parsers`, `fuzz_validation`, `fuzz_combined`
+
+For detailed fuzzing documentation, see:
+- [fuzz/README.md](fuzz/README.md) - Complete fuzzing guide
+- [fuzz/QUICKSTART.md](fuzz/QUICKSTART.md) - Quick start commands
+- [fuzz/IMPROVEMENTS.md](fuzz/IMPROVEMENTS.md) - Security findings and fixes
+- [fuzz/RUN_COMMANDS.md](fuzz/RUN_COMMANDS.md) - Command reference
 
 ## 🔍 Debugging and Troubleshooting
 

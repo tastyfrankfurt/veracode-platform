@@ -201,8 +201,14 @@ impl From<SandboxListParams> for Vec<(String, String)> {
     }
 }
 
-/// Sandbox-specific error types that extend the base VeracodeError
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
+/// Sandbox-specific error types that extend the base `VeracodeError`
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum SandboxError {
     /// Veracode API error
     Api(VeracodeError),
@@ -257,7 +263,12 @@ pub struct SandboxApi<'a> {
 }
 
 impl<'a> SandboxApi<'a> {
-    /// Create a new SandboxApi instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Create a new `SandboxApi` instance
     #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
@@ -273,6 +284,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of sandboxes or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn list_sandboxes(
         &self,
         application_guid: &str,
@@ -313,6 +329,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn get_sandbox(
         &self,
         application_guid: &str,
@@ -349,6 +370,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn create_sandbox(
         &self,
         application_guid: &str,
@@ -423,6 +449,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the updated sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn update_sandbox(
         &self,
         application_guid: &str,
@@ -467,6 +498,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn delete_sandbox(
         &self,
         application_guid: &str,
@@ -505,6 +541,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` indicating success or failure.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn promote_sandbox_scan(
         &self,
         application_guid: &str,
@@ -548,6 +589,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of scans or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn get_sandbox_scans(
         &self,
         application_guid: &str,
@@ -584,6 +630,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a boolean indicating if the sandbox exists.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn sandbox_exists(
         &self,
         application_guid: &str,
@@ -606,6 +657,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the sandbox if found, or None if not found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn get_sandbox_by_name(
         &self,
         application_guid: &str,
@@ -681,6 +737,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn create_simple_sandbox(
         &self,
         application_guid: &str,
@@ -708,6 +769,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the created sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn create_auto_recreate_sandbox(
         &self,
         application_guid: &str,
@@ -736,6 +802,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the updated sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn update_sandbox_name(
         &self,
         application_guid: &str,
@@ -763,12 +834,22 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the count of sandboxes or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn count_sandboxes(&self, application_guid: &str) -> Result<usize, SandboxError> {
         let sandboxes = self.list_sandboxes(application_guid, None).await?;
         Ok(sandboxes.len())
     }
 
-    /// Get numeric sandbox_id from sandbox GUID.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
+    /// Get numeric `sandbox_id` from sandbox GUID.
     ///
     /// This is needed for XML API operations that require numeric IDs.
     ///
@@ -779,7 +860,17 @@ impl<'a> SandboxApi<'a> {
     ///
     /// # Returns
     ///
-    /// A `Result` containing the numeric sandbox_id as a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
+    /// A `Result` containing the numeric `sandbox_id` as a string.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn get_sandbox_id_from_guid(
         &self,
         application_guid: &str,
@@ -808,6 +899,11 @@ impl<'a> SandboxApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the sandbox (existing or newly created).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the sandbox is not found,
+    /// or authentication/authorization fails.
     pub async fn create_sandbox_if_not_exists(
         &self,
         application_guid: &str,

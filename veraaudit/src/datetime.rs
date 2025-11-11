@@ -1,4 +1,4 @@
-//! DateTime validation and handling for audit log retrieval
+//! `DateTime` validation and handling for audit log retrieval
 use crate::error::{AuditError, Result};
 use crate::validation::Region;
 use chrono::{DateTime, Duration, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
@@ -9,6 +9,12 @@ const FORMAT_DATETIME_SECOND: &str = "%Y-%m-%d %H:%M:%S";
 
 /// Maximum date range allowed by Veracode API (6 months)
 const MAX_RANGE_DAYS: i64 = 180;
+
+/// Midnight time constant (00:00:00)
+const MIDNIGHT: NaiveTime = match NaiveTime::from_hms_opt(0, 0, 0) {
+    Some(time) => time,
+    None => unreachable!(),
+};
 
 /// Convert a datetime string from local timezone to UTC
 ///
@@ -48,10 +54,7 @@ pub fn convert_local_to_utc(datetime_str: &str, _region: &Region) -> Result<Stri
         if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_str, FORMAT_DATETIME_SECOND) {
             (dt, FORMAT_DATETIME_SECOND)
         } else if let Ok(date) = NaiveDate::parse_from_str(datetime_str, FORMAT_DATE) {
-            (
-                date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap()),
-                FORMAT_DATE,
-            )
+            (date.and_time(MIDNIGHT), FORMAT_DATE)
         } else {
             return Err(AuditError::InvalidDateTimeFormat(format!(
                 "Invalid datetime format: '{}'. Expected: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",
@@ -97,7 +100,7 @@ pub fn convert_local_to_utc(datetime_str: &str, _region: &Region) -> Result<Stri
 ///
 /// # Returns
 ///
-/// The validated datetime string (converted to UTC if utc_mode is false)
+/// The validated datetime string (converted to UTC if `utc_mode` is false)
 ///
 /// # Errors
 ///
@@ -120,14 +123,15 @@ pub fn validate_datetime_format(
 
     // Check if datetime is in the future
     if parsed_dt > Utc::now() {
+        let datetime_display = if utc_mode {
+            datetime_str.to_string()
+        } else {
+            format!("{} (local) / {} (UTC)", datetime_str, utc_datetime_str)
+        };
+
         return Err(AuditError::DateRangeInvalid(format!(
             "{} cannot be in the future: {}",
-            field_name,
-            if utc_mode {
-                datetime_str
-            } else {
-                &format!("{} (local) / {} (UTC)", datetime_str, utc_datetime_str)
-            }
+            field_name, datetime_display
         )));
     }
 
@@ -135,6 +139,10 @@ pub fn validate_datetime_format(
 }
 
 /// Try to parse a datetime string using all supported formats
+///
+/// # Errors
+///
+/// Returns error if the datetime format is invalid
 pub fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
     // Try format: YYYY-MM-DD HH:MM:SS
     if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_str, FORMAT_DATETIME_SECOND) {
@@ -143,7 +151,7 @@ pub fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
 
     // Try format: YYYY-MM-DD (date only, time = 00:00:00)
     if let Ok(date) = NaiveDate::parse_from_str(datetime_str, FORMAT_DATE) {
-        let dt = date.and_time(NaiveTime::from_hms_opt(0, 0, 0).unwrap());
+        let dt = date.and_time(MIDNIGHT);
         return Ok(DateTime::<Utc>::from_naive_utc_and_offset(dt, Utc));
     }
 
@@ -169,7 +177,7 @@ pub fn try_parse_datetime(datetime_str: &str) -> Result<DateTime<Utc>> {
 ///
 /// # Returns
 ///
-/// Tuple of validated (start, end) strings (converted to UTC if utc_mode is false)
+/// Tuple of validated (start, end) strings (converted to UTC if `utc_mode` is false)
 ///
 /// # Errors
 ///
@@ -197,6 +205,7 @@ pub fn validate_date_range(
     }
 
     // Check 6-month maximum range
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let range_days = (end_dt - start_dt).num_days();
     if range_days > MAX_RANGE_DAYS {
         return Err(AuditError::DateRangeInvalid(format!(
@@ -208,15 +217,24 @@ pub fn validate_date_range(
     Ok((start_validated, end_validated))
 }
 
+/// Internal helper to format a `DateTime<Utc>` as YYYY-MM-DD HH:MM:SS
+/// This is separate from the public API to allow testing without system time access
+fn format_datetime_utc(dt: DateTime<Utc>) -> String {
+    dt.format(FORMAT_DATETIME_SECOND).to_string()
+}
+
 /// Format current UTC time as YYYY-MM-DD HH:MM:SS
+#[must_use]
 pub fn format_now_utc() -> String {
-    Utc::now().format(FORMAT_DATETIME_SECOND).to_string()
+    format_datetime_utc(Utc::now())
 }
 
 /// Format UTC time minus specified minutes as YYYY-MM-DD HH:MM:SS
+#[must_use]
 pub fn format_utc_minus_minutes(minutes: i64) -> String {
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let dt = Utc::now() - Duration::minutes(minutes);
-    dt.format(FORMAT_DATETIME_SECOND).to_string()
+    format_datetime_utc(dt)
 }
 
 /// Parse a time offset string and return the duration in minutes
@@ -285,7 +303,12 @@ pub fn parse_time_offset(offset_str: &str) -> Result<i64> {
             ));
         }
 
-        Ok(hours * 60)
+        hours.checked_mul(60).ok_or_else(|| {
+            AuditError::InvalidConfig(format!(
+                "Offset value too large: '{}' hours would overflow",
+                hours
+            ))
+        })
     } else if offset_str.ends_with('d') {
         // Days
         let num_str = offset_str.trim_end_matches('d');
@@ -302,7 +325,14 @@ pub fn parse_time_offset(offset_str: &str) -> Result<i64> {
             ));
         }
 
-        Ok(days * 24 * 60)
+        days.checked_mul(24)
+            .and_then(|h| h.checked_mul(60))
+            .ok_or_else(|| {
+                AuditError::InvalidConfig(format!(
+                    "Offset value too large: '{}' days would overflow",
+                    days
+                ))
+            })
     } else {
         // No unit specified, assume minutes
         let minutes: i64 = offset_str.parse().map_err(|_| {
@@ -374,6 +404,7 @@ pub fn add_interval_to_datetime(datetime_str: &str, interval_str: &str) -> Resul
     let parsed_dt = try_parse_datetime(datetime_str)?;
 
     // Add the interval
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let end_dt = parsed_dt + Duration::minutes(minutes);
 
     // Format back to string in the same format
@@ -411,6 +442,7 @@ pub fn subtract_minutes_from_datetime(datetime_str: &str, minutes: i64) -> Resul
     let parsed_dt = try_parse_datetime(datetime_str)?;
 
     // Subtract the minutes
+    #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
     let result_dt = parsed_dt - Duration::minutes(minutes);
 
     // Format back to string in the same format
@@ -418,10 +450,12 @@ pub fn subtract_minutes_from_datetime(datetime_str: &str, minutes: i64) -> Resul
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_validate_datetime_format_date_only() {
         let result = validate_datetime_format("2025-01-15", "test", true, &Region::Commercial);
         assert!(result.is_ok());
@@ -429,6 +463,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_validate_datetime_format_with_seconds() {
         let result =
             validate_datetime_format("2025-01-15 14:30:45", "test", true, &Region::Commercial);
@@ -455,6 +490,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_validate_datetime_format_future_date() {
         let future = format_utc_minus_minutes(-60); // 60 minutes in the future
         let result = validate_datetime_format(&future, "test", true, &Region::Commercial);
@@ -463,6 +499,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Utc::now() via validate_datetime_format
     fn test_validate_date_range_valid() {
         let result = validate_date_range("2025-01-01", "2025-01-31", true, &Region::Commercial);
         assert!(result.is_ok());
@@ -472,6 +509,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Utc::now() via validate_datetime_format
     fn test_validate_date_range_with_times() {
         let result = validate_date_range(
             "2025-01-01 10:00:00",
@@ -483,6 +521,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Utc::now() via validate_datetime_format
     fn test_validate_date_range_start_after_end() {
         let result = validate_date_range("2025-01-31", "2025-01-01", true, &Region::Commercial);
         assert!(result.is_err());
@@ -490,6 +529,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Utc::now() via validate_datetime_format
     fn test_validate_date_range_exceeds_6_months() {
         let result = validate_date_range("2024-01-01", "2024-12-31", true, &Region::Commercial);
         assert!(result.is_err());
@@ -497,16 +537,31 @@ mod tests {
     }
 
     #[test]
-    fn test_format_now_utc() {
-        let now = format_now_utc();
-        // Should match format YYYY-MM-DD HH:MM:SS
-        assert!(validate_datetime_format(&now, "test", true, &Region::Commercial).is_ok());
+    fn test_format_datetime_utc() {
+        // Test with a fixed DateTime to avoid Utc::now() system call
+        let fixed_time = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
+        let formatted = format_datetime_utc(fixed_time);
+
+        // Verify format is YYYY-MM-DD HH:MM:SS
+        assert_eq!(formatted, "2025-01-15 14:30:00");
+
+        // Verify it can be parsed back
+        let parsed = NaiveDateTime::parse_from_str(&formatted, FORMAT_DATETIME_SECOND);
+        assert!(parsed.is_ok());
     }
 
     #[test]
-    fn test_format_utc_minus_minutes() {
-        let earlier = format_utc_minus_minutes(60);
-        assert!(validate_datetime_format(&earlier, "test", true, &Region::Commercial).is_ok());
+    fn test_format_datetime_utc_with_offset() {
+        // Test time math with fixed DateTime
+        let base_time = Utc.with_ymd_and_hms(2025, 1, 15, 14, 30, 0).unwrap();
+        let earlier = base_time - Duration::minutes(60);
+        let formatted = format_datetime_utc(earlier);
+
+        assert_eq!(formatted, "2025-01-15 13:30:00");
+
+        // Verify it can be parsed back
+        let parsed = NaiveDateTime::parse_from_str(&formatted, FORMAT_DATETIME_SECOND);
+        assert!(parsed.is_ok());
     }
 
     #[test]
@@ -550,6 +605,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Utc::now() via format_utc_minus_offset
     fn test_format_utc_minus_offset() {
         // Test minutes
         let result = format_utc_minus_offset("30m");
@@ -578,6 +634,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Local timezone which requires system time
     fn test_local_timezone_conversion() {
         // Test that all regions use system's local timezone for user inputs
         let result_european = convert_local_to_utc("2025-01-15 10:00:00", &Region::European);
@@ -599,6 +656,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(any(not(miri), feature = "disable-miri-isolation"))] // Uses Local timezone which requires system time
     fn test_validate_date_range_all_regions_use_local() {
         // Test that all regions properly convert from local timezone to UTC
         let result = validate_date_range(

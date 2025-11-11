@@ -9,6 +9,7 @@ use crate::{
     build::{Build, BuildError},
     sandbox::{Sandbox, SandboxError},
     scan::ScanError,
+    validation::AppGuid,
 };
 use log::{debug, info};
 
@@ -22,10 +23,11 @@ pub type WorkflowResult<T> = Result<T, WorkflowError>;
 
 /// Errors that can occur during workflow operations
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum WorkflowError {
     /// Veracode API error
     Api(VeracodeError),
-    /// Sandbox operation error
+    /// Veracode API error
     Sandbox(SandboxError),
     /// Scan operation error
     Scan(ScanError),
@@ -211,6 +213,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the workflow result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn execute_complete_workflow(
         &self,
         config: WorkflowConfig,
@@ -244,6 +251,7 @@ impl VeracodeWorkflow {
                             config.app_description,
                             None, // No teams specified
                             None, // No repo URL specified
+                            None, // No custom KMS alias specified
                         )
                         .await
                     {
@@ -277,7 +285,9 @@ impl VeracodeWorkflow {
             };
 
         // Get numeric app_id for XML API
-        let app_id = self.client.get_app_id_from_guid(&application.guid).await?;
+        let app_guid = AppGuid::new(&application.guid)
+            .map_err(|e| WorkflowError::Api(VeracodeError::Validation(e)))?;
+        let app_id = self.client.get_app_id_from_guid(&app_guid).await?;
         info!("   📊 Application ID for XML API: {app_id}");
 
         // Step 2: Check sandbox exists, if not create
@@ -344,8 +354,8 @@ impl VeracodeWorkflow {
 
         // Step 3: Upload multiple files to sandbox
         info!("\n📤 Step 3: Uploading files to sandbox...");
-        let scan_api = self.client.scan_api();
-        let mut files_uploaded = 0;
+        let scan_api = self.client.scan_api()?;
+        let mut files_uploaded: usize = 0;
 
         for file_path in &config.file_paths {
             info!("   📁 Uploading file: {file_path}");
@@ -358,7 +368,7 @@ impl VeracodeWorkflow {
                         "   ✅ File uploaded successfully: {} (ID: {})",
                         uploaded_file.file_name, uploaded_file.file_id
                     );
-                    files_uploaded += 1;
+                    files_uploaded = files_uploaded.saturating_add(1);
                 }
                 Err(ScanError::FileNotFound(_)) => {
                     return Err(WorkflowError::NotFound(format!(
@@ -384,8 +394,12 @@ impl VeracodeWorkflow {
         // Step 4: Start prescan with available options
         let build_id = if config.auto_scan {
             info!("\n🔍 Step 4: Starting prescan and scan...");
+            let first_file = config
+                .file_paths
+                .first()
+                .ok_or_else(|| WorkflowError::Workflow("No file paths provided".to_string()))?;
             match scan_api
-                .upload_and_scan_sandbox(&app_id, &sandbox_id, &config.file_paths[0])
+                .upload_and_scan_sandbox(&app_id, &sandbox_id, first_file)
                 .await
             {
                 Ok(build_id) => {
@@ -463,6 +477,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing application and sandbox information.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn ensure_app_and_sandbox(
         &self,
         app_name: &str,
@@ -491,6 +510,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the application or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn get_application_by_name(&self, app_name: &str) -> WorkflowResult<Application> {
         match self.client.get_application_by_name(app_name).await? {
             Some(app) => Ok(app),
@@ -510,6 +534,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the sandbox or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn get_sandbox_by_name(
         &self,
         app_guid: &str,
@@ -539,6 +568,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn delete_sandbox_builds(
         &self,
         app_name: &str,
@@ -551,14 +585,16 @@ impl VeracodeWorkflow {
         let sandbox = self.get_sandbox_by_name(&app.guid, sandbox_name).await?;
 
         // Get IDs for XML API
-        let app_id = self.client.get_app_id_from_guid(&app.guid).await?;
+        let app_guid = AppGuid::new(&app.guid)
+            .map_err(|e| WorkflowError::Api(VeracodeError::Validation(e)))?;
+        let app_id = self.client.get_app_id_from_guid(&app_guid).await?;
         let sandbox_api = self.client.sandbox_api();
         let sandbox_id = sandbox_api
             .get_sandbox_id_from_guid(&app.guid, &sandbox.guid)
             .await?;
 
         // Delete all builds using XML API
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
         match scan_api
             .delete_all_sandbox_builds(&app_id, &sandbox_id)
             .await
@@ -593,6 +629,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn delete_sandbox(&self, app_name: &str, sandbox_name: &str) -> WorkflowResult<()> {
         info!("🗑️  Deleting sandbox '{sandbox_name}'...");
 
@@ -637,6 +678,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn delete_application(&self, app_name: &str) -> WorkflowResult<()> {
         info!("🗑️  Deleting application '{app_name}'...");
 
@@ -658,15 +704,19 @@ impl VeracodeWorkflow {
         }
 
         // Delete main application builds
-        let app_id = self.client.get_app_id_from_guid(&app.guid).await?;
-        let scan_api = self.client.scan_api();
+        let app_guid = AppGuid::new(&app.guid)
+            .map_err(|e| WorkflowError::Api(VeracodeError::Validation(e)))?;
+        let app_id = self.client.get_app_id_from_guid(&app_guid).await?;
+        let scan_api = self.client.scan_api()?;
         match scan_api.delete_all_app_builds(&app_id).await {
             Ok(_) => info!("   ✅ Deleted all application builds"),
             Err(e) => info!("   ⚠️  Warning: Could not delete application builds: {e}"),
         }
 
         // Delete the application using REST API
-        match self.client.delete_application(&app.guid).await {
+        let app_guid = AppGuid::new(&app.guid)
+            .map_err(|e| WorkflowError::Api(VeracodeError::Validation(e)))?;
+        match self.client.delete_application(&app_guid).await {
             Ok(_) => {
                 info!("   ✅ Successfully deleted application '{app_name}'");
                 Ok(())
@@ -701,6 +751,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` indicating success or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn complete_cleanup(&self, app_name: &str) -> WorkflowResult<()> {
         info!("🧹 Starting complete cleanup for application '{app_name}'");
         info!("   ⚠️  WARNING: This will delete ALL data associated with this application");
@@ -736,6 +791,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn ensure_build_exists(
         &self,
         app_id: &str,
@@ -763,6 +823,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn ensure_build_exists_with_policy(
         &self,
         app_id: &str,
@@ -772,7 +837,7 @@ impl VeracodeWorkflow {
     ) -> WorkflowResult<Build> {
         info!("🔍 Checking if build exists (deletion policy: {deletion_policy})...");
 
-        let build_api = self.client.build_api();
+        let build_api = self.client.build_api()?;
 
         // Try to get existing build info
         match build_api
@@ -886,7 +951,7 @@ impl VeracodeWorkflow {
         sandbox_id: Option<&str>,
         version: Option<&str>,
     ) -> WorkflowResult<Build> {
-        let build_api = self.client.build_api();
+        let build_api = self.client.build_api()?;
 
         let build_version = if let Some(v) = version {
             v.to_string()
@@ -944,7 +1009,7 @@ impl VeracodeWorkflow {
         app_id: &str,
         sandbox_id: Option<&str>,
     ) -> WorkflowResult<()> {
-        let build_api = self.client.build_api();
+        let build_api = self.client.build_api()?;
         let max_attempts = 5;
         let delay_seconds = 3;
 
@@ -1009,6 +1074,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn upload_large_file_with_build_management(
         &self,
         app_id: &str,
@@ -1032,7 +1102,7 @@ impl VeracodeWorkflow {
 
         // Step 2: Upload file using large file API
         info!("\n📤 Uploading file using uploadlargefile.do...");
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
 
         match scan_api
             .upload_large_file(crate::scan::UploadLargeFileRequest {
@@ -1074,6 +1144,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn upload_large_file_with_progress_and_build_management<F>(
         &self,
         app_id: &str,
@@ -1096,7 +1171,7 @@ impl VeracodeWorkflow {
 
         // Step 2: Upload file with progress tracking
         info!("\n📤 Uploading file with progress tracking...");
-        let scan_api = self.client.scan_api();
+        let scan_api = self.client.scan_api()?;
 
         match scan_api
             .upload_large_file_with_progress(
@@ -1137,6 +1212,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the uploaded file information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn upload_file_with_smart_build_management(
         &self,
         app_id: &str,
@@ -1163,7 +1243,7 @@ impl VeracodeWorkflow {
             .await
         } else {
             info!("📦 Using standard file upload (uploadfile.do)");
-            let scan_api = self.client.scan_api();
+            let scan_api = self.client.scan_api()?;
 
             match scan_api
                 .upload_file(&crate::scan::UploadFileRequest {
@@ -1199,6 +1279,11 @@ impl VeracodeWorkflow {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any step in the workflow fails, including API requests,
+    /// validation errors, or authentication/authorization failures.
     pub async fn get_or_create_build(
         &self,
         app_id: &str,

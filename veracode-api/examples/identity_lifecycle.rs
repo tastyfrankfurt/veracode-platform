@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::{
     VeracodeClient, VeracodeConfig,
     identity::{
@@ -18,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time should be after unix epoch")
         .as_secs();
 
     println!("🏗️  Identity Management Lifecycle Example\n");
@@ -29,13 +31,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(roles) => {
             println!("✅ Found {} roles:", roles.len());
             for (i, role) in roles.iter().take(5).enumerate() {
-                println!("   {}. {} ({})", i + 1, role.role_name, role.role_id);
+                let i: usize = i;
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    role.role_name,
+                    role.role_id
+                );
                 if let Some(desc) = &role.role_description {
                     println!("      Description: {desc}");
                 }
             }
             if roles.len() > 5 {
-                println!("   ... and {} more roles", roles.len() - 5);
+                println!("   ... and {} more roles", roles.len().saturating_sub(5));
             }
             roles
         }
@@ -51,13 +59,19 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(teams) => {
             println!("✅ Found {} teams:", teams.len());
             for (i, team) in teams.iter().take(3).enumerate() {
-                println!("   {}. {} ({})", i + 1, team.team_name, team.team_id);
+                let i: usize = i;
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    team.team_name,
+                    team.team_id
+                );
                 if let Some(desc) = &team.team_description {
                     println!("      Description: {desc}");
                 }
             }
             if teams.len() > 3 {
-                println!("   ... and {} more teams", teams.len() - 3);
+                println!("   ... and {} more teams", teams.len().saturating_sub(3));
             }
         }
         Err(e) => {
@@ -144,9 +158,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 "⚠️  Neither extsubmitter nor Submitter role found. First 25 role descriptions:"
             );
             for (i, role) in available_roles.iter().take(25).enumerate() {
+                let i: usize = i;
                 println!(
                     "   {}. {} - Description: '{}'",
-                    i + 1,
+                    i.saturating_add(1),
                     role.role_name,
                     role.role_description
                         .as_ref()
@@ -285,9 +300,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(users) => {
             println!("✅ Found {} users (showing first 5):", users.len());
             for (i, user) in users.iter().take(5).enumerate() {
+                let i: usize = i;
                 println!(
                     "   {}. {} {} - {}",
-                    i + 1,
+                    i.saturating_add(1),
                     user.first_name,
                     user.last_name,
                     user.email_address
@@ -309,7 +325,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(teams) => {
             println!("✅ Found {} teams (showing first 5):", teams.len());
             for (i, team) in teams.iter().take(5).enumerate() {
-                println!("   {}. {} ({})", i + 1, team.team_name, team.team_id);
+                let i: usize = i;
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    team.team_name,
+                    team.team_id
+                );
                 if let Some(desc) = &team.team_description {
                     println!("      Description: {desc}");
                 }
@@ -582,25 +604,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     println!("   - {} ({})", team.team_name, team.team_id);
                 }
 
-                let mut deleted_count = 0;
-                let mut failed_count = 0;
+                let mut deleted_count: usize = 0;
+                let mut failed_count: usize = 0;
 
                 for team in test_teams {
                     match identity_api.delete_team(&team.team_id).await {
                         Ok(_) => {
                             println!("✅ Deleted team: {}", team.team_name);
-                            deleted_count += 1;
+                            deleted_count = deleted_count.saturating_add(1);
                         }
                         Err(IdentityError::PermissionDenied(_)) => {
                             println!("⚠️  Permission denied to delete team: {}", team.team_name);
-                            failed_count += 1;
+                            failed_count = failed_count.saturating_add(1);
                         }
                         Err(IdentityError::TeamNotFound) => {
                             println!("⚠️  Team not found (already deleted): {}", team.team_name);
                         }
                         Err(e) => {
                             eprintln!("❌ Failed to delete team {}: {}", team.team_name, e);
-                            failed_count += 1;
+                            failed_count = failed_count.saturating_add(1);
                         }
                     }
                 }

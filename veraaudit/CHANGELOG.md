@@ -5,6 +5,88 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.11] - 2025-11-03
+
+### Security
+- **Input Validation Hardening**: Comprehensive datetime validation security improvements
+  - **Unicode Whitespace Rejection**: `validate_datetime()` now rejects non-ASCII whitespace BEFORE trimming
+    - Rejects non-breaking space (U+00A0), zero-width space (U+200B), ideographic space (U+3000)
+    - Prevents log injection and parsing bypasses
+  - **Control Character Rejection**: Enhanced security against injection attacks
+    - Rejects control characters (newlines, carriage returns, null bytes, tabs)
+    - Prevents log injection attacks
+    - Creates clear, secure error messages
+  - **Zero-Width Character Detection**: Catches format characters not detected by `is_whitespace()` or `is_control()`
+    - Rejects zero-width space (U+200B), zero-width non-joiner (U+200C), zero-width joiner (U+200D)
+    - Rejects byte order mark (U+FEFF)
+  - **Security-First Validation**: All validation happens BEFORE string trimming to prevent bypasses
+  - **Modified Files**: `src/cli.rs`
+
+### Testing
+- **8 New Security Tests**: Comprehensive coverage of datetime validation edge cases
+  - `test_validate_datetime_rejects_unicode_non_breaking_space`: Non-breaking space rejection
+  - `test_validate_datetime_rejects_zero_width_space`: Zero-width character detection
+  - `test_validate_datetime_rejects_ideographic_space`: CJK whitespace rejection
+  - `test_validate_datetime_rejects_embedded_newlines`: Log injection prevention
+  - `test_validate_datetime_rejects_embedded_carriage_return`: CR character rejection
+  - `test_validate_datetime_rejects_null_byte`: Null byte detection
+  - `test_validate_datetime_allows_normal_space`: Normal space preservation
+  - `test_validate_datetime_leading_trailing_spaces_ok`: ASCII space trimming works correctly
+  - All tests passing with 100% success rate
+
+### Changed
+- **Dependency Migration**: Migrated from unmaintained `backoff` crate to actively maintained `backon` crate
+  - **Security**: Resolved RUSTSEC-2025-0012 (backoff unmaintained) and RUSTSEC-2024-0384 (instant unmaintained)
+  - **Modern API**: Updated retry logic to use backon's fluent `.retry().when()` API instead of callback-based approach
+  - **Same Behavior**: All retry logic and error handling semantics preserved - no functional changes
+  - **Improved Code**: Cleaner, more maintainable retry patterns with method chaining
+  - **Dependencies**: Changed from `backoff = "0.4"` to `backon = "1.3"`
+  - **Modified Files**: `Cargo.toml`, `src/vault_client.rs`
+
+### Testing
+- **100% Test Coverage**: All 100 tests passing after migration
+- **Updated Tests**: Refactored retry logic tests to work with new backon API
+- **Validation**: Comprehensive testing of all HTTP status codes and error scenarios
+- **Bug Fix**: HTTP 501 (Vault not initialized) now correctly classified as non-retryable
+
+## [0.5.10] - 2025-11-01
+
+### Fixed
+- **Vault Error Handling & Retry Logic**: Comprehensive improvement to HashiCorp Vault integration
+  - **403 Access Denied now exits immediately** - No more unnecessary retries on authentication failures
+  - **Vault API Compliant Retry Logic**: Implements official HashiCorp Vault API retry guidance
+    - **Permanent Errors (Never Retry)**: HTTP 400, 401, 403, 404, 405, 501, all 4xx client errors
+    - **Transient Errors (Retry)**: HTTP 412 (precondition failed), 429 (standby), 472 (DR replication), 473 (performance standby), 500/502/503 (server errors), other 5xx
+  - **Certificate/TLS Error Handling**: Type-based error detection using error chain traversal
+    - **Proper rustls Error Type Checking**: Inspects error chains for `InvalidCertificate`, `NoCertificatesPresented`, `UnsupportedNameType`
+    - **No More String Matching**: Replaced fragile string matching (`contains("certificate")`) with `downcast_ref::<std::io::Error>()` type checking
+    - **Network Error Detection**: Separate type-based detection for retryable network errors (connection timeouts, etc.)
+    - **Error Chain Traversal**: Recursively inspects error sources to find root certificate issues
+    - **Hybrid Approach**: Uses both type downcasting and debug representation checking for comprehensive coverage
+  - **All 14 ClientError Variants Handled**: Explicit handling for all vaultrs error types
+    - File errors (FileNotFoundError, FileReadError, FileWriteError)
+    - Configuration errors (InvalidLoginMethodError, InvalidUpdateParameter, WrapInvalidError)
+    - Data errors (JsonParseError, ResponseEmptyError, ResponseDataEmptyError, ResponseWrapError)
+    - Certificate errors (RestClientBuildError, ParseCertificateError)
+  - **Safe Default Behavior**: Unknown errors default to permanent (no retry) to avoid unnecessary retry storms
+  - **DRY Principle**: Centralized `classify_vault_error()` helper eliminates code duplication across 3 functions
+  - **Modified Files**: `src/vault_client.rs`
+
+### Testing
+- **22 New Vault Error Handling Tests**: Comprehensive test coverage for all error scenarios
+  - HTTP status code classification (400, 401, 403, 404, 405, 412, 429, 472, 473, 500, 501, 502, 503)
+  - ClientError variant handling (all 14 variants)
+  - Edge cases (generic 4xx/5xx, unexpected status codes)
+  - All tests passing with 100% success rate
+
+### Changed
+- **Fixed Misleading Error Messages**: Corrected error reporting for permanent errors (e.g., certificate failures)
+  - **Before**: "Authentication failed after all retry attempts" (incorrect - no retries for permanent errors)
+  - **After**: "TLS/certificate error: Error sending HTTP request" (accurate - shows actual error type)
+  - **Preserves Original Errors**: No longer wraps errors with generic messages, maintains detailed context from error classification
+  - **Accurate for All Cases**: Permanent errors show immediate failure, transient errors show retry exhaustion
+- **Better Logging**: Clear indication whether errors will be retried or failed immediately
+
 ## [0.5.9] - 2025-10-25
 
 ### Added

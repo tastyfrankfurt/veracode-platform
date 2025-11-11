@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::{VeracodeClient, VeracodeConfig};
 
 #[tokio::main]

@@ -1,5 +1,9 @@
 # Static linking for musl (Alpine/containers)
 [target.x86_64-unknown-linux-musl]
 rustflags = ["-C", "target-feature=+crt-static"]
-
 # Dynamic linking for glibc (proc-macros work, requires runtime libraries)
+
+# Miri test configuration
+[env]
+RUSTFLAGS = "-Zmiri-backtrace=full"
+MIRIFLAGS="-Zmiri-disable-isolation"

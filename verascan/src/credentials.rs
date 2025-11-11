@@ -598,4 +598,127 @@ mod tests {
         let invalid = parse_region_from_str("invalid").unwrap();
         assert_eq!(invalid, VeracodeRegion::Commercial);
     }
+
+    // Security tests for API credential validators
+    // These tests ensure fuzz-discovered edge cases are handled correctly
+
+    #[test]
+    fn test_validate_api_credential_valid() {
+        // Valid alphanumeric only
+        assert!(validate_api_credential("abc123", "api_id").is_ok());
+        assert!(validate_api_credential("ABC123XYZ", "api_key").is_ok());
+        assert!(validate_api_credential("1234567890", "api_id").is_ok());
+    }
+
+    #[test]
+    fn test_validate_api_credential_rejects_empty() {
+        let result = validate_api_credential("", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_api_credential_rejects_special_chars() {
+        // Reject dash
+        let result = validate_api_credential("abc-123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject underscore
+        let result = validate_api_credential("abc_123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject dot
+        let result = validate_api_credential("abc.123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject space
+        let result = validate_api_credential("abc 123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_validate_api_credential_rejects_unicode() {
+        // Reject unicode non-breaking space (U+00A0)
+        let result = validate_api_credential("abc\u{00A0}123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject unicode zero-width space (U+200B)
+        let result = validate_api_credential("abc\u{200B}123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject unicode ideographic space (U+3000)
+        let result = validate_api_credential("abc\u{3000}123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_validate_api_credential_rejects_control_chars() {
+        // Reject newline
+        let result = validate_api_credential("abc\n123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject carriage return
+        let result = validate_api_credential("abc\r123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject null byte
+        let result = validate_api_credential("abc\x00123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject tab
+        let result = validate_api_credential("abc\t123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_validate_api_credential_ascii_valid() {
+        // Valid alphanumeric only
+        assert!(validate_api_credential_ascii("abc123", "api_id").is_ok());
+        assert!(validate_api_credential_ascii("ABC123XYZ", "api_key").is_ok());
+        assert!(validate_api_credential_ascii("1234567890", "api_id").is_ok());
+    }
+
+    #[test]
+    fn test_validate_api_credential_ascii_rejects_empty() {
+        let result = validate_api_credential_ascii("", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_api_credential_ascii_rejects_special_chars() {
+        // Reject dash
+        let result = validate_api_credential_ascii("abc-123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject underscore
+        let result = validate_api_credential_ascii("abc_123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
+
+    #[test]
+    fn test_validate_api_credential_ascii_rejects_control_chars() {
+        // Reject newline
+        let result = validate_api_credential_ascii("abc\n123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+
+        // Reject null byte
+        let result = validate_api_credential_ascii("abc\x00123", "api_id");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("alphanumeric"));
+    }
 }

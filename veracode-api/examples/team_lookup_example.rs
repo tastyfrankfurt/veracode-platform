@@ -1,8 +1,8 @@
 //! Example demonstrating how to look up teams by name and use them for application creation
 //!
 //! This example shows:
-//! 1. How to find a team by name using the new get_team_by_name() method
-//! 2. How to get just the team GUID using get_team_guid_by_name()  
+//! 1. How to find a team by name using the new `get_team_by_name()` method
+//! 2. How to get just the team GUID using `get_team_guid_by_name()`  
 //! 3. How to use the team GUID when creating applications
 
 use veracode_platform::{
@@ -10,6 +10,7 @@ use veracode_platform::{
     app::{
         BusinessCriticality, CreateApplicationProfile, CreateApplicationRequest, Team as AppTeam,
     },
+    validation::{AppName, Description},
 };
 
 #[tokio::main]
@@ -62,9 +63,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             let _create_request = CreateApplicationRequest {
                 profile: CreateApplicationProfile {
-                    name: "Example App with Team".to_string(),
+                    name: AppName::new("Example App with Team")?,
                     business_criticality: BusinessCriticality::Medium,
-                    description: Some("Application created with team assignment".to_string()),
+                    description: Some(Description::new(
+                        "Application created with team assignment",
+                    )?),
                     business_unit: None,
                     business_owners: None,
                     policies: None,

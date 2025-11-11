@@ -92,7 +92,7 @@ async fn main() -> Result<()> {
             // 3. Else default to now
             //
             // Track whether end is UTC (computed ends are always UTC)
-            let (end_datetime, end_is_utc) = if let Some(ref _interval_val) = interval {
+            let (end_datetime, end_is_utc) = if let Some(ref interval_val) = interval {
                 // When interval is provided, query continuously to (now - backend_window)
                 // to get the freshest available data while avoiding incomplete backend data
                 let now_utc = datetime::format_now_utc();
@@ -102,9 +102,7 @@ async fn main() -> Result<()> {
 
                 info!(
                     "Using interval-based chunked retrieval: start={}, end=(now - backend_window)={}, chunk_size={}",
-                    start_datetime,
-                    calculated_end,
-                    interval.as_ref().unwrap()
+                    start_datetime, calculated_end, interval_val
                 );
 
                 (calculated_end, true) // Backend-calculated timestamps are always UTC

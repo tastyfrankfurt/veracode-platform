@@ -1,6 +1,6 @@
 [package]
 name = "veraaudit"
-version = "0.5.9"
+version = "0.5.12"
 edition = "2024"
 description = "CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API"
 authors = ["Veracode API Team"]
@@ -9,6 +9,35 @@ license = "MIT OR Apache-2.0"
 [[bin]]
 name = "veraaudit"
 path = "src/main.rs"
+
+[lints.clippy]
+# Defensive programming essentials
+indexing_slicing = "deny"              # Prevents direct indexing
+fallible_impl_from = "deny"            # Catches failed conversions
+wildcard_enum_match_arm = "deny"       # Disallows catch-alls
+fn_params_excessive_bools = "warn"     # Flags too many booleans
+unwrap_used = "deny"                   # Prevents unwrap() in production
+expect_used = "warn"                   # Audit expect() usage
+panic = "deny"                         # Prevents panic! in production
+must_use_candidate = "warn"            # Prevents the result of a function or the value of a type from being ignored
+
+## INTEGER SAFETY
+arithmetic_side_effects = "warn"            # Detects potential overflow
+cast_possible_truncation = "warn"      # Lossy numeric casts (u64 -> u32)
+cast_sign_loss = "warn"                # Sign loss in casts (i32 -> u32)
+cast_possible_wrap = "warn"            # Wrapping casts
+cast_precision_loss = "warn"           # Float precision loss
+
+## STRING & MEMORY SAFETY (ADD THESE)
+string_slice = "warn"                  # String slicing can panic on UTF-8 boundaries
+mem_forget = "deny"                    # Prevents mem::forget abuse
+manual_assert = "warn"                 # Suggests assert! over if/panic
+
+## CODE QUALITY (ADD THESE)
+missing_errors_doc = "warn"            # Ensures error documentation
+missing_panics_doc = "warn"            # Documents panic conditions
+missing_safety_doc = "warn"            # Documents unsafe code
+doc_markdown = "warn"                  # Enforces markdown in docs
 
 [dependencies]
 # Use workspace dependencies
@@ -19,7 +48,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Local dependency
-veracode-platform = { path = "../veracode-api", version = "0.6.0" }
+veracode-platform = { path = "../veracode-api", version = "0.7.1" }
 
 # Additional dependencies for CLI functionality
 env_logger = "0.11"
@@ -29,7 +58,7 @@ anyhow = "1.0"
 
 # Vault client for secure credential management
 vaultrs = "0.7"
-backoff = { version = "0.4", features = ["futures", "tokio"] }
+backon = "1.3"
 url = "2.5"
 
 # Date/time handling for timestamps and date ranges
@@ -44,9 +73,11 @@ regex = "1.12.2"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 
 [dev-dependencies]
-tempfile = "3.8"
-criterion = { version = "0.5", features = ["html_reports"] }
+criterion = { version = "0.7", features = ["html_reports"] }
 
 [[bench]]
 name = "dedup_benchmark"
 harness = false
+
+[features]
+disable-miri-isolation = []

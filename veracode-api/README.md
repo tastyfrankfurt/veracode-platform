@@ -11,10 +11,11 @@ A comprehensive Rust client library for the Veracode security platform, providin
 
 - 🔐 **HMAC Authentication** - Built-in Veracode API credential support with automatic signature generation
 - 🛡️ **Secure Credential Handling** - All API credentials are securely wrapped to prevent accidental exposure in logs
+- 🔑 **Customer Managed Encryption Keys (CMEK)** - Support for AWS KMS encryption during application profile creation
 - 🌐 **HTTP Proxy Support** - Configurable HTTP/HTTPS proxy with secure credential handling for corporate networks
 - 🌍 **Multi-Regional Support** - Automatic endpoint routing for Commercial, European, and Federal regions
 - 🔄 **Smart API Routing** - Automatically uses REST or XML APIs based on operation requirements
-- 📱 **Applications API** - Complete application lifecycle management via REST API with Git repository URL tracking
+- 📱 **Applications API** - Complete application lifecycle management via REST API with Git repository URL tracking and CMEK support
 - 👥 **Identity API** - User and team management via REST API
 - 🔍 **Pipeline Scan API** - CI/CD security scanning via REST API
 - 🧪 **Sandbox API** - Development sandbox management via REST API
@@ -39,7 +40,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.5.7"
+veracode-platform = "0.7.1"
 tokio = { version = "1.0", features = ["full"] }
 ```
 

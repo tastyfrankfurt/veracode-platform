@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 use veracode_platform::{
     VeracodeClient, VeracodeConfig,
     pipeline::{CreateScanRequest, DevStage, Finding, PipelineError, ScanConfig},
@@ -15,7 +17,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap()
+        .expect("system time should be after unix epoch")
         .as_secs();
 
     println!("🔍 Pipeline Scan Lifecycle Example\n");
@@ -163,10 +165,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("\n📤 Uploading binary data using segmented upload...");
 
     // Use upload URI from scan creation response (matching Java implementation)
+    #[allow(clippy::cast_possible_wrap)]
     let (upload_uri, expected_segments) = if let (Some(uri), Some(segments)) =
         (&scan_result.upload_uri, scan_result.expected_segments)
     {
-        (uri.clone(), segments as i32)
+        (uri.clone(), segments.saturating_add(0) as i32)
     } else {
         // Fallback: get upload details from scan details (if not in creation response)
         println!("📋 Upload URI not in creation response, fetching from scan details...");
@@ -175,7 +178,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let segments = scan.binary_segments_expected;
                 // Fallback construction (should not be needed with correct API)
                 let upload_uri = format!("/scans/{scan_id}/segments/1");
-                (upload_uri, segments as i32)
+                (upload_uri, segments.saturating_add(0) as i32)
             }
             Err(e) => {
                 eprintln!("❌ Failed to get scan details for upload: {e}");
@@ -269,11 +272,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Example 6: Monitor scan status with detailed progress
     println!("\n⏱️  Monitoring scan progress...");
-    let mut poll_count = 0;
+    let mut poll_count: u32 = 0;
     let max_polls = 60; // Monitor for up to 30 minutes (30 second intervals)
 
     loop {
-        poll_count += 1;
+        poll_count = poll_count.saturating_add(1);
 
         match pipeline_api.get_scan(scan_id).await {
             Ok(scan) => {
@@ -372,9 +375,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             if !results.findings.is_empty() {
                 println!("\n🔍 Top Findings:");
                 for (i, finding) in results.findings.iter().take(3).enumerate() {
+                    let i: usize = i;
                     println!(
                         "   {}. {} (CWE-{})",
-                        i + 1,
+                        i.saturating_add(1),
                         finding.issue_type,
                         finding.cwe_id
                     );
@@ -411,7 +415,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if results.findings.len() > 3 {
-                    println!("   ... and {} more findings", results.findings.len() - 3);
+                    println!(
+                        "   ... and {} more findings",
+                        results.findings.len().saturating_sub(3)
+                    );
                 }
 
                 // Save findings to CSV file for easy analysis
@@ -471,10 +478,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                                     // Show summary of findings
                                     println!("\n📋 Quick Findings Summary:");
-                                    let mut severity_counts = [0; 6]; // 0-5 severity levels
+                                    let mut severity_counts: [usize; 6] = [0; 6]; // 0-5 severity levels
                                     for finding in &findings {
-                                        if finding.severity <= 5 {
-                                            severity_counts[finding.severity as usize] += 1;
+                                        if finding.severity <= 5
+                                            && let Some(count) =
+                                                severity_counts.get_mut(finding.severity as usize)
+                                        {
+                                            *count = (*count).saturating_add(1);
                                         }
                                     }
 
@@ -487,8 +497,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                         "Very High",
                                     ];
                                     for (severity, count) in severity_counts.iter().enumerate() {
-                                        if *count > 0 {
-                                            println!("   {}: {}", severity_names[severity], count);
+                                        if *count > 0
+                                            && let Some(name) = severity_names.get(severity)
+                                        {
+                                            println!("   {}: {}", name, count);
                                         }
                                     }
                                 } else {

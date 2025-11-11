@@ -1,0 +1,87 @@
+[package]
+name = "vera-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+chrono = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5"
+
+[dependencies.veraaudit]
+path = "../veraaudit"
+
+[dependencies.verascan]
+path = "../verascan"
+
+[dependencies.veracode-platform]
+path = "../veracode-api"
+
+[[bin]]
+name = "fuzz_datetime"
+path = "fuzz_targets/fuzz_datetime.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_validation"
+path = "fuzz_targets/fuzz_validation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_combined"
+path = "fuzz_targets/fuzz_combined.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_cli_validators"
+path = "fuzz_targets/fuzz_cli_validators.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_verascan_validators"
+path = "fuzz_targets/fuzz_verascan_validators.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_api_deserializers"
+path = "fuzz_targets/fuzz_api_deserializers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_html_parser"
+path = "fuzz_targets/fuzz_html_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_vault_parsers"
+path = "fuzz_targets/fuzz_vault_parsers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "fuzz_output_parsers"
+path = "fuzz_targets/fuzz_output_parsers.rs"
+test = false
+doc = false
+bench = false

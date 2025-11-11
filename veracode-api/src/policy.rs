@@ -268,7 +268,12 @@ pub struct FindingsSummary {
     pub by_category: Option<HashMap<String, u32>>,
 }
 
-/// Summary report data structure matching Veracode summary_report API response
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
+/// Summary report data structure matching Veracode `summary_report` API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryReport {
     /// Application ID
@@ -545,6 +550,7 @@ pub enum ApiSource {
 
 /// Policy-specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum PolicyError {
     /// Veracode API error
     Api(VeracodeError),
@@ -612,7 +618,12 @@ pub struct PolicyApi<'a> {
 }
 
 impl<'a> PolicyApi<'a> {
-    /// Create a new PolicyApi instance
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// Create a new `PolicyApi` instance
     #[must_use]
     pub fn new(client: &'a VeracodeClient) -> Self {
         Self { client }
@@ -627,6 +638,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of policies or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn list_policies(
         &self,
         params: Option<PolicyListParams>,
@@ -674,6 +690,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_policy(&self, policy_guid: &str) -> Result<SecurityPolicy, PolicyError> {
         let endpoint = format!("/appsec/v1/policies/{policy_guid}");
 
@@ -707,6 +728,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the default policy or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_default_policy(&self) -> Result<SecurityPolicy, PolicyError> {
         let params = PolicyListParams {
             default_only: Some(true),
@@ -735,6 +761,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_buildinfo(
         &self,
         app_id: &str,
@@ -759,6 +790,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_buildinfo_with_retry(
         &self,
         app_id: &str,
@@ -776,11 +812,11 @@ impl<'a> PolicyApi<'a> {
             sandbox_id: sandbox_id.map(str::to_string),
         };
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         loop {
             let build_info = self
                 .client
-                .build_api()
+                .build_api()?
                 .get_build_info(&build_request)
                 .await
                 .map_err(|e| match e {
@@ -823,7 +859,7 @@ impl<'a> PolicyApi<'a> {
             }
 
             // If we've reached max retries, return "Not Assessed"
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not assessed after {max_retries} attempts. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or application may not have a policy assigned"
@@ -875,7 +911,12 @@ impl<'a> PolicyApi<'a> {
 
     /// Get summary report for an application build using the REST API
     ///
-    /// This uses the /appsec/v2/applications/{app_guid}/summary_report endpoint
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    /// This uses the `/appsec/v2/applications/{app_guid}/summary_report` endpoint
     /// to get policy compliance status and scan results.
     ///
     /// # Arguments
@@ -887,6 +928,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the summary report or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_summary_report(
         &self,
         app_guid: &str,
@@ -946,9 +992,24 @@ impl<'a> PolicyApi<'a> {
     ///
     /// # Returns
     ///
-    /// A `Result` containing a tuple of (SummaryReport, Option<compliance_status>) or an error.
-    /// The compliance_status is Some(status) if break_build evaluation is needed, None otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// A `Result` containing a tuple of (`SummaryReport`, Option<`compliance_status`>) or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// The `compliance_status` is Some(status) if `break_build` evaluation is needed, None otherwise.
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_summary_report_with_policy_retry(
         &self,
         app_guid: &str,
@@ -967,7 +1028,7 @@ impl<'a> PolicyApi<'a> {
             ));
         }
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         loop {
             if attempts == 0 && enable_break_build {
                 debug!("Checking policy compliance status with retry logic...");
@@ -983,10 +1044,10 @@ impl<'a> PolicyApi<'a> {
                 Err(PolicyError::InternalServerError) if attempts < 3 => {
                     warn!(
                         "Summary report API failed with server error (attempt {}/3), retrying in 5 seconds...",
-                        attempts + 1
+                        attempts.saturating_add(1)
                     );
                     sleep(Duration::from_secs(5)).await;
-                    attempts += 1;
+                    attempts = attempts.saturating_add(1);
                     continue;
                 }
                 Err(e) => return Err(e),
@@ -997,7 +1058,7 @@ impl<'a> PolicyApi<'a> {
                 return Ok((summary_report, None));
             }
 
-            // For break_build evaluation, check if policy compliance status is ready
+            // For `break_build` evaluation, check if policy compliance status is ready
             let status = summary_report.policy_compliance_status.clone();
 
             // If status is ready (not empty and not "Not Assessed"), return both report and status
@@ -1007,7 +1068,7 @@ impl<'a> PolicyApi<'a> {
             }
 
             // If we've reached max retries, return current results
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
@@ -1027,7 +1088,12 @@ impl<'a> PolicyApi<'a> {
 
     /// Evaluates policy compliance using the summary report API with retry logic
     ///
-    /// This function uses the summary_report endpoint instead of the buildinfo XML API
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// This function uses the `summary_report` endpoint instead of the buildinfo XML API
     /// and will retry when results are not ready yet.
     ///
     /// # Arguments
@@ -1041,6 +1107,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_summary_report_with_retry(
         &self,
         app_guid: &str,
@@ -1052,7 +1123,7 @@ impl<'a> PolicyApi<'a> {
         use std::borrow::Cow;
         use tokio::time::{Duration, sleep};
 
-        let mut attempts = 0;
+        let mut attempts: u32 = 0;
         loop {
             let summary_report = self
                 .get_summary_report(app_guid, Some(build_id), sandbox_guid)
@@ -1068,7 +1139,7 @@ impl<'a> PolicyApi<'a> {
             }
 
             // If we've reached max retries, return current status
-            attempts += 1;
+            attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not ready after {max_retries} attempts. Status: {status}. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or build results are not yet available"
@@ -1099,6 +1170,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the policy compliance status string or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn evaluate_policy_compliance_via_summary_report(
         &self,
         app_guid: &str,
@@ -1124,6 +1200,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the scan result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn initiate_policy_scan(
         &self,
         request: PolicyScanRequest,
@@ -1161,6 +1242,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing the scan result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_policy_scan_result(
         &self,
         scan_id: u64,
@@ -1194,6 +1280,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a boolean indicating completion status.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn is_policy_scan_complete(&self, scan_id: u64) -> Result<bool, PolicyError> {
         let scan_result = self.get_policy_scan_result(scan_id).await?;
         Ok(matches!(
@@ -1223,10 +1314,25 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A tuple containing:
-    /// - Optional SummaryReport (None if fallback was used)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// - Optional `SummaryReport` (None if fallback was used)
     /// - Policy compliance status string
-    /// - ApiSource indicating which API was used
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
+    /// - `ApiSource` indicating which API was used
     #[allow(clippy::too_many_arguments)]
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_policy_status_with_fallback(
         &self,
         app_guid: &str,
@@ -1277,11 +1383,19 @@ impl<'a> PolicyApi<'a> {
                 | PolicyError::PermissionDenied
                 | PolicyError::InternalServerError),
             ) => {
-                match e {
+                match *e {
                     PolicyError::InternalServerError => info!(
                         "Summary report API server error, falling back to getbuildinfo.do API"
                     ),
-                    _ => info!("Summary report access denied, falling back to getbuildinfo.do API"),
+                    PolicyError::Unauthorized | PolicyError::PermissionDenied => {
+                        info!("Summary report access denied, falling back to getbuildinfo.do API")
+                    }
+                    PolicyError::Api(_)
+                    | PolicyError::NotFound
+                    | PolicyError::InvalidConfig(_)
+                    | PolicyError::ScanFailed(_)
+                    | PolicyError::EvaluationError(_)
+                    | PolicyError::Timeout => {}
                 }
                 let status = self
                     .evaluate_policy_compliance_via_buildinfo_with_retry(
@@ -1302,6 +1416,11 @@ impl<'a> PolicyApi<'a> {
     /// # Returns
     ///
     /// A `Result` containing a list of active policies or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the policy is invalid,
+    /// or authentication/authorization fails.
     pub async fn get_active_policies(&self) -> Result<Vec<SecurityPolicy>, PolicyError> {
         // Note: The active/inactive concept may need to be handled differently
         // based on the actual API response structure
@@ -1311,6 +1430,7 @@ impl<'a> PolicyApi<'a> {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1347,29 +1467,30 @@ mod tests {
     #[test]
     fn test_scan_type_serialization() {
         let scan_type = ScanType::Static;
-        let json = serde_json::to_string(&scan_type).unwrap();
+        let json = serde_json::to_string(&scan_type).expect("should serialize to json");
         assert_eq!(json, "\"static\"");
 
-        let deserialized: ScanType = serde_json::from_str(&json).unwrap();
+        let deserialized: ScanType = serde_json::from_str(&json).expect("should deserialize json");
         assert!(matches!(deserialized, ScanType::Static));
     }
 
     #[test]
     fn test_policy_compliance_status_serialization() {
         let status = PolicyComplianceStatus::Passed;
-        let json = serde_json::to_string(&status).unwrap();
+        let json = serde_json::to_string(&status).expect("should serialize to json");
         assert_eq!(json, "\"Passed\"");
 
-        let deserialized: PolicyComplianceStatus = serde_json::from_str(&json).unwrap();
+        let deserialized: PolicyComplianceStatus =
+            serde_json::from_str(&json).expect("should deserialize json");
         assert!(matches!(deserialized, PolicyComplianceStatus::Passed));
 
         // Test the special case statuses with spaces
         let conditional_pass = PolicyComplianceStatus::ConditionalPass;
-        let json = serde_json::to_string(&conditional_pass).unwrap();
+        let json = serde_json::to_string(&conditional_pass).expect("should serialize to json");
         assert_eq!(json, "\"Conditional Pass\"");
 
         let did_not_pass = PolicyComplianceStatus::DidNotPass;
-        let json = serde_json::to_string(&did_not_pass).unwrap();
+        let json = serde_json::to_string(&did_not_pass).expect("should serialize to json");
         assert_eq!(json, "\"Did Not Pass\"");
     }
 
@@ -1410,7 +1531,7 @@ mod tests {
         let summary: Result<SummaryReport, _> = serde_json::from_str(summary_json);
         assert!(summary.is_ok());
 
-        let summary = summary.unwrap();
+        let summary = summary.expect("should have summary");
         assert_eq!(summary.policy_compliance_status, "Did Not Pass");
         assert_eq!(summary.app_name, "Verascan Java Test");
         assert_eq!(summary.build_id, 54209787);
@@ -1458,16 +1579,39 @@ mod tests {
         });
 
         // Verify JSON structure
-        assert!(export_json["summary_report"]["app_name"].is_string());
-        assert!(export_json["summary_report"]["policy_compliance_status"].is_string());
-        assert!(export_json["export_metadata"]["export_type"].is_string());
+        assert!(
+            export_json
+                .get("summary_report")
+                .and_then(|s| s.get("app_name"))
+                .map(|v| v.is_string())
+                .unwrap_or(false)
+        );
+        assert!(
+            export_json
+                .get("summary_report")
+                .and_then(|s| s.get("policy_compliance_status"))
+                .map(|v| v.is_string())
+                .unwrap_or(false)
+        );
+        assert!(
+            export_json
+                .get("export_metadata")
+                .and_then(|e| e.get("export_type"))
+                .map(|v| v.is_string())
+                .unwrap_or(false)
+        );
         assert_eq!(
-            export_json["export_metadata"]["export_type"],
+            export_json
+                .get("export_metadata")
+                .and_then(|e| e.get("export_type"))
+                .and_then(|v| v.as_str())
+                .expect("should have export_type"),
             "summary_report"
         );
 
         // Verify the summary report can be serialized and deserialized
-        let json_string = serde_json::to_string_pretty(&export_json).unwrap();
+        let json_string =
+            serde_json::to_string_pretty(&export_json).expect("should serialize to json");
         assert!(json_string.contains("summary_report"));
         assert!(json_string.contains("export_metadata"));
     }

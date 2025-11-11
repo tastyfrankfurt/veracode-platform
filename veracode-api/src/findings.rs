@@ -192,7 +192,7 @@ impl FindingsResponse {
     /// Check if this is the last page
     #[must_use]
     pub fn is_last_page(&self) -> bool {
-        self.page.number + 1 >= self.page.total_pages
+        self.page.number.saturating_add(1) >= self.page.total_pages
     }
 
     /// Get total number of findings across all pages
@@ -300,6 +300,7 @@ impl<'a> FindingsQuery<'a> {
 
 /// Custom error types for findings API
 #[derive(Debug, thiserror::Error)]
+#[must_use = "Need to handle all error enum types."]
 pub enum FindingsError {
     /// Application not found
     #[error("Application not found: {app_guid}")]
@@ -342,6 +343,11 @@ impl FindingsApi {
     }
 
     /// Get findings with pagination
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_findings(
         &self,
         query: &FindingsQuery<'_>,
@@ -403,21 +409,25 @@ impl FindingsApi {
             .client
             .get_with_query_params(&endpoint, &params_ref)
             .await
-            .map_err(|e| match &e {
-                VeracodeError::NotFound { .. } if query.context.is_some() => {
-                    FindingsError::SandboxNotFound {
-                        app_guid: query.app_guid.to_string(),
-                        sandbox_guid: query
-                            .context
-                            .as_ref()
-                            .expect("context is_some() was checked")
-                            .to_string(),
-                    }
-                }
-                VeracodeError::NotFound { .. } => FindingsError::ApplicationNotFound {
+            .map_err(|e| match (&e, &query.context) {
+                (VeracodeError::NotFound { .. }, Some(context)) => FindingsError::SandboxNotFound {
+                    app_guid: query.app_guid.to_string(),
+                    sandbox_guid: context.to_string(),
+                },
+                (VeracodeError::NotFound { .. }, None) => FindingsError::ApplicationNotFound {
                     app_guid: query.app_guid.to_string(),
                 },
-                _ => FindingsError::RequestFailed { source: e },
+                (
+                    VeracodeError::Http(_)
+                    | VeracodeError::Serialization(_)
+                    | VeracodeError::Authentication(_)
+                    | VeracodeError::InvalidResponse(_)
+                    | VeracodeError::InvalidConfig(_)
+                    | VeracodeError::RetryExhausted(_)
+                    | VeracodeError::RateLimited { .. }
+                    | VeracodeError::Validation(_),
+                    _,
+                ) => FindingsError::RequestFailed { source: e },
             })?;
 
         // Get response text for debugging if parsing fails
@@ -428,11 +438,12 @@ impl FindingsApi {
                 source: VeracodeError::Http(e),
             })?;
 
-        if response_text.len() > 500 {
+        if response_text.chars().count() > 500 {
+            let truncated: String = response_text.chars().take(500).collect();
             debug!(
                 "Raw API response (first 500 chars): {}... [truncated {} more characters]",
-                &response_text[..500],
-                response_text.len() - 500
+                truncated,
+                response_text.chars().count().saturating_sub(500)
             );
         } else {
             debug!("Raw API response: {response_text}");
@@ -450,7 +461,7 @@ impl FindingsApi {
         debug!(
             "Retrieved {} findings on page {}/{}",
             findings_response.findings().len(),
-            findings_response.current_page() + 1,
+            findings_response.current_page().saturating_add(1),
             findings_response.total_pages()
         );
 
@@ -458,6 +469,11 @@ impl FindingsApi {
     }
 
     /// Get all findings across all pages automatically
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_all_findings(
         &self,
         query: &FindingsQuery<'_>,
@@ -496,7 +512,7 @@ impl FindingsApi {
                 break;
             }
 
-            current_page += 1;
+            current_page = current_page.saturating_add(1);
 
             // Safety check to prevent infinite loops
             if current_page > 1000 {
@@ -511,12 +527,17 @@ impl FindingsApi {
         debug!(
             "Retrieved total of {} findings across {} pages",
             all_findings.len(),
-            current_page + 1
+            current_page.saturating_add(1)
         );
         Ok(all_findings)
     }
 
     /// Get policy scan findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_policy_findings(
         &self,
         app_guid: &str,
@@ -525,6 +546,11 @@ impl FindingsApi {
     }
 
     /// Get sandbox findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_sandbox_findings(
         &self,
         app_guid: &str,
@@ -535,6 +561,11 @@ impl FindingsApi {
     }
 
     /// Get all policy scan findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_all_policy_findings(
         &self,
         app_guid: &str,
@@ -543,6 +574,11 @@ impl FindingsApi {
     }
 
     /// Get all sandbox findings (convenience method)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the findings cannot be retrieved,
+    /// or authentication/authorization fails.
     pub async fn get_all_sandbox_findings(
         &self,
         app_guid: &str,
@@ -554,6 +590,7 @@ impl FindingsApi {
 }
 
 #[cfg(test)]
+#[allow(clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -577,7 +614,10 @@ mod tests {
         let query = FindingsQuery::for_sandbox("app-123", "sandbox-456").with_pagination(1, 100);
 
         assert_eq!(query.app_guid, "app-123");
-        assert_eq!(query.context.as_ref().unwrap(), "sandbox-456");
+        assert_eq!(
+            query.context.as_ref().expect("should have context"),
+            "sandbox-456"
+        );
         assert_eq!(query.page, Some(1));
         assert_eq!(query.size, Some(100));
     }

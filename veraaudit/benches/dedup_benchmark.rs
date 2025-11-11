@@ -1,7 +1,11 @@
-use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+#![allow(clippy::unwrap_used)]
+#![allow(clippy::indexing_slicing)]
+
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use serde_json::json;
-use tempfile::TempDir;
+use std::hint::black_box;
 use veraaudit::output::write_audit_log_file;
+use veraaudit::test_utils::TempDir;
 
 /// Generate realistic audit log entries
 fn generate_audit_logs(count: usize) -> serde_json::Value {
@@ -11,6 +15,7 @@ fn generate_audit_logs(count: usize) -> serde_json::Value {
     let action_types = ["User", "Admin", "System", "API"];
 
     for i in 0..count {
+        #[allow(clippy::arithmetic_side_effects)] // benchmark data generation, won't overflow
         let timestamp = format!(
             "2025-01-{:02} {:02}:{:02}:{:02}",
             (i / 86400) % 28 + 1, // Day
@@ -44,7 +49,7 @@ fn generate_audit_logs(count: usize) -> serde_json::Value {
     json!(logs)
 }
 
-/// Benchmark write_audit_log_file without deduplication
+/// Benchmark `write_audit_log_file` without deduplication
 fn bench_write_no_dedup(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_no_dedup");
 
@@ -70,7 +75,7 @@ fn bench_write_no_dedup(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark write_audit_log_file with deduplication (no duplicates)
+/// Benchmark `write_audit_log_file` with deduplication (no duplicates)
 fn bench_write_with_dedup_no_duplicates(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_dedup_no_duplicates");
 
@@ -97,7 +102,7 @@ fn bench_write_with_dedup_no_duplicates(c: &mut Criterion) {
     group.finish();
 }
 
-/// Benchmark write_audit_log_file with deduplication (50% duplicates)
+/// Benchmark `write_audit_log_file` with deduplication (50% duplicates)
 fn bench_write_with_dedup_50_percent(c: &mut Criterion) {
     let mut group = c.benchmark_group("write_dedup_50_percent");
 

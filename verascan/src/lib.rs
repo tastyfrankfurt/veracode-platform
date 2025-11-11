@@ -21,6 +21,9 @@ pub mod scan;
 pub mod search;
 pub mod vault_client;
 
+#[cfg(test)]
+pub mod test_utils;
+
 pub use assessment::{AssessmentError, AssessmentScanConfig, AssessmentSubmitter, ScanType};
 pub use baseline::{
     BaselineComparison, PolicyAssessment, execute_baseline_compare, execute_baseline_create,

@@ -269,6 +269,7 @@ pub struct DeleteBuildResult {
 
 /// Build specific error types
 #[derive(Debug)]
+#[must_use = "Need to handle all error enum types."]
 pub enum BuildError {
     /// Veracode API error
     Api(VeracodeError),
@@ -356,6 +357,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the created build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the application is not found,
+    /// authentication fails, or the build creation is rejected by the Veracode platform.
     pub async fn create_build(&self, request: &CreateBuildRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/createbuild.do";
 
@@ -415,6 +421,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the updated build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn update_build(&self, request: &UpdateBuildRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/updatebuild.do";
 
@@ -484,6 +495,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the deletion result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn delete_build(
         &self,
         request: &DeleteBuildRequest,
@@ -540,6 +556,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn get_build_info(&self, request: &GetBuildInfoRequest) -> Result<Build, BuildError> {
         let endpoint = "/api/5.0/getbuildinfo.do";
 
@@ -598,6 +619,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build list or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn get_build_list(
         &self,
         request: &GetBuildListRequest,
@@ -1005,6 +1031,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the created build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn create_simple_build(
         &self,
         app_id: &str,
@@ -1032,6 +1063,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the created build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn create_sandbox_build(
         &self,
         app_id: &str,
@@ -1058,6 +1094,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the deletion result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn delete_app_build(&self, app_id: &str) -> Result<DeleteBuildResult, BuildError> {
         let request = DeleteBuildRequest {
             app_id: app_id.to_string(),
@@ -1077,6 +1118,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the deletion result or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn delete_sandbox_build(
         &self,
         app_id: &str,
@@ -1099,6 +1145,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn get_app_build_info(&self, app_id: &str) -> Result<Build, BuildError> {
         let request = GetBuildInfoRequest {
             app_id: app_id.to_string(),
@@ -1119,6 +1170,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build information or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn get_sandbox_build_info(
         &self,
         app_id: &str,
@@ -1142,6 +1198,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build list or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn get_app_builds(&self, app_id: &str) -> Result<BuildList, BuildError> {
         let request = GetBuildListRequest {
             app_id: app_id.to_string(),
@@ -1161,6 +1222,11 @@ impl BuildApi {
     /// # Returns
     ///
     /// A `Result` containing the build list or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, authentication fails,
+    /// or the operation is rejected by the Veracode platform.
     pub async fn get_sandbox_builds(
         &self,
         app_id: &str,
@@ -1257,7 +1323,7 @@ mod tests {
         async fn _test_build_methods() -> Result<(), Box<dyn std::error::Error>> {
             let config = VeracodeConfig::new("test", "test");
             let client = VeracodeClient::new(config)?;
-            let api = client.build_api();
+            let api = client.build_api()?;
 
             // Test that the method signatures exist and compile
             let create_request = CreateBuildRequest {

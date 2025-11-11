@@ -1,3 +1,5 @@
+#![allow(clippy::expect_used)]
+
 //! Large File Upload Example
 //!
 //! This example demonstrates the new uploadlargefile.do functionality in the scan module.
@@ -46,7 +48,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("🔧 Creating Veracode client...");
     let client = VeracodeClient::new(config)?;
-    let scan_api = client.scan_api();
+    let scan_api = client.scan_api()?;
     println!("   ✅ Client created successfully");
 
     // Create a test application and sandbox for demonstration
@@ -64,7 +66,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("   ✅ Test environment ready:");
             println!(
                 "      - App: {} (ID: {})",
-                app.profile.as_ref().unwrap().name,
+                app.profile.as_ref().expect("should have profile").name,
                 app_id
             );
             println!("      - Sandbox: {} (ID: {})", sandbox.name, sandbox_id);
