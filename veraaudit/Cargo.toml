@@ -1,6 +1,6 @@
 [package]
 name = "veraaudit"
-version = "0.5.11"
+version = "0.5.12"
 edition = "2024"
 description = "CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API"
 authors = ["Veracode API Team"]

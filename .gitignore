@@ -161,3 +161,4 @@ validate_xml_api.sh
 runexamples.sh
 test.sh
 vault-client
+defensivecr.md
