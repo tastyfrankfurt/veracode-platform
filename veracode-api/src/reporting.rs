@@ -221,22 +221,22 @@ pub struct ReportResponse {
 /// Convert a timestamp from region-specific timezone to UTC
 ///
 /// Each Veracode API region returns timestamps in its corresponding timezone:
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// - **Commercial** (api.veracode.com): `America/New_York` (US-East-1)
 ///   - EST (Eastern Standard Time): UTC-5 (winter)
 ///   - EDT (Eastern Daylight Time): UTC-4 (summer)
 /// - **European** (api.veracode.eu): Europe/Berlin (eu-central-1)
 ///   - CET (Central European Time): UTC+1 (winter)
 ///   - CEST (Central European Summer Time): UTC+2 (summer)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// - **Federal** (api.veracode.us): `America/New_York` (US-East-1)
 ///   - EST/EDT same as Commercial
 ///
@@ -308,11 +308,11 @@ fn convert_regional_timestamp_to_utc(
 
 /// Generate a fast hash of a raw log entry JSON string for duplicate detection
 ///
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// Uses xxHash (`xxh3_128`) which is significantly faster than SHA256 while still
 /// providing excellent collision resistance for deduplication purposes. This is
 /// NOT a cryptographic hash - use only for duplicate detection, not security.

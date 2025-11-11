@@ -32,7 +32,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ Found {} roles:", roles.len());
             for (i, role) in roles.iter().take(5).enumerate() {
                 let i: usize = i;
-                println!("   {}. {} ({})", i.saturating_add(1), role.role_name, role.role_id);
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    role.role_name,
+                    role.role_id
+                );
                 if let Some(desc) = &role.role_description {
                     println!("      Description: {desc}");
                 }
@@ -55,7 +60,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ Found {} teams:", teams.len());
             for (i, team) in teams.iter().take(3).enumerate() {
                 let i: usize = i;
-                println!("   {}. {} ({})", i.saturating_add(1), team.team_name, team.team_id);
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    team.team_name,
+                    team.team_id
+                );
                 if let Some(desc) = &team.team_description {
                     println!("      Description: {desc}");
                 }
@@ -316,7 +326,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ Found {} teams (showing first 5):", teams.len());
             for (i, team) in teams.iter().take(5).enumerate() {
                 let i: usize = i;
-                println!("   {}. {} ({})", i.saturating_add(1), team.team_name, team.team_id);
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    team.team_name,
+                    team.team_id
+                );
                 if let Some(desc) = &team.team_description {
                     println!("      Description: {desc}");
                 }

@@ -268,11 +268,11 @@ pub struct FindingsSummary {
     pub by_category: Option<HashMap<String, u32>>,
 }
 
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// Summary report data structure matching Veracode `summary_report` API response
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SummaryReport {

@@ -201,11 +201,11 @@ impl From<SandboxListParams> for Vec<(String, String)> {
     }
 }
 
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// Sandbox-specific error types that extend the base `VeracodeError`
 #[derive(Debug)]
 #[must_use = "Need to handle all error enum types."]

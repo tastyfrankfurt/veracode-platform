@@ -611,9 +611,19 @@ impl PipelineApi {
                 );
                 for (i, app) in applications.iter().enumerate() {
                     if let Some(ref profile) = app.profile {
-                        error!("   {}. ID: {} - Name: '{}'", i.saturating_add(1), app.id, profile.name);
+                        error!(
+                            "   {}. ID: {} - Name: '{}'",
+                            i.saturating_add(1),
+                            app.id,
+                            profile.name
+                        );
                     } else {
-                        error!("   {}. ID: {} - GUID: {}", i.saturating_add(1), app.id, app.guid);
+                        error!(
+                            "   {}. ID: {} - GUID: {}",
+                            i.saturating_add(1),
+                            app.id,
+                            app.guid
+                        );
                     }
                 }
                 error!(
@@ -821,7 +831,11 @@ impl PipelineApi {
         file_name: &str,
     ) -> Result<(), PipelineError> {
         let total_size = binary_data.len();
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let segment_size = ((total_size as f64) / (expected_segments as f64)).ceil() as usize;
 
         debug!("📤 Uploading binary in {expected_segments} segments ({total_size} bytes total)");
@@ -852,7 +866,10 @@ impl PipelineApi {
                 .await
             {
                 Ok(response_text) => {
-                    debug!("   ✅ Segment {} uploaded successfully", segment_num.saturating_add(1));
+                    debug!(
+                        "   ✅ Segment {} uploaded successfully",
+                        segment_num.saturating_add(1)
+                    );
 
                     // Parse response to get next upload URI (like Java implementation)
                     if segment_num < expected_segments.saturating_sub(1) {
@@ -868,7 +885,11 @@ impl PipelineApi {
                     }
                 }
                 Err(e) => {
-                    error!("   ❌ Failed to upload segment {}: {}", segment_num.saturating_add(1), e);
+                    error!(
+                        "   ❌ Failed to upload segment {}: {}",
+                        segment_num.saturating_add(1),
+                        e
+                    );
                     return Err(e);
                 }
             }

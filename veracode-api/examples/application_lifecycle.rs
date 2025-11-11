@@ -176,14 +176,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 for (i, app) in embedded.applications.iter().take(3).enumerate() {
                     let i: usize = i;
                     if let Some(profile) = &app.profile {
-                        println!("   {}. {} ({})", i.saturating_add(1), profile.name, app.guid);
+                        println!(
+                            "   {}. {} ({})",
+                            i.saturating_add(1),
+                            profile.name,
+                            app.guid
+                        );
                     } else {
                         println!("   {}. [No profile] ({})", i.saturating_add(1), app.guid);
                     }
                 }
 
                 if embedded.applications.len() > 3 {
-                    println!("   ... and {} more", embedded.applications.len().saturating_sub(3));
+                    println!(
+                        "   ... and {} more",
+                        embedded.applications.len().saturating_sub(3)
+                    );
                 }
             } else {
                 println!("   No applications found");

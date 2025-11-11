@@ -118,7 +118,8 @@ pub fn cleanup_by_age(output_dir: &str, max_age_hours: u64) -> Result<usize> {
             if file_time < cutoff_time {
                 match fs::remove_file(&filepath) {
                     Ok(_) => {
-                        #[allow(clippy::arithmetic_side_effects)] // chrono uses checked operations internally
+                        #[allow(clippy::arithmetic_side_effects)]
+                        // chrono uses checked operations internally
                         let age_hours = (now - file_time).num_hours();
                         info!(
                             "Deleted old audit log (age: {} hours): {}",

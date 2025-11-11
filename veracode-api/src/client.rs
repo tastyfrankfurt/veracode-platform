@@ -507,9 +507,8 @@ impl VeracodeClient {
         endpoint: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(
-            self.config.base_url.len().saturating_add(endpoint.len())
-        );
+        let mut url =
+            String::with_capacity(self.config.base_url.len().saturating_add(endpoint.len()));
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -569,9 +568,8 @@ impl VeracodeClient {
         endpoint: &str,
         body: Option<&T>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(
-            self.config.base_url.len().saturating_add(endpoint.len())
-        );
+        let mut url =
+            String::with_capacity(self.config.base_url.len().saturating_add(endpoint.len()));
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -626,9 +624,8 @@ impl VeracodeClient {
     /// Returns an error if the API request fails, the resource is not found,
     /// or authentication/authorization fails.
     pub async fn delete(&self, endpoint: &str) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(
-            self.config.base_url.len().saturating_add(endpoint.len())
-        );
+        let mut url =
+            String::with_capacity(self.config.base_url.len().saturating_add(endpoint.len()));
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -911,9 +908,8 @@ impl VeracodeClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(
-            self.config.base_url.len().saturating_add(endpoint.len())
-        );
+        let mut url =
+            String::with_capacity(self.config.base_url.len().saturating_add(endpoint.len()));
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
         let mut request_url =
@@ -960,9 +956,8 @@ impl VeracodeClient {
         endpoint: &str,
         params: &[(&str, &str)],
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(
-            self.config.base_url.len().saturating_add(endpoint.len())
-        );
+        let mut url =
+            String::with_capacity(self.config.base_url.len().saturating_add(endpoint.len()));
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 
@@ -1009,9 +1004,8 @@ impl VeracodeClient {
         filename: &str,
         file_data: Vec<u8>,
     ) -> Result<reqwest::Response, VeracodeError> {
-        let mut url = String::with_capacity(
-            self.config.base_url.len().saturating_add(endpoint.len())
-        );
+        let mut url =
+            String::with_capacity(self.config.base_url.len().saturating_add(endpoint.len()));
         url.push_str(&self.config.base_url);
         url.push_str(endpoint);
 

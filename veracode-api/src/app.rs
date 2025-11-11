@@ -1531,7 +1531,8 @@ pub fn validate_kms_alias(alias: &str) -> Result<(), String> {
     }
 
     // Extract the alias name part (after "alias/")
-    let alias_name = alias.strip_prefix("alias/")
+    let alias_name = alias
+        .strip_prefix("alias/")
         .ok_or_else(|| "KMS alias must start with 'alias/'".to_string())?;
 
     // Check for AWS reserved prefixes

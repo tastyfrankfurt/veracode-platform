@@ -324,7 +324,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 );
 
                                 // Show summary by severity
-                                let mut severity_counts: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+                                let mut severity_counts: std::collections::HashMap<u32, usize> =
+                                    std::collections::HashMap::new();
                                 let mut policy_violations: usize = 0;
 
                                 for finding in &all_findings {

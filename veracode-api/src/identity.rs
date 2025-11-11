@@ -167,11 +167,11 @@ pub struct ApiCredential {
     pub created_date: Option<DateTime<Utc>>,
 }
 
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// Custom Debug implementation for `ApiCredential` that redacts sensitive information
 impl std::fmt::Debug for ApiCredential {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

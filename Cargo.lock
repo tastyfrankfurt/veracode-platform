@@ -2662,7 +2662,7 @@ dependencies = [
 
 [[package]]
 name = "veraaudit"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "backon",
@@ -2687,7 +2687,7 @@ dependencies = [
 
 [[package]]
 name = "veracmek"
-version = "0.5.10"
+version = "0.5.11"
 dependencies = [
  "anyhow",
  "backon",
@@ -2706,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "veracode-platform"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "chrono",
  "chrono-tz",

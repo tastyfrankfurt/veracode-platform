@@ -415,7 +415,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
 
                 if results.findings.len() > 3 {
-                    println!("   ... and {} more findings", results.findings.len().saturating_sub(3));
+                    println!(
+                        "   ... and {} more findings",
+                        results.findings.len().saturating_sub(3)
+                    );
                 }
 
                 // Save findings to CSV file for easy analysis

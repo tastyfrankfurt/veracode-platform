@@ -527,7 +527,10 @@ async fn retrieve_vault_secret(
 fn parse_secret_path(full_path: &str) -> (String, String) {
     if let Some(at_pos) = full_path.rfind('@') {
         let secret_path = full_path.get(..at_pos).unwrap_or(full_path).to_string();
-        let secret_engine = full_path.get(at_pos.saturating_add(1)..).unwrap_or("").to_string();
+        let secret_engine = full_path
+            .get(at_pos.saturating_add(1)..)
+            .unwrap_or("")
+            .to_string();
         if secret_engine.is_empty() {
             // If @ is present but engine is empty, default to kvv2
             (secret_path, "kvv2".to_string())
@@ -620,7 +623,9 @@ fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError>
         }
 
         // Accumulate total size
-        total_size = total_size.saturating_add(key.len()).saturating_add(value_len);
+        total_size = total_size
+            .saturating_add(key.len())
+            .saturating_add(value_len);
     }
 
     // Check total size limit

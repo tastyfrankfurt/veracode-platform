@@ -297,10 +297,10 @@ impl AsRef<str> for Description {
 }
 
 /// Validates a URL path segment to prevent injection
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if validation fails due to invalid input parameters.
+///
+/// # Errors
+///
+/// Returns an error if validation fails due to invalid input parameters.
 pub fn validate_url_segment(segment: &str, max_len: usize) -> Result<&str, ValidationError> {
     if segment.is_empty() {
         return Err(ValidationError::EmptySegment);
@@ -344,11 +344,11 @@ pub fn validate_url_segment(segment: &str, max_len: usize) -> Result<&str, Valid
 ///
 /// # Security
 ///
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// This function prevents `DoS` attacks from unbounded pagination requests.
 ///
 /// # Examples
@@ -368,10 +368,10 @@ pub fn validate_url_segment(segment: &str, max_len: usize) -> Result<&str, Valid
 /// // Too large is capped (with warning log)
 /// assert_eq!(validate_page_size(Some(10000)).unwrap(), MAX_PAGE_SIZE);
 /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if validation fails due to invalid input parameters.
+///
+/// # Errors
+///
+/// Returns an error if validation fails due to invalid input parameters.
 pub fn validate_page_size(size: Option<u32>) -> Result<u32, ValidationError> {
     match size {
         None => Ok(DEFAULT_PAGE_SIZE),
@@ -405,11 +405,11 @@ pub fn validate_page_size(size: Option<u32>) -> Result<u32, ValidationError> {
 ///
 /// # Security
 ///
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the API request fails, the resource is not found,
-    /// or authentication/authorization fails.
+///
+/// # Errors
+///
+/// Returns an error if the API request fails, the resource is not found,
+/// or authentication/authorization fails.
 /// This function prevents `DoS` attacks from unbounded pagination requests.
 ///
 /// # Examples
@@ -426,10 +426,10 @@ pub fn validate_page_size(size: Option<u32>) -> Result<u32, ValidationError> {
 /// // Too large is capped (with warning log)
 /// assert_eq!(validate_page_number(Some(99999)).unwrap(), Some(MAX_PAGE_NUMBER));
 /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if validation fails due to invalid input parameters.
+///
+/// # Errors
+///
+/// Returns an error if validation fails due to invalid input parameters.
 pub fn validate_page_number(page: Option<u32>) -> Result<Option<u32>, ValidationError> {
     match page {
         None => Ok(None),

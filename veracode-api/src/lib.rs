@@ -282,16 +282,27 @@ impl RetryConfig {
             return Duration::from_millis(0);
         }
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss, clippy::cast_possible_wrap)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss,
+            clippy::cast_possible_wrap
+        )]
         let delay_ms = (self.initial_delay_ms as f64
-            * self.backoff_multiplier.powi(attempt.saturating_sub(1) as i32)) as u64;
+            * self
+                .backoff_multiplier
+                .powi(attempt.saturating_sub(1) as i32)) as u64;
 
         let mut capped_delay = delay_ms.min(self.max_delay_ms);
 
         // Apply jitter if enabled (±25% randomization)
         if self.jitter_enabled {
             use rand::Rng;
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                clippy::cast_precision_loss
+            )]
             let jitter_range = (capped_delay as f64 * 0.25) as u64;
             let min_delay = capped_delay.saturating_sub(jitter_range);
             let max_delay = capped_delay.saturating_add(jitter_range);
@@ -322,7 +333,9 @@ impl RetryConfig {
             // Wait until the next minute window + configurable buffer to ensure window has reset
             let seconds_until_next_minute = 60_u64.saturating_sub(current_second);
 
-            Duration::from_secs(seconds_until_next_minute.saturating_add(self.rate_limit_buffer_seconds))
+            Duration::from_secs(
+                seconds_until_next_minute.saturating_add(self.rate_limit_buffer_seconds),
+            )
         }
     }
 
@@ -1390,9 +1403,17 @@ mod tests {
         let delay = config.calculate_delay(1);
 
         // The delay should be within the expected range (±25% jitter)
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let min_expected = (base_delay as f64 * 0.75) as u64;
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss, clippy::cast_precision_loss)]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
         let max_expected = (base_delay as f64 * 1.25) as u64;
 
         assert!(delay.as_millis() >= min_expected as u128);

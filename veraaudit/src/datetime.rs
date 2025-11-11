@@ -54,10 +54,7 @@ pub fn convert_local_to_utc(datetime_str: &str, _region: &Region) -> Result<Stri
         if let Ok(dt) = NaiveDateTime::parse_from_str(datetime_str, FORMAT_DATETIME_SECOND) {
             (dt, FORMAT_DATETIME_SECOND)
         } else if let Ok(date) = NaiveDate::parse_from_str(datetime_str, FORMAT_DATE) {
-            (
-                date.and_time(MIDNIGHT),
-                FORMAT_DATE,
-            )
+            (date.and_time(MIDNIGHT), FORMAT_DATE)
         } else {
             return Err(AuditError::InvalidDateTimeFormat(format!(
                 "Invalid datetime format: '{}'. Expected: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS",

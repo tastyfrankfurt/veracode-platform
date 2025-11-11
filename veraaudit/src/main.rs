@@ -102,9 +102,7 @@ async fn main() -> Result<()> {
 
                 info!(
                     "Using interval-based chunked retrieval: start={}, end=(now - backend_window)={}, chunk_size={}",
-                    start_datetime,
-                    calculated_end,
-                    interval_val
+                    start_datetime, calculated_end, interval_val
                 );
 
                 (calculated_end, true) // Backend-calculated timestamps are always UTC

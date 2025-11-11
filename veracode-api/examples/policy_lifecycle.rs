@@ -21,7 +21,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!("✅ Found {} policies:", policies.len());
             for (i, policy) in policies.iter().take(3).enumerate() {
                 let i: usize = i;
-                println!("   {}. {} ({})", i.saturating_add(1), policy.name, policy.guid);
+                println!(
+                    "   {}. {} ({})",
+                    i.saturating_add(1),
+                    policy.name,
+                    policy.guid
+                );
                 if policy.policy_type == "CUSTOMER" && policy.organization_id.is_some() {
                     println!("      ⭐ Customer Policy");
                 }
