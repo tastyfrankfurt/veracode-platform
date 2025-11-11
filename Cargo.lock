@@ -2706,7 +2706,7 @@ dependencies = [
 
 [[package]]
 name = "veracode-platform"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "chrono",
  "chrono-tz",

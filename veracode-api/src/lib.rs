@@ -291,7 +291,8 @@ impl RetryConfig {
         let delay_ms = (self.initial_delay_ms as f64
             * self
                 .backoff_multiplier
-                .powi(attempt.saturating_sub(1) as i32)) as u64;
+                .powi(attempt.saturating_sub(1) as i32))
+        .round() as u64;
 
         let mut capped_delay = delay_ms.min(self.max_delay_ms);
 
@@ -303,7 +304,7 @@ impl RetryConfig {
                 clippy::cast_sign_loss,
                 clippy::cast_precision_loss
             )]
-            let jitter_range = (capped_delay as f64 * 0.25) as u64;
+            let jitter_range = (capped_delay as f64 * 0.25).round() as u64;
             let min_delay = capped_delay.saturating_sub(jitter_range);
             let max_delay = capped_delay.saturating_add(jitter_range);
             capped_delay = rand::rng().random_range(min_delay..=max_delay);
@@ -1345,6 +1346,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Miri doesn't support SystemTime::now() in isolation
     fn test_calculate_rate_limit_delay_without_retry_after() {
         let config = RetryConfig::new();
         let delay = config.calculate_rate_limit_delay(None);
@@ -1373,6 +1375,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(miri, ignore)] // Miri doesn't support SystemTime::now() in isolation
     fn test_rate_limit_delay_uses_buffer() {
         let config = RetryConfig::new().with_rate_limit_buffer(15);
         let delay = config.calculate_rate_limit_delay(None);
