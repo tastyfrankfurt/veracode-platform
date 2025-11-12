@@ -5,6 +5,19 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] - 2025-11-12
+
+### Changed
+- **veracode-platform Dependency Update**: Updated to version 0.7.4 for enhanced policy compliance features
+  - **Build-Specific Policy Checks**: Now supports checking policy compliance for specific builds via the new `build_id` parameter
+  - **Enhanced API Compatibility**: Leverages new policy API methods with flexible build selection
+  - **Current Implementation**: Assessment workflows continue to check latest builds by passing `None` for `build_id`
+  - **Future Flexibility**: Infrastructure now in place to support build-specific policy verification when needed
+  - **Modified Files**: `Cargo.toml`, `src/assessment.rs`
+
+### Dependencies
+- Updated `veracode-platform` dependency from 0.7.1 to 0.7.4
+
 ## [0.6.2] - 2025-11-03
 
 ### Security

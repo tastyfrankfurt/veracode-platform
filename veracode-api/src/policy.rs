@@ -769,10 +769,13 @@ impl<'a> PolicyApi<'a> {
     pub async fn evaluate_policy_compliance_via_buildinfo(
         &self,
         app_id: &str,
+        build_id: Option<&str>,
         sandbox_id: Option<&str>,
     ) -> Result<std::borrow::Cow<'static, str>, PolicyError> {
-        self.evaluate_policy_compliance_via_buildinfo_with_retry(app_id, sandbox_id, 30, 10)
-            .await
+        self.evaluate_policy_compliance_via_buildinfo_with_retry(
+            app_id, build_id, sandbox_id, 30, 10,
+        )
+        .await
     }
 
     /// Evaluates policy compliance with retry logic for when assessment is not yet complete
@@ -783,6 +786,7 @@ impl<'a> PolicyApi<'a> {
     /// # Arguments
     ///
     /// * `app_id` - The numeric ID of the application
+    /// * `build_id` - Optional build ID to check. If None, checks the latest build
     /// * `sandbox_id` - Optional numeric ID of the sandbox to evaluate
     /// * `max_retries` - Maximum number of retry attempts (default: 30)
     /// * `retry_delay_seconds` - Delay between retries in seconds (default: 10)
@@ -798,6 +802,7 @@ impl<'a> PolicyApi<'a> {
     pub async fn evaluate_policy_compliance_via_buildinfo_with_retry(
         &self,
         app_id: &str,
+        build_id: Option<&str>,
         sandbox_id: Option<&str>,
         max_retries: u32,
         retry_delay_seconds: u64,
@@ -808,7 +813,7 @@ impl<'a> PolicyApi<'a> {
 
         let build_request = GetBuildInfoRequest {
             app_id: app_id.to_string(),
-            build_id: None, // Get latest build
+            build_id: build_id.map(str::to_string), // ← Use the parameter
             sandbox_id: sandbox_id.map(str::to_string),
         };
 
@@ -1351,6 +1356,7 @@ impl<'a> PolicyApi<'a> {
             let status = self
                 .evaluate_policy_compliance_via_buildinfo_with_retry(
                     app_id,
+                    build_id,
                     sandbox_id,
                     max_retries,
                     retry_delay_seconds,
@@ -1400,6 +1406,7 @@ impl<'a> PolicyApi<'a> {
                 let status = self
                     .evaluate_policy_compliance_via_buildinfo_with_retry(
                         app_id,
+                        build_id,
                         sandbox_id,
                         max_retries,
                         retry_delay_seconds,
