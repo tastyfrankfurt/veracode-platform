@@ -5,6 +5,24 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.4] - 2025-11-12
+
+### Added
+- **Policy API - Build-Specific Compliance Checking**: Enhanced policy compliance methods to support checking specific builds
+  - **New Parameter**: Added optional `build_id` parameter to `evaluate_policy_compliance_via_buildinfo()` method
+  - **Flexible Build Selection**: When `build_id` is `None`, checks the latest build (default behavior). When specified, checks a specific build.
+  - **Enhanced Retry Logic**: Updated `evaluate_policy_compliance_via_buildinfo_with_retry()` to accept `build_id` parameter for targeted compliance checks
+  - **Backward Compatible**: Existing code can pass `None` for `build_id` to maintain current behavior
+  - **Use Cases**: Enables CI/CD pipelines to verify policy compliance for specific builds instead of always checking the latest build
+  - **Modified Files**: `src/policy.rs`
+
+### Technical Details
+- **Method Signatures Updated**:
+  - `evaluate_policy_compliance_via_buildinfo(app_id, build_id, sandbox_id)` - Added `build_id: Option<&str>` parameter
+  - `evaluate_policy_compliance_via_buildinfo_with_retry(app_id, build_id, sandbox_id, max_retries, retry_delay_seconds)` - Added `build_id: Option<&str>` parameter
+- **Build Request Construction**: Updated `GetBuildInfoRequest` to use the provided `build_id` parameter instead of always passing `None`
+- **Caller Updates**: All internal callers updated to pass the `build_id` parameter through the call chain
+
 ## [0.7.3] - 2025-11-12
 
 ### Fixed

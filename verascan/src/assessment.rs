@@ -1412,6 +1412,7 @@ impl AssessmentSubmitter {
         match policy_api
             .evaluate_policy_compliance_via_buildinfo_with_retry(
                 app_id,
+                None, // build_id - None means check latest build
                 sandbox_legacy_id,
                 max_retries,
                 poll_interval.into(),
