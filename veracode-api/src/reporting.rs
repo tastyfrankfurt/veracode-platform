@@ -2,11 +2,13 @@
 //!
 //! This module provides access to the Veracode Reporting REST API for retrieving
 //! audit logs and generating compliance reports.
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeClient, VeracodeError, VeracodeRegion};
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::America::New_York;
 use chrono_tz::Europe::Berlin;
 use serde::{Deserialize, Serialize};
+use urlencoding;
 
 /// Request payload for generating an audit report
 #[derive(Debug, Clone, Serialize)]
@@ -394,6 +396,11 @@ impl ReportingApi {
         let response_text = response.text().await?;
         log::debug!("Generate report API response: {}", response_text);
 
+        // Validate JSON depth before parsing to prevent DoS attacks
+        validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+            VeracodeError::InvalidResponse(format!("JSON validation failed: {}", e))
+        })?;
+
         let generate_response: GenerateReportResponse = serde_json::from_str(&response_text)?;
         Ok(generate_response.embedded.id)
     }
@@ -420,15 +427,23 @@ impl ReportingApi {
         report_id: &str,
         page: Option<u32>,
     ) -> Result<ReportResponse, VeracodeError> {
+        // URL-encode the report_id to prevent injection attacks
+        let encoded_report_id = urlencoding::encode(report_id);
+
         let endpoint = if let Some(page_num) = page {
-            format!("/appsec/v1/analytics/report/{report_id}?page={page_num}")
+            format!("/appsec/v1/analytics/report/{encoded_report_id}?page={page_num}")
         } else {
-            format!("/appsec/v1/analytics/report/{report_id}")
+            format!("/appsec/v1/analytics/report/{encoded_report_id}")
         };
 
         let response = self.client.get(&endpoint, None).await?;
         let response_text = response.text().await?;
         log::debug!("Get audit report API response: {}", response_text);
+
+        // Validate JSON depth before parsing to prevent DoS attacks
+        validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+            VeracodeError::InvalidResponse(format!("JSON validation failed: {}", e))
+        })?;
 
         let report_response: ReportResponse = serde_json::from_str(&response_text)?;
         Ok(report_response)
@@ -600,6 +615,7 @@ impl ReportingApi {
 
         // Process all raw log entries efficiently
         let mut conversion_stats: (u32, u32) = (0, 0); // (successes, failures)
+        let mut serialization_stats: (u32, u32) = (0, 0); // (successes, failures)
         let mut total_entries: u32 = 0;
 
         for page_value in all_pages_raw {
@@ -608,8 +624,21 @@ impl ReportingApi {
                     total_entries = total_entries.saturating_add(1);
 
                     // Get raw JSON string (canonical form for hashing)
-                    let raw_log =
-                        serde_json::to_string(log_value).unwrap_or_else(|_| "{}".to_string());
+                    let raw_log = match serde_json::to_string(log_value) {
+                        Ok(json_str) => {
+                            serialization_stats.0 = serialization_stats.0.saturating_add(1);
+                            json_str
+                        }
+                        Err(e) => {
+                            log::error!(
+                                "Failed to serialize audit log entry {}: {}. Entry will be replaced with empty object.",
+                                total_entries,
+                                e
+                            );
+                            serialization_stats.1 = serialization_stats.1.saturating_add(1);
+                            "{}".to_string()
+                        }
+                    };
 
                     // Generate hash from raw JSON (extremely fast with xxHash!)
                     let log_hash = generate_log_hash(&raw_log);
@@ -680,6 +709,19 @@ impl ReportingApi {
             "Generated xxHash hashes for {} log entries (optimized: 10-50x faster than SHA256, zero cloning)",
             total_entries
         );
+
+        if serialization_stats.1 > 0 {
+            log::warn!(
+                "Serialization statistics: {} successful, {} failed (replaced with empty objects)",
+                serialization_stats.0,
+                serialization_stats.1
+            );
+        } else {
+            log::info!(
+                "Serialization statistics: {} successful, 0 failed",
+                serialization_stats.0
+            );
+        }
 
         Ok(all_logs)
     }

@@ -10,6 +10,74 @@ use std::collections::HashMap;
 
 use crate::{VeracodeClient, VeracodeError};
 
+/// Maximum allowed retry delay in seconds (5 minutes)
+/// This prevents `DoS` scenarios where users could specify very long delays
+/// (e.g., 30 retries × 3600s = 30 hours)
+const MAX_RETRY_DELAY_SECONDS: u64 = 300;
+
+/// Input validation helpers to prevent path injection attacks
+mod validation {
+    /// Validates that a string is a valid UUID/GUID format
+    /// Format: 8-4-4-4-12 hexadecimal characters (with optional hyphens)
+    pub fn validate_guid(guid: &str) -> Result<(), String> {
+        // Allow both hyphenated and non-hyphenated UUIDs
+        let cleaned = guid.replace('-', "");
+
+        // Check length (32 hex chars for UUID)
+        if cleaned.len() != 32 {
+            return Err(format!(
+                "Invalid GUID format: expected 32 hex characters, got {}",
+                cleaned.len()
+            ));
+        }
+
+        // Check for valid hex characters only
+        if !cleaned.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err("Invalid GUID format: contains non-hexadecimal characters".to_string());
+        }
+
+        // Check for path traversal attempts
+        if guid.contains("..") || guid.contains('/') || guid.contains('\\') {
+            return Err("Invalid GUID format: contains path traversal characters".to_string());
+        }
+
+        // Check for URL parameter injection
+        if guid.contains('?') || guid.contains('&') || guid.contains('#') {
+            return Err("Invalid GUID format: contains URL parameter characters".to_string());
+        }
+
+        Ok(())
+    }
+
+    /// Validates that a string contains only safe identifier characters
+    /// Allows: alphanumeric, hyphens, underscores
+    pub fn validate_identifier(id: &str) -> Result<(), String> {
+        if id.is_empty() {
+            return Err("Identifier cannot be empty".to_string());
+        }
+
+        // Check for path traversal
+        if id.contains("..") || id.contains('/') || id.contains('\\') {
+            return Err("Invalid identifier: contains path traversal characters".to_string());
+        }
+
+        // Check for URL parameter injection
+        if id.contains('?') || id.contains('&') || id.contains('#') {
+            return Err("Invalid identifier: contains URL parameter characters".to_string());
+        }
+
+        // Allow alphanumeric, hyphens, and underscores only
+        if !id
+            .chars()
+            .all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+        {
+            return Err("Invalid identifier: contains unsafe characters".to_string());
+        }
+
+        Ok(())
+    }
+}
+
 /// Represents a security policy in the Veracode platform
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SecurityPolicy {
@@ -696,6 +764,10 @@ impl<'a> PolicyApi<'a> {
     /// Returns an error if the API request fails, the policy is invalid,
     /// or authentication/authorization fails.
     pub async fn get_policy(&self, policy_guid: &str) -> Result<SecurityPolicy, PolicyError> {
+        // Validate GUID to prevent path injection
+        validation::validate_guid(policy_guid)
+            .map_err(|e| PolicyError::InvalidConfig(format!("Invalid policy GUID: {e}")))?;
+
         let endpoint = format!("/appsec/v1/policies/{policy_guid}");
 
         let response = self.client.get(&endpoint, None).await?;
@@ -810,6 +882,15 @@ impl<'a> PolicyApi<'a> {
         use crate::build::{BuildError, GetBuildInfoRequest};
         use std::borrow::Cow;
         use tokio::time::{Duration, sleep};
+
+        // Cap retry delay to prevent DoS scenarios
+        let retry_delay_seconds = retry_delay_seconds.min(MAX_RETRY_DELAY_SECONDS);
+        if retry_delay_seconds > MAX_RETRY_DELAY_SECONDS {
+            warn!(
+                "Retry delay capped at {} seconds (requested: {})",
+                MAX_RETRY_DELAY_SECONDS, retry_delay_seconds
+            );
+        }
 
         let build_request = GetBuildInfoRequest {
             app_id: app_id.to_string(),
@@ -944,6 +1025,20 @@ impl<'a> PolicyApi<'a> {
         build_id: Option<&str>,
         sandbox_guid: Option<&str>,
     ) -> Result<SummaryReport, PolicyError> {
+        // Validate app_guid to prevent path injection
+        validation::validate_guid(app_guid)
+            .map_err(|e| PolicyError::InvalidConfig(format!("Invalid application GUID: {e}")))?;
+
+        // Validate optional identifiers
+        if let Some(build_id) = build_id {
+            validation::validate_identifier(build_id)
+                .map_err(|e| PolicyError::InvalidConfig(format!("Invalid build ID: {e}")))?;
+        }
+        if let Some(sandbox_guid) = sandbox_guid {
+            validation::validate_guid(sandbox_guid)
+                .map_err(|e| PolicyError::InvalidConfig(format!("Invalid sandbox GUID: {e}")))?;
+        }
+
         let endpoint = format!("/appsec/v2/applications/{app_guid}/summary_report");
 
         // Build query parameters
@@ -1026,6 +1121,15 @@ impl<'a> PolicyApi<'a> {
     ) -> Result<(SummaryReport, Option<std::borrow::Cow<'static, str>>), PolicyError> {
         use std::borrow::Cow;
         use tokio::time::{Duration, sleep};
+
+        // Cap retry delay to prevent DoS scenarios
+        let retry_delay_seconds = retry_delay_seconds.min(MAX_RETRY_DELAY_SECONDS);
+        if retry_delay_seconds > MAX_RETRY_DELAY_SECONDS {
+            warn!(
+                "Retry delay capped at {} seconds (requested: {})",
+                MAX_RETRY_DELAY_SECONDS, retry_delay_seconds
+            );
+        }
 
         if enable_break_build && build_id.is_none() {
             return Err(PolicyError::InvalidConfig(
@@ -1128,6 +1232,15 @@ impl<'a> PolicyApi<'a> {
         use std::borrow::Cow;
         use tokio::time::{Duration, sleep};
 
+        // Cap retry delay to prevent DoS scenarios
+        let retry_delay_seconds = retry_delay_seconds.min(MAX_RETRY_DELAY_SECONDS);
+        if retry_delay_seconds > MAX_RETRY_DELAY_SECONDS {
+            warn!(
+                "Retry delay capped at {} seconds (requested: {})",
+                MAX_RETRY_DELAY_SECONDS, retry_delay_seconds
+            );
+        }
+
         let mut attempts: u32 = 0;
         loop {
             let summary_report = self
@@ -1214,6 +1327,20 @@ impl<'a> PolicyApi<'a> {
         &self,
         request: PolicyScanRequest,
     ) -> Result<PolicyScanResult, PolicyError> {
+        // Validate application_guid to prevent injection
+        validation::validate_guid(&request.application_guid)
+            .map_err(|e| PolicyError::InvalidConfig(format!("Invalid application GUID: {e}")))?;
+
+        // Validate policy_guid to prevent injection
+        validation::validate_guid(&request.policy_guid)
+            .map_err(|e| PolicyError::InvalidConfig(format!("Invalid policy GUID: {e}")))?;
+
+        // Validate optional sandbox_guid to prevent injection
+        if let Some(ref sandbox_guid) = request.sandbox_guid {
+            validation::validate_guid(sandbox_guid)
+                .map_err(|e| PolicyError::InvalidConfig(format!("Invalid sandbox GUID: {e}")))?;
+        }
+
         let endpoint = "/appsec/v1/policy-scans";
 
         let response = self.client.post(endpoint, Some(&request)).await?;
@@ -1350,6 +1477,15 @@ impl<'a> PolicyApi<'a> {
         enable_break_build: bool,
         force_buildinfo_api: bool,
     ) -> Result<(Option<SummaryReport>, String, ApiSource), PolicyError> {
+        // Cap retry delay to prevent DoS scenarios
+        let retry_delay_seconds = retry_delay_seconds.min(MAX_RETRY_DELAY_SECONDS);
+        if retry_delay_seconds > MAX_RETRY_DELAY_SECONDS {
+            warn!(
+                "Retry delay capped at {} seconds (requested: {})",
+                MAX_RETRY_DELAY_SECONDS, retry_delay_seconds
+            );
+        }
+
         if force_buildinfo_api {
             // DIRECT PATH: Skip summary report, use getbuildinfo.do directly
             debug!("Using getbuildinfo.do API directly (forced via configuration)");

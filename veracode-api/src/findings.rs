@@ -3,6 +3,7 @@
 //! This module provides structured access to both policy scan and sandbox scan findings
 //! with support for pagination, filtering, and automatic collection of all results.
 
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeClient, VeracodeError};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
@@ -438,16 +439,25 @@ impl FindingsApi {
                 source: VeracodeError::Http(e),
             })?;
 
-        if response_text.chars().count() > 500 {
+        let char_count = response_text.chars().count();
+        if char_count > 500 {
             let truncated: String = response_text.chars().take(500).collect();
             debug!(
                 "Raw API response (first 500 chars): {}... [truncated {} more characters]",
                 truncated,
-                response_text.chars().count().saturating_sub(500)
+                char_count.saturating_sub(500)
             );
         } else {
             debug!("Raw API response: {response_text}");
         }
+
+        // Validate JSON depth before parsing to prevent DoS attacks
+        validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+            error!("JSON validation failed: {e}");
+            FindingsError::RequestFailed {
+                source: VeracodeError::InvalidResponse(format!("JSON validation failed: {}", e)),
+            }
+        })?;
 
         let findings_response: FindingsResponse =
             serde_json::from_str(&response_text).map_err(|e| {

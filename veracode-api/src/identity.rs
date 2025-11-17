@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeClient, VeracodeError};
 
 /// Represents a Veracode user account
@@ -572,6 +573,40 @@ impl<'a> IdentityApi<'a> {
         Self { client }
     }
 
+    /// Sanitize error messages to prevent information disclosure
+    ///
+    /// Logs detailed error information server-side while returning
+    /// a generic, safe error message to callers.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw_error` - The raw error text from the API response
+    /// * `status` - The HTTP status code
+    /// * `context` - Context about the operation for logging (e.g., "`list_users`")
+    fn sanitize_error(raw_error: &str, status: u16, context: &str) -> String {
+        // Log detailed error server-side for debugging
+        log::warn!("API error in {} - HTTP {}: {}", context, status, raw_error);
+
+        // Return sanitized message based on status code
+        match status {
+            400 => {
+                // For 400 errors, check for specific known safe error patterns
+                if raw_error.contains("already exists") {
+                    "Resource already exists".to_string()
+                } else {
+                    "Invalid request parameters".to_string()
+                }
+            }
+            401 => "Authentication required".to_string(),
+            403 => "Insufficient permissions for this operation".to_string(),
+            404 => "Resource not found".to_string(),
+            415 => "Unsupported media type".to_string(),
+            429 => "Rate limit exceeded. Please try again later".to_string(),
+            500..=599 => "Internal server error occurred".to_string(),
+            _ => format!("Request failed with status {}", status),
+        }
+    }
+
     /// List users with optional filtering
     ///
     /// # Arguments
@@ -597,6 +632,14 @@ impl<'a> IdentityApi<'a> {
             200 => {
                 let response_text = response.text().await?;
 
+                // Validate JSON depth before parsing to prevent DoS attacks
+                validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                    IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                        "JSON validation failed: {}",
+                        e
+                    )))
+                })?;
+
                 // Try embedded response format first
                 if let Ok(users_response) = serde_json::from_str::<UsersResponse>(&response_text) {
                     let users = if !users_response.users.is_empty() {
@@ -621,9 +664,10 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "list_users");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -656,9 +700,10 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "get_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -958,27 +1003,31 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
                 if error_text.contains("already exists") {
-                    Err(IdentityError::UserAlreadyExists(error_text))
+                    Err(IdentityError::UserAlreadyExists(sanitized))
                 } else {
-                    Err(IdentityError::InvalidInput(error_text))
+                    Err(IdentityError::InvalidInput(sanitized))
                 }
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             415 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP 415 Unsupported Media Type: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1038,18 +1087,21 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::InvalidInput(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "update_user");
+                Err(IdentityError::InvalidInput(sanitized))
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "update_user");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "update_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1078,14 +1130,16 @@ impl<'a> IdentityApi<'a> {
             200 | 204 => Ok(()),
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_user");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1119,6 +1173,14 @@ impl<'a> IdentityApi<'a> {
             match status {
                 200 => {
                     let response_text = response.text().await?;
+
+                    // Validate JSON depth before parsing to prevent DoS attacks
+                    validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                        IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                            "JSON validation failed: {}",
+                            e
+                        )))
+                    })?;
 
                     // Try embedded response format
                     if let Ok(roles_response) =
@@ -1163,17 +1225,19 @@ impl<'a> IdentityApi<'a> {
 
                     // If we can't parse, maybe it's the first page without pagination
                     if page == 0 {
-                        return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                            "Unable to parse roles response: {response_text}"
-                        ))));
+                        log::warn!("Unable to parse roles response: {}", response_text);
+                        return Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                            "Unable to parse roles response".to_string(),
+                        )));
                     }
                     break; // End of pages
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
-                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                        "HTTP {status}: {error_text}"
-                    ))));
+                    let sanitized = Self::sanitize_error(&error_text, status, "list_roles");
+                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                        sanitized,
+                    )));
                 }
             }
         }
@@ -1215,6 +1279,14 @@ impl<'a> IdentityApi<'a> {
             match status {
                 200 => {
                     let response_text = response.text().await?;
+
+                    // Validate JSON depth before parsing to prevent DoS attacks
+                    validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                        IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                            "JSON validation failed: {}",
+                            e
+                        )))
+                    })?;
 
                     // Try embedded response format first
                     if let Ok(teams_response) =
@@ -1268,9 +1340,10 @@ impl<'a> IdentityApi<'a> {
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
-                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                        "HTTP {status}: {error_text}"
-                    ))));
+                    let sanitized = Self::sanitize_error(&error_text, status, "list_teams");
+                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                        sanitized,
+                    )));
                 }
             }
         }
@@ -1305,21 +1378,24 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
+                let sanitized = Self::sanitize_error(&error_text, status, "create_team");
                 if error_text.contains("already exists") {
-                    Err(IdentityError::TeamAlreadyExists(error_text))
+                    Err(IdentityError::TeamAlreadyExists(sanitized))
                 } else {
-                    Err(IdentityError::InvalidInput(error_text))
+                    Err(IdentityError::InvalidInput(sanitized))
                 }
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_team");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_team");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1348,14 +1424,16 @@ impl<'a> IdentityApi<'a> {
             200 | 204 => Ok(()),
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_team");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::TeamNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_team");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1412,7 +1490,18 @@ impl<'a> IdentityApi<'a> {
         match status {
             200 => {
                 let response_text = response.text().await?;
-                log::debug!("🔍 Team lookup response - body: {}", response_text);
+                log::debug!(
+                    "🔍 Team lookup response - content length: {} bytes",
+                    response_text.len()
+                );
+
+                // Validate JSON depth before parsing to prevent DoS attacks
+                validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                    IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                        "JSON validation failed: {}",
+                        e
+                    )))
+                })?;
 
                 // Helper closure to process teams list and find exact case-insensitive match
                 let process_teams = |teams: Vec<Team>, format_description: &str| -> Option<Team> {
@@ -1481,18 +1570,17 @@ impl<'a> IdentityApi<'a> {
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                log::debug!(
-                    "🔍 Team lookup error - HTTP 403: permission denied - {}",
-                    error_text
-                );
-                Err(IdentityError::PermissionDenied(error_text))
+                log::debug!("🔍 Team lookup error - HTTP 403: permission denied");
+                let sanitized = Self::sanitize_error(&error_text, status, "get_team_by_name");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                log::debug!("🔍 Team lookup error - HTTP {}: {}", status, error_text);
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                log::debug!("🔍 Team lookup error - HTTP {}", status);
+                let sanitized = Self::sanitize_error(&error_text, status, "get_team_by_name");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1554,17 +1642,20 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::InvalidInput(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_api_credentials");
+                Err(IdentityError::InvalidInput(sanitized))
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_api_credentials");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_api_credentials");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1593,14 +1684,16 @@ impl<'a> IdentityApi<'a> {
             200 | 204 => Ok(()), // Accept both 200 OK and 204 No Content as success
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "revoke_api_credentials");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::UserNotFound), // API credentials not found
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "revoke_api_credentials");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }

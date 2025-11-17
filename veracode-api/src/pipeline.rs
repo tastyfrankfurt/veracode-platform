@@ -7,6 +7,8 @@ use log::{debug, error, info, warn};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
 
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
+use crate::validation::{validate_scan_id, validate_veracode_url};
 use crate::{VeracodeClient, VeracodeError};
 
 /// Plugin version constant to avoid repeated allocations
@@ -717,6 +719,10 @@ impl PipelineApi {
 
         let response_text = response.text().await?;
 
+        // Validate JSON depth before parsing to prevent DoS attacks
+        validate_json_depth(&response_text, MAX_JSON_DEPTH)
+            .map_err(|e| PipelineError::InvalidRequest(format!("JSON validation failed: {}", e)))?;
+
         // Parse response to extract scan ID and _links (using actual API response structure)
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {
             // Extract scan ID
@@ -830,6 +836,14 @@ impl PipelineApi {
         binary_data: &[u8],
         file_name: &str,
     ) -> Result<(), PipelineError> {
+        // Validate expected_segments to prevent division by zero DoS
+        if expected_segments <= 0 {
+            return Err(PipelineError::InvalidRequest(format!(
+                "Invalid segment count: {}. Must be a positive number.",
+                expected_segments
+            )));
+        }
+
         let total_size = binary_data.len();
         #[allow(
             clippy::cast_possible_truncation,
@@ -910,6 +924,10 @@ impl PipelineApi {
         scan_id: &str,
         binary_data: &[u8],
     ) -> Result<(), PipelineError> {
+        // Path traversal protection: validate scan_id before URL construction
+        validate_scan_id(scan_id)
+            .map_err(|e| PipelineError::InvalidRequest(format!("Invalid scan_id: {}", e)))?;
+
         // For backwards compatibility, use a default approach
         let upload_uri = format!("/pipeline_scan/scans/{scan_id}/segments/1");
         let expected_segments = 1; // Default to single segment
@@ -928,6 +946,9 @@ impl PipelineApi {
     ) -> Result<String, PipelineError> {
         // Get base URL and create full URL using pipeline scan v1 base URL
         let url = if upload_uri.starts_with("http") {
+            // SSRF protection: validate full URLs against allowlist
+            validate_veracode_url(upload_uri)
+                .map_err(|e| PipelineError::InvalidRequest(format!("Invalid upload URI: {}", e)))?;
             upload_uri.to_string()
         } else {
             format!("{}{}", self.get_pipeline_base_url(), upload_uri)
@@ -968,6 +989,12 @@ impl PipelineApi {
 
     /// Extract the next upload URI from the API response (matching Java getUriSuffix)
     fn extract_next_upload_uri(&self, response_text: &str) -> Option<String> {
+        // Validate JSON depth before parsing to prevent DoS attacks
+        if validate_json_depth(response_text, MAX_JSON_DEPTH).is_err() {
+            warn!("JSON validation failed in extract_next_upload_uri");
+            return None;
+        }
+
         // Parse JSON response to find the next upload URI
         if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(response_text) {
             // Look for _links.upload.href (HAL format)
@@ -1042,6 +1069,9 @@ impl PipelineApi {
 
         // Construct full URL with pipeline_scan/v1 base
         let url = if start_uri.starts_with("http") {
+            // SSRF protection: validate full URLs against allowlist
+            validate_veracode_url(start_uri)
+                .map_err(|e| PipelineError::InvalidRequest(format!("Invalid start URI: {}", e)))?;
             start_uri.to_string()
         } else {
             format!("{}{}", self.get_pipeline_base_url(), start_uri)
@@ -1097,6 +1127,10 @@ impl PipelineApi {
         scan_id: &str,
         config: Option<ScanConfig>,
     ) -> Result<(), PipelineError> {
+        // Path traversal protection: validate scan_id before URL construction
+        validate_scan_id(scan_id)
+            .map_err(|e| PipelineError::InvalidRequest(format!("Invalid scan_id: {}", e)))?;
+
         let endpoint = format!("/scans/{scan_id}");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
 
@@ -1180,6 +1214,10 @@ impl PipelineApi {
     pub async fn get_scan_with_uri(&self, details_uri: &str) -> Result<Scan, PipelineError> {
         // Construct full URL with pipeline_scan/v1 base
         let url = if details_uri.starts_with("http") {
+            // SSRF protection: validate full URLs against allowlist
+            validate_veracode_url(details_uri).map_err(|e| {
+                PipelineError::InvalidRequest(format!("Invalid details URI: {}", e))
+            })?;
             details_uri.to_string()
         } else {
             format!("{}{}", self.get_pipeline_base_url(), details_uri)
@@ -1202,6 +1240,10 @@ impl PipelineApi {
 
         let response_text = response.text().await?;
 
+        // Validate JSON depth before parsing to prevent DoS attacks
+        validate_json_depth(&response_text, MAX_JSON_DEPTH)
+            .map_err(|e| PipelineError::InvalidRequest(format!("JSON validation failed: {}", e)))?;
+
         serde_json::from_str::<Scan>(&response_text).map_err(|e| {
             PipelineError::InvalidRequest(format!("Failed to parse scan details: {e}"))
         })
@@ -1222,6 +1264,10 @@ impl PipelineApi {
     /// Returns an error if the API request fails, the pipeline scan fails,
     /// or authentication/authorization fails.
     pub async fn get_scan(&self, scan_id: &str) -> Result<Scan, PipelineError> {
+        // Path traversal protection: validate scan_id before URL construction
+        validate_scan_id(scan_id)
+            .map_err(|e| PipelineError::InvalidRequest(format!("Invalid scan_id: {}", e)))?;
+
         let endpoint = format!("/scans/{scan_id}");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
 
@@ -1241,6 +1287,10 @@ impl PipelineApi {
             .await?;
 
         let response_text = response.text().await?;
+
+        // Validate JSON depth before parsing to prevent DoS attacks
+        validate_json_depth(&response_text, MAX_JSON_DEPTH)
+            .map_err(|e| PipelineError::InvalidRequest(format!("JSON validation failed: {}", e)))?;
 
         serde_json::from_str::<Scan>(&response_text).map_err(|e| {
             PipelineError::InvalidRequest(format!("Failed to parse scan details: {e}"))
@@ -1272,6 +1322,10 @@ impl PipelineApi {
     /// Returns an error if the API request fails, the pipeline scan fails,
     /// or authentication/authorization fails.
     pub async fn get_findings(&self, scan_id: &str) -> Result<Vec<Finding>, PipelineError> {
+        // Path traversal protection: validate scan_id before URL construction
+        validate_scan_id(scan_id)
+            .map_err(|e| PipelineError::InvalidRequest(format!("Invalid scan_id: {}", e)))?;
+
         let endpoint = format!("/scans/{scan_id}/findings");
         let url = format!("{}{}", self.get_pipeline_base_url(), endpoint);
 
@@ -1302,6 +1356,11 @@ impl PipelineApi {
 
         match status.as_u16() {
             200 => {
+                // Validate JSON depth before parsing to prevent DoS attacks
+                validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                    PipelineError::InvalidRequest(format!("JSON validation failed: {}", e))
+                })?;
+
                 // Findings are ready - parse the response as FindingsResponse
                 match serde_json::from_str::<FindingsResponse>(&response_text) {
                     Ok(findings_response) => {
@@ -1410,6 +1469,10 @@ impl PipelineApi {
     /// Returns an error if the API request fails, the pipeline scan fails,
     /// or authentication/authorization fails.
     pub async fn cancel_scan(&self, scan_id: &str) -> Result<(), PipelineError> {
+        // Path traversal protection: validate scan_id before URL construction
+        validate_scan_id(scan_id)
+            .map_err(|e| PipelineError::InvalidRequest(format!("Invalid scan_id: {}", e)))?;
+
         let endpoint = format!("/scans/{scan_id}/cancel");
 
         let response = self.client.delete_with_response(&endpoint).await?;

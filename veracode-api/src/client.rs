@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeConfig, VeracodeError};
 
 // Type aliases for HMAC
@@ -822,6 +823,11 @@ impl VeracodeClient {
 
             let response = self.get_with_query(endpoint, Some(query_params)).await?;
             let response_text = response.text().await?;
+
+            // Validate JSON depth before parsing to prevent DoS attacks
+            validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                VeracodeError::InvalidResponse(format!("JSON validation failed: {}", e))
+            })?;
 
             // Try to parse as JSON to extract items and pagination info
             if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {

@@ -12,6 +12,7 @@ use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
+use crate::validation::validate_url_segment;
 use crate::{VeracodeClient, VeracodeError};
 
 /// Helper function to efficiently convert XML attribute bytes to string
@@ -307,6 +308,15 @@ impl ScanApi {
         Self { client }
     }
 
+    /// Validate filename for path traversal sequences
+    fn validate_filename(filename: &str) -> Result<(), ScanError> {
+        // Use shared validation from validation.rs to prevent path traversal
+        validate_url_segment(filename, 255).map_err(|e| {
+            ScanError::InvalidParameter(format!("Invalid filename: {}", e))
+        })?;
+        Ok(())
+    }
+
     /// Upload a file to an application or sandbox
     ///
     /// # Arguments
@@ -325,9 +335,9 @@ impl ScanApi {
         &self,
         request: &UploadFileRequest,
     ) -> Result<UploadedFile, ScanError> {
-        // Validate file exists
-        if !Path::new(&request.file_path).exists() {
-            return Err(ScanError::FileNotFound(request.file_path.clone()));
+        // Validate save_as parameter for path traversal
+        if let Some(save_as) = &request.save_as {
+            Self::validate_filename(save_as)?;
         }
 
         let endpoint = "/api/5.0/uploadfile.do";
@@ -344,8 +354,16 @@ impl ScanApi {
             query_params.push(("save_as", save_as.as_str()));
         }
 
-        // Read file data
-        let file_data = tokio::fs::read(&request.file_path).await?;
+        // Read file data - this will return an error if the file doesn't exist
+        let file_data = tokio::fs::read(&request.file_path)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ScanError::FileNotFound(request.file_path.clone())
+                } else {
+                    ScanError::from(e)
+                }
+            })?;
 
         // Get filename from path
         let filename = Path::new(&request.file_path)
@@ -409,13 +427,22 @@ impl ScanApi {
         &self,
         request: UploadLargeFileRequest,
     ) -> Result<UploadedFile, ScanError> {
-        // Validate file exists
-        if !Path::new(&request.file_path).exists() {
-            return Err(ScanError::FileNotFound(request.file_path));
+        // Validate filename parameter for path traversal
+        if let Some(filename) = &request.filename {
+            Self::validate_filename(filename)?;
         }
 
         // Check file size (2GB limit for uploadlargefile.do)
-        let file_metadata = tokio::fs::metadata(&request.file_path).await?;
+        // This will return an error if the file doesn't exist
+        let file_metadata = tokio::fs::metadata(&request.file_path)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ScanError::FileNotFound(request.file_path.clone())
+                } else {
+                    ScanError::from(e)
+                }
+            })?;
         let file_size = file_metadata.len();
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
 
@@ -440,7 +467,15 @@ impl ScanApi {
         }
 
         // Read file data
-        let file_data = tokio::fs::read(&request.file_path).await?;
+        let file_data = tokio::fs::read(&request.file_path)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ScanError::FileNotFound(request.file_path.clone())
+                } else {
+                    ScanError::from(e)
+                }
+            })?;
 
         let response = self
             .client
@@ -521,13 +556,22 @@ impl ScanApi {
     where
         F: Fn(u64, u64, f64) + Send + Sync,
     {
-        // Validate file exists
-        if !Path::new(&request.file_path).exists() {
-            return Err(ScanError::FileNotFound(request.file_path));
+        // Validate filename parameter for path traversal
+        if let Some(filename) = &request.filename {
+            Self::validate_filename(filename)?;
         }
 
         // Check file size (2GB limit)
-        let file_metadata = tokio::fs::metadata(&request.file_path).await?;
+        // This will return an error if the file doesn't exist
+        let file_metadata = tokio::fs::metadata(&request.file_path)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ScanError::FileNotFound(request.file_path.clone())
+                } else {
+                    ScanError::from(e)
+                }
+            })?;
         let file_size = file_metadata.len();
         const MAX_FILE_SIZE: u64 = 2 * 1024 * 1024 * 1024; // 2GB
 
@@ -621,13 +665,17 @@ impl ScanApi {
         &self,
         request: &UploadFileRequest,
     ) -> Result<UploadedFile, ScanError> {
-        // Check if file exists
-        if !Path::new(&request.file_path).exists() {
-            return Err(ScanError::FileNotFound(request.file_path.clone()));
-        }
-
         // Get file size to determine upload method
-        let file_metadata = tokio::fs::metadata(&request.file_path).await?;
+        // This will return an error if the file doesn't exist
+        let file_metadata = tokio::fs::metadata(&request.file_path)
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ScanError::FileNotFound(request.file_path.clone())
+                } else {
+                    ScanError::from(e)
+                }
+            })?;
         let file_size = file_metadata.len();
 
         // Use large file upload for files over 100MB or when build might exist
@@ -2067,6 +2115,27 @@ mod tests {
 
         let error = ScanError::ChunkedUploadFailed("Network error".to_string());
         assert_eq!(error.to_string(), "Chunked upload failed: Network error");
+    }
+
+    #[test]
+    fn test_validate_filename_path_traversal() {
+        // Valid filenames should pass
+        assert!(ScanApi::validate_filename("valid_file.jar").is_ok());
+        assert!(ScanApi::validate_filename("my-app.war").is_ok());
+        assert!(ScanApi::validate_filename("file123.zip").is_ok());
+
+        // Path traversal sequences should fail
+        assert!(ScanApi::validate_filename("../etc/passwd").is_err());
+        assert!(ScanApi::validate_filename("test/../file.jar").is_err());
+        assert!(ScanApi::validate_filename("test/file.jar").is_err());
+        assert!(ScanApi::validate_filename("test\\file.jar").is_err());
+        assert!(ScanApi::validate_filename("..\\windows\\system32").is_err());
+
+        // Control characters should fail
+        assert!(ScanApi::validate_filename("test\x00file.jar").is_err());
+        assert!(ScanApi::validate_filename("test\nfile.jar").is_err());
+        assert!(ScanApi::validate_filename("test\rfile.jar").is_err());
+        assert!(ScanApi::validate_filename("test\x1Ffile.jar").is_err());
     }
 
     #[tokio::test]

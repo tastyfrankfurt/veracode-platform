@@ -3,6 +3,7 @@
 //! This module provides functions to validate JSON structure before deserialization,
 //! preventing Denial of Service attacks through deeply nested JSON structures.
 
+use log::warn;
 use serde_json::Value;
 
 /// Maximum allowed JSON nesting depth
@@ -53,19 +54,28 @@ pub const MAX_JSON_DEPTH: usize = 32;
 /// # Errors
 ///
 /// Returns an error if the JSON is invalid or exceeds the maximum nesting depth.
+/// Error messages are sanitized to avoid information disclosure, with detailed
+/// errors logged internally for debugging.
 pub fn validate_json_depth(json_str: &str, max_depth: usize) -> Result<(), String> {
     // First, try to parse the JSON
-    let value: Value =
-        serde_json::from_str(json_str).map_err(|e| format!("Invalid JSON: {}", e))?;
+    let value: Value = serde_json::from_str(json_str).map_err(|e| {
+        // Log detailed parse error for debugging (internal only)
+        warn!("JSON parse error: {}", e);
+        // Return sanitized error to caller (may be exposed to users)
+        "Invalid JSON format".to_string()
+    })?;
 
     // Calculate the actual nesting depth
     let depth = calculate_depth(&value);
 
     if depth > max_depth {
-        return Err(format!(
-            "JSON nesting depth {} exceeds maximum allowed depth of {}",
+        // Log detailed depth information for debugging (internal only)
+        warn!(
+            "JSON depth validation failed: depth {} exceeds maximum {}",
             depth, max_depth
-        ));
+        );
+        // Return sanitized error to caller (may be exposed to users)
+        return Err("JSON structure too deeply nested".to_string());
     }
 
     Ok(())
@@ -80,20 +90,48 @@ pub fn validate_json_depth(json_str: &str, max_depth: usize) -> Result<(), Strin
 /// # Returns
 ///
 /// The maximum nesting depth (0 for scalars, 1+ for nested structures)
+///
+/// # Security
+///
+/// Uses bounded recursion to prevent stack overflow. Stops early if depth exceeds `MAX_JSON_DEPTH`.
 fn calculate_depth(value: &Value) -> usize {
+    calculate_depth_limited(value, 0)
+}
+
+/// Calculate depth with recursion limit to prevent stack overflow
+///
+/// Stops recursion early once `MAX_JSON_DEPTH` is exceeded, preventing stack overflow
+/// on maliciously deep JSON (e.g., 10,000+ nesting levels).
+fn calculate_depth_limited(value: &Value, current_depth: usize) -> usize {
+    // Early termination: stop recursing if we've exceeded the limit
+    // We don't need exact depth if it's already > MAX_JSON_DEPTH
+    if current_depth > MAX_JSON_DEPTH {
+        return current_depth;
+    }
+
     match value {
         Value::Array(arr) => {
             if arr.is_empty() {
                 1
             } else {
-                1_usize.saturating_add(arr.iter().map(calculate_depth).max().unwrap_or(0))
+                let max_child = arr
+                    .iter()
+                    .map(|v| calculate_depth_limited(v, current_depth.saturating_add(1)))
+                    .max()
+                    .unwrap_or(0);
+                1_usize.saturating_add(max_child)
             }
         }
         Value::Object(obj) => {
             if obj.is_empty() {
                 1
             } else {
-                1_usize.saturating_add(obj.values().map(calculate_depth).max().unwrap_or(0))
+                let max_child = obj
+                    .values()
+                    .map(|v| calculate_depth_limited(v, current_depth.saturating_add(1)))
+                    .max()
+                    .unwrap_or(0);
+                1_usize.saturating_add(max_child)
             }
         }
         // Scalars have depth 0
@@ -208,7 +246,7 @@ mod tests {
         assert!(
             result
                 .expect_err("should fail on deeply nested json")
-                .contains("exceeds maximum allowed depth")
+                .contains("too deeply nested")
         );
     }
 
@@ -220,7 +258,7 @@ mod tests {
         assert!(
             result
                 .expect_err("should fail on invalid json")
-                .contains("Invalid JSON")
+                .contains("Invalid JSON format")
         );
     }
 
@@ -241,7 +279,7 @@ mod tests {
         assert!(
             result
                 .expect_err("should fail on deeply nested json")
-                .contains("exceeds maximum allowed depth")
+                .contains("too deeply nested")
         );
     }
 
@@ -302,7 +340,7 @@ mod tests {
         assert!(
             result
                 .expect_err("should fail on deeply nested json")
-                .contains("exceeds maximum allowed depth")
+                .contains("too deeply nested")
         );
     }
 }
