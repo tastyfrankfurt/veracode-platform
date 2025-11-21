@@ -5,6 +5,84 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2025-11-21
+
+### Security
+- **Comprehensive Security Hardening**: Implemented multiple layers of defense against OWASP Top 10 vulnerabilities across all API modules
+  - **JSON Depth Validation (DoS Prevention)**: Added `MAX_JSON_DEPTH` limit of 64 levels to prevent stack overflow attacks from deeply nested JSON structures
+    - Implemented `validate_json_depth()` validation before all JSON parsing operations
+    - Applied across Client, Findings, Identity, Pipeline, Policy, Reporting, Sandbox, Scan, and Validation APIs
+    - Prevents malicious API responses from causing stack exhaustion
+  - **Error Message Sanitization (Information Disclosure Prevention)**: Created comprehensive `sanitize_error()` function to prevent leaking sensitive server information
+    - Logs detailed errors server-side for debugging while returning generic, safe messages to clients
+    - Covers all HTTP error codes (400-599) with appropriate sanitized responses
+    - Prevents exposure of stack traces, file paths, database details, and internal state
+    - Reduces attack surface by eliminating reconnaissance opportunities
+  - **Input Validation & Injection Prevention**: Enhanced validation across all APIs to prevent XXE, XML injection, and path traversal attacks
+    - XML validation improvements to prevent XXE and injection attacks in Validation API
+    - Path traversal prevention for file operations with strict path validation
+    - Implemented strict size limits and content validation for all user inputs
+    - Added regex-based validation for URLs, IDs, and sensitive fields
+  - **Enhanced Error Handling**: Improved error context throughout the codebase with separation of internal errors from user-facing messages
+    - Better error propagation with rich context for debugging
+    - Comprehensive logging for security monitoring and audit trails
+    - Clear distinction between client errors and server errors
+
+- **Advanced Security Testing Framework**: Implemented comprehensive security testing with property-based testing, formal verification, and memory safety validation
+  - **Property-Based Testing with Proptest**: Added extensive property-based tests for validation functions
+    - `proptest_url_validation` - Tests URL validation with random valid/invalid inputs
+    - `proptest_path_validation` - Tests path traversal prevention with fuzzing
+    - `proptest_xml_security` - Tests XML injection and XXE prevention
+    - `proptest_json_depth` - Tests JSON depth validation with nested structures
+    - Generates thousands of test cases automatically to find edge cases
+  - **Formal Verification with Kani**: Added proof harnesses for critical security properties
+    - `verify_region_url_construction` - Proves URL construction is always valid for all region variants
+    - `verify_sanitize_error_safety` - Proves error sanitization never panics
+    - `verify_json_depth_validation` - Proves JSON depth validation handles all edge cases
+    - Uses symbolic execution to verify properties hold for all possible inputs
+  - **Memory Safety Testing with Miri**: Added Miri tests for undefined behavior detection
+    - Tests validation functions under Miri's strict undefined behavior detection
+    - Validates proper handling of string slicing and UTF-8 boundaries
+    - Ensures no data races or memory safety violations in concurrent code
+    - All proptest security tests pass under Miri analysis
+
+### Changed
+- **API Error Responses**: All API modules now return sanitized error messages by default
+  - Modified Files: `src/client.rs`, `src/findings.rs`, `src/identity.rs`, `src/pipeline.rs`, `src/policy.rs`, `src/reporting.rs`, `src/sandbox.rs`, `src/scan.rs`, `src/validation.rs`
+  - Internal error details are logged server-side using `log::error!()` for debugging
+  - Client-facing errors are generic and safe: "Request failed", "Invalid input", etc.
+  - Backwards compatible - existing error handling code continues to work
+
+- **Validation API Enhancement**: Complete overhaul of validation module with security-first design
+  - Extended `validate_xml_content()` with XXE prevention and entity expansion limits
+  - Enhanced `validate_file_path()` with comprehensive path traversal prevention
+  - Added `validate_json_depth()` for depth validation of JSON structures
+  - Improved error messages with detailed validation failure reasons
+
+### Added
+- **Security Testing Tools**: New development dependencies for security testing
+  - `proptest = "1.9"` - Property-based testing framework for generating test cases
+  - Added `.cargo/config.toml` with kani and miri configuration
+  - Comprehensive test coverage for all security-critical validation functions
+
+### Technical Details
+- **Security Improvements Summary**:
+  - **Addresses OWASP A03:2021 – Injection**: XML/JSON/Path injection prevention with strict validation
+  - **Addresses OWASP A04:2021 – Insecure Design**: Defense in depth with multiple validation layers
+  - **Addresses OWASP A05:2021 – Security Misconfiguration**: Secure defaults and proper error handling
+  - **Addresses OWASP A01:2021 – Broken Access Control**: Enhanced input validation prevents bypasses
+- **Testing Coverage**:
+  - 1000+ property-based test cases generated per validation function
+  - Formal proofs for critical security properties using Kani
+  - Memory safety validation using Miri for all validation code
+  - All existing unit tests continue to pass with enhanced security
+
+- **Files Modified**:
+  - Core validation: `src/validation.rs`, `src/json_validator.rs`
+  - API modules: `src/client.rs`, `src/findings.rs`, `src/identity.rs`, `src/pipeline.rs`, `src/policy.rs`, `src/reporting.rs`, `src/sandbox.rs`, `src/scan.rs`
+  - Build configuration: `Cargo.toml` (version bump to 0.7.5), `Cargo.lock` (updated dependencies)
+  - Testing infrastructure: `.cargo/config.toml` (kani/miri configuration)
+
 ## [0.7.4] - 2025-11-12
 
 ### Added

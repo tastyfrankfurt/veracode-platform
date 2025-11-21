@@ -33,6 +33,8 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - ⚡ **Performance Optimized** - Advanced memory allocation optimizations for high-throughput applications
 - 🔒 **Debug Safety** - All sensitive credentials show `[REDACTED]` in debug output
 - 🧪 **Comprehensive Testing** - Extensive test coverage including security measures
+- 🛡️ **Security Hardening** - OWASP Top 10 protections with JSON depth validation, error sanitization, and input validation
+- 🔬 **Advanced Security Testing** - Property-based testing with proptest, formal verification with Kani, and memory safety validation with Miri
 
 ## 🚀 Quick Start
 
@@ -40,7 +42,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.7.1"
+veracode-platform = "0.7.5"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -850,6 +852,116 @@ All regional variants are supported with automatic endpoint resolution:
 
 ## 🔐 Security Features
 
+### Security Hardening (v0.7.5)
+
+The library implements comprehensive security hardening to protect against OWASP Top 10 vulnerabilities:
+
+#### JSON Depth Validation (DoS Prevention)
+Prevents stack overflow attacks from maliciously nested JSON structures:
+
+```rust
+// Automatically applied to all JSON parsing operations
+// MAX_JSON_DEPTH = 64 levels prevents stack exhaustion
+let apps = client.get_all_applications().await?; // Protected
+let findings = client.findings_api().get_all_findings(&query).await?; // Protected
+```
+
+#### Error Message Sanitization (Information Disclosure Prevention)
+All error messages are sanitized to prevent leaking sensitive server information:
+
+```rust
+// Internal errors are logged server-side for debugging
+// Generic safe messages are returned to clients
+match client.get_application(query).await {
+    Ok(app) => println!("Found: {}", app.name),
+    Err(e) => {
+        // User sees: "Request failed" or "Invalid input"
+        // Server logs contain full error details for debugging
+        eprintln!("Error: {}", e);
+    }
+}
+```
+
+**Protected Information:**
+- Stack traces and exception details
+- Internal file paths and directory structures
+- Database connection strings and query details
+- Internal state and configuration values
+- Server version and implementation details
+
+#### Input Validation & Injection Prevention
+Comprehensive validation across all APIs:
+
+```rust
+use veracode_platform::validation::*;
+
+// XML validation prevents XXE and injection attacks
+validate_xml_content(&xml_data)?;
+
+// Path validation prevents directory traversal
+validate_file_path(&user_provided_path)?;
+
+// JSON depth validation prevents DoS
+validate_json_depth(&json_value)?;
+
+// URL validation with strict format checking
+validate_url(&user_url)?;
+```
+
+**Protection Against:**
+- XML External Entity (XXE) attacks
+- XML injection attacks
+- Path traversal attacks (../, ..\, etc.)
+- JSON depth bomb attacks
+- URL manipulation attacks
+
+### Advanced Security Testing
+
+The library includes comprehensive security testing using industry-standard tools:
+
+#### Property-Based Testing with Proptest
+Generates thousands of test cases to find edge cases:
+
+```bash
+# Run property-based security tests
+cargo test proptest
+
+# Example tests:
+# - proptest_url_validation: 1000+ random URL tests
+# - proptest_path_validation: Fuzzing for path traversal
+# - proptest_xml_security: XXE and injection prevention
+# - proptest_json_depth: Nested structure validation
+```
+
+#### Formal Verification with Kani
+Proves security properties hold for all possible inputs:
+
+```bash
+# Run formal verification (requires nightly + kani)
+cargo +nightly kani --harness verify_region_url_construction
+cargo +nightly kani --harness verify_sanitize_error_safety
+cargo +nightly kani --harness verify_json_depth_validation
+
+# Kani uses symbolic execution to mathematically prove:
+# - URL construction is always valid for all regions
+# - Error sanitization never panics
+# - JSON depth validation handles all edge cases
+```
+
+#### Memory Safety Testing with Miri
+Detects undefined behavior and memory safety issues:
+
+```bash
+# Run Miri tests (requires nightly + miri)
+cargo +nightly miri test validation::proptest_security
+
+# Miri validates:
+# - No undefined behavior in validation code
+# - Proper UTF-8 boundary handling in string operations
+# - No data races in concurrent code
+# - Memory safety in all edge cases
+```
+
 ### Secure Credential Handling
 
 All API credentials are automatically secured to prevent accidental exposure:
@@ -1043,7 +1155,35 @@ cargo test -- --nocapture
 
 # Run specific test module
 cargo test --test applications_api
+
+# Run security-specific tests
+cargo test proptest       # Property-based security tests
+cargo test validation     # Validation security tests
 ```
+
+### Advanced Security Testing
+
+```bash
+# Property-based testing (generates 1000+ test cases per function)
+cargo test proptest_url_validation
+cargo test proptest_path_validation
+cargo test proptest_xml_security
+cargo test proptest_json_depth
+
+# Formal verification with Kani (requires: cargo install --locked kani-verifier)
+cargo +nightly kani --harness verify_region_url_construction
+cargo +nightly kani --harness verify_sanitize_error_safety
+cargo +nightly kani --harness verify_json_depth_validation
+
+# Memory safety testing with Miri (requires: rustup +nightly component add miri)
+cargo +nightly miri test validation::proptest_security
+cargo +nightly miri test json_validator
+```
+
+**Testing Tools:**
+- **Proptest**: Generates thousands of random test inputs to find edge cases and security vulnerabilities
+- **Kani**: Formal verification tool that mathematically proves code properties using symbolic execution
+- **Miri**: Rust interpreter that detects undefined behavior and memory safety violations
 
 Note: Integration tests require valid Veracode API credentials and may create/modify resources in your Veracode account.
 
