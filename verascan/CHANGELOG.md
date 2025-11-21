@@ -5,6 +5,18 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] - 2025-11-21
+
+### Changed
+- **veracode-platform Dependency Update**: Updated to version 0.7.5 for comprehensive security hardening
+  - **Enhanced Security**: Benefits from security hardening across all API modules
+  - **Improved Testing**: Leverages comprehensive security testing with proptest, miri, and kani
+  - **Better Reliability**: Improved error handling and input validation throughout the platform
+  - **Modified Files**: `Cargo.toml`
+
+### Dependencies
+- Updated `veracode-platform` dependency from 0.7.4 to 0.7.5
+
 ## [0.6.3] - 2025-11-12
 
 ### Changed
