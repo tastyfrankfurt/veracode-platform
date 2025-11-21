@@ -222,6 +222,7 @@ jobs:
       with:
         toolchain: stable
         override: true
+        components: audit, auditable
 
     - name: Add target
       if: steps.check_package.outputs.skip != 'true'
@@ -241,7 +242,7 @@ jobs:
 
     - name: Build release binary
       if: steps.check_package.outputs.skip != 'true'
-      run: cargo build --release --target ${{ matrix.target }} -p ${{ matrix.package }}
+      run: cargo auditable build --release --target ${{ matrix.target }} -p ${{ matrix.package }}
 
     - name: Create zip archive Windows
       if: matrix.os == 'windows-latest' && steps.check_package.outputs.skip != 'true'

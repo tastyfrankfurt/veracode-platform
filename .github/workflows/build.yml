@@ -50,7 +50,7 @@ jobs:
       with:
         toolchain: stable
         override: true
-        components: rustfmt, clippy
+        components: rustfmt, clippy, audit, auditable
         
     - name: Add target
       run: rustup target add ${{ matrix.target }}
