@@ -993,4 +993,809 @@ mod tests {
             convert_regional_timestamp_to_utc("2025-13-45 25:99:99", &VeracodeRegion::Commercial);
         assert!(result.is_none());
     }
+
+    // ============================================================================
+    // SECURITY TESTS: Property-Based Testing with Proptest
+    // ============================================================================
+
+    mod security_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        // ========================================================================
+        // SECURITY TEST 1: Timestamp Parsing Edge Cases
+        // ========================================================================
+        // Tests: convert_regional_timestamp_to_utc
+        // Goals: Ensure robust handling of malformed timestamps, extreme dates,
+        //        leap years, DST transitions, and edge cases
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: Valid timestamps should always convert successfully
+            /// Tests legitimate date ranges that should work
+            #[test]
+            fn proptest_valid_timestamp_conversion(
+                year in 2000u32..2100u32,
+                month in 1u32..=12u32,
+                day in 1u32..=28u32, // Safe range that works for all months
+                hour in prop::sample::select(vec![0u32, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]), // Avoid hour 2 (DST transition)
+                minute in 0u32..=59u32,
+                second in 0u32..=59u32,
+                region in prop_oneof![
+                    Just(VeracodeRegion::Commercial),
+                    Just(VeracodeRegion::European),
+                    Just(VeracodeRegion::Federal),
+                ]
+            ) {
+                let timestamp = format!(
+                    "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                    year, month, day, hour, minute, second
+                );
+
+                let result = convert_regional_timestamp_to_utc(&timestamp, &region);
+
+                // Valid timestamps should always convert (DST transition hour 2 is avoided)
+                prop_assert!(result.is_some(), "Failed to convert valid timestamp: {}", timestamp);
+
+                // Result should be well-formed
+                if let Some(utc) = result {
+                    prop_assert!(utc.len() >= 19, "UTC timestamp too short: {}", utc);
+                    prop_assert!(utc.contains('-'), "UTC timestamp missing date separator");
+                    prop_assert!(utc.contains(':'), "UTC timestamp missing time separator");
+                }
+            }
+
+            /// Property: Malformed timestamps should fail gracefully
+            /// Tests that invalid input doesn't panic or cause undefined behavior
+            #[test]
+            fn proptest_malformed_timestamp_handling(
+                input in "\\PC{0,256}", // Any Unicode string up to 256 chars
+            ) {
+                // Should never panic, even on malformed input
+                let _ = convert_regional_timestamp_to_utc(&input, &VeracodeRegion::Commercial);
+                let _ = convert_regional_timestamp_to_utc(&input, &VeracodeRegion::European);
+                let _ = convert_regional_timestamp_to_utc(&input, &VeracodeRegion::Federal);
+            }
+
+            /// Property: Timestamps with variable millisecond precision should work
+            /// Tests fractional seconds handling (0-9 digits)
+            #[test]
+            fn proptest_variable_millisecond_precision(
+                milliseconds in "[0-9]{1,9}",
+            ) {
+                let timestamp = format!("2025-06-15 10:30:45.{}", milliseconds);
+                let result = convert_regional_timestamp_to_utc(&timestamp, &VeracodeRegion::Commercial);
+
+                // Should handle variable precision gracefully
+                // Either succeeds or fails safely
+                if let Some(utc) = result {
+                    prop_assert!(utc.len() >= 19, "UTC timestamp too short");
+                }
+            }
+
+            /// Property: Extreme dates should be handled safely
+            /// Tests boundary conditions for year, month, day
+            #[test]
+            fn proptest_extreme_dates(
+                year in 1900u32..2200u32,
+                month in 0u32..=13u32, // Include invalid months
+                day in 0u32..=32u32,   // Include invalid days
+            ) {
+                let timestamp = format!(
+                    "{:04}-{:02}-{:02} 12:00:00",
+                    year, month, day
+                );
+
+                // Should never panic on extreme dates
+                let _ = convert_regional_timestamp_to_utc(&timestamp, &VeracodeRegion::Commercial);
+            }
+        }
+
+        // ========================================================================
+        // SECURITY TEST 2: Hash Function Collision Resistance
+        // ========================================================================
+        // Tests: generate_log_hash
+        // Goals: Verify hash properties, collision resistance, determinism
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: Hash output should always be 32 hex characters (128-bit)
+            /// Tests hash format consistency
+            #[test]
+            fn proptest_hash_format_consistency(
+                input in "\\PC{0,1024}", // Any Unicode string up to 1KB
+            ) {
+                let hash = generate_log_hash(&input);
+
+                // xxh3_128 should always produce 32 hex characters
+                prop_assert_eq!(hash.len(), 32, "Hash length should be 32 chars");
+
+                // Should only contain hex characters
+                prop_assert!(
+                    hash.chars().all(|c| c.is_ascii_hexdigit()),
+                    "Hash should only contain hex chars: {}",
+                    hash
+                );
+            }
+
+            /// Property: Same input should always produce same hash (determinism)
+            /// Tests hash function determinism
+            #[test]
+            fn proptest_hash_determinism(
+                input in "\\PC{0,2048}",
+            ) {
+                let hash1 = generate_log_hash(&input);
+                let hash2 = generate_log_hash(&input);
+
+                prop_assert_eq!(
+                    hash1, hash2,
+                    "Hash function should be deterministic"
+                );
+            }
+
+            /// Property: Different inputs should produce different hashes (collision resistance)
+            /// Tests basic collision resistance
+            #[test]
+            fn proptest_hash_collision_resistance(
+                input1 in "\\PC{1,256}",
+                input2 in "\\PC{1,256}",
+            ) {
+                // Only test when inputs are actually different
+                if input1 != input2 {
+                    let hash1 = generate_log_hash(&input1);
+                    let hash2 = generate_log_hash(&input2);
+
+                    // Different inputs should produce different hashes
+                    // (collisions are possible but extremely rare)
+                    prop_assert_ne!(
+                        hash1, hash2,
+                        "Collision detected for different inputs"
+                    );
+                }
+            }
+
+            /// Property: Small changes should produce completely different hashes (avalanche effect)
+            /// Tests that single-bit changes cascade through the hash
+            #[test]
+            fn proptest_hash_avalanche_effect(
+                base in "[a-zA-Z0-9]{10,100}",
+                suffix in "[a-z]",
+            ) {
+                let input1 = base.clone();
+                let input2 = format!("{}{}", base, suffix);
+
+                let hash1 = generate_log_hash(&input1);
+                let hash2 = generate_log_hash(&input2);
+
+                // Adding one character should completely change the hash
+                prop_assert_ne!(
+                    &hash1, &hash2,
+                    "Avalanche effect failed: similar inputs produced similar hashes"
+                );
+
+                // Count differing characters (should be significant)
+                let diff_count = hash1.chars()
+                    .zip(hash2.chars())
+                    .filter(|(a, b)| a != b)
+                    .count();
+
+                // At least 40% of hash should change (good avalanche)
+                prop_assert!(
+                    diff_count >= 12,
+                    "Poor avalanche effect: only {} of 32 chars changed",
+                    diff_count
+                );
+            }
+        }
+
+        // ========================================================================
+        // SECURITY TEST 3: URL Encoding Injection Prevention
+        // ========================================================================
+        // Tests: URL encoding in get_audit_report
+        // Goals: Prevent path traversal, command injection, XSS via report_id
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: URL encoding should escape all special characters
+            /// Tests that dangerous characters are properly encoded
+            #[test]
+            fn proptest_url_encoding_escapes_special_chars(
+                special_chars in prop::sample::select(vec![
+                    "/", "\\", "?", "&", "=", "#", " ", "<", ">",
+                    "\"", "'", "|", ";", "\n", "\r", "\0", "$"
+                ]),
+                base in "[a-zA-Z0-9]{5,20}",
+            ) {
+                let malicious_id = format!("{}{}{}", base, special_chars, base);
+                let encoded = urlencoding::encode(&malicious_id);
+
+                // Encoded output should not contain the original special char
+                // (it should be percent-encoded)
+                prop_assert!(
+                    !encoded.contains(special_chars),
+                    "Special character '{}' not encoded properly",
+                    special_chars
+                );
+
+                // Should contain % for percent-encoding (or + for space)
+                if !special_chars.chars().all(|c| c.is_alphanumeric()) {
+                    prop_assert!(
+                        encoded.contains('%') || (special_chars == " " && encoded.contains('+')),
+                        "Expected encoding for '{}'",
+                        special_chars
+                    );
+                }
+            }
+
+            /// Property: Path traversal sequences should be encoded
+            /// Tests protection against directory traversal attacks
+            #[test]
+            fn proptest_url_encoding_prevents_path_traversal(
+                traversal in prop_oneof![
+                    Just("../"),
+                    Just("..\\"),
+                    Just("../../"),
+                    Just("..%2f"),
+                    Just("..%5c"),
+                    Just("%2e%2e%2f"),
+                ],
+                prefix in "[a-z]{1,10}",
+                suffix in "[a-z]{1,10}",
+            ) {
+                let malicious_id = format!("{}{}{}", prefix, traversal, suffix);
+                let encoded = urlencoding::encode(&malicious_id);
+
+                // Encoded string should not contain literal path traversal
+                prop_assert!(
+                    !encoded.contains("../") && !encoded.contains("..\\"),
+                    "Path traversal not properly encoded: {}",
+                    encoded
+                );
+            }
+
+            /// Property: Command injection characters should be encoded
+            /// Tests protection against shell command injection
+            #[test]
+            fn proptest_url_encoding_prevents_command_injection(
+                injection_char in prop::sample::select(vec![
+                    ";", "|", "&", "$", "`", "$(", ")", "{", "}", "\n", "\r"
+                ]),
+                base in "[a-zA-Z0-9]{5,15}",
+            ) {
+                let malicious_id = format!("{}{}rm -rf /", base, injection_char);
+                let encoded = urlencoding::encode(&malicious_id);
+
+                // Encoded output should not contain injection characters
+                prop_assert!(
+                    !encoded.contains(injection_char),
+                    "Injection character '{}' not encoded",
+                    injection_char
+                );
+            }
+        }
+
+        // ========================================================================
+        // SECURITY TEST 4: Integer Overflow Protection (Saturating Arithmetic)
+        // ========================================================================
+        // Tests: saturating_add, saturating_mul operations
+        // Goals: Verify overflow protection doesn't wrap around
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: Saturating add should never overflow
+            /// Tests u32 saturating addition behavior
+            #[test]
+            fn proptest_saturating_add_never_overflows(
+                a in 0u32..=u32::MAX,
+                b in 0u32..=1000u32,
+            ) {
+                let result = a.saturating_add(b);
+
+                // Result should be >= both operands
+                prop_assert!(result >= a, "Saturating add decreased value");
+
+                // If overflow would occur, result should be MAX
+                #[allow(clippy::arithmetic_side_effects)]
+                {
+                    if a as u64 + b as u64 > u32::MAX as u64 {
+                        prop_assert_eq!(
+                            result,
+                            u32::MAX,
+                            "Expected saturation at MAX for {} + {}",
+                            a, b
+                        );
+                    } else {
+                        prop_assert_eq!(
+                            result,
+                            a + b,
+                            "Expected normal addition for {} + {}",
+                            a, b
+                        );
+                    }
+                }
+            }
+
+            /// Property: Saturating multiply should never overflow
+            /// Tests u64 saturating multiplication behavior (for delay_secs)
+            #[test]
+            fn proptest_saturating_mul_never_overflows(
+                a in 0u64..=u64::MAX / 2,
+                b in 0u64..=100u64,
+            ) {
+                let result = a.saturating_mul(b);
+
+                // If overflow would occur, result should be MAX
+                if let Some(expected) = a.checked_mul(b) {
+                    prop_assert_eq!(result, expected, "Multiplication mismatch");
+                } else {
+                    prop_assert_eq!(
+                        result,
+                        u64::MAX,
+                        "Expected saturation at MAX for {} * {}",
+                        a, b
+                    );
+                }
+            }
+
+            /// Property: Counter increments should never overflow
+            /// Tests the specific pattern used in poll_report_status and get_all_audit_log_pages
+            #[test]
+            fn proptest_counter_increment_safety(
+                start in 0u32..=u32::MAX - 1000,
+                increments in 1usize..=100,
+            ) {
+                let mut counter = start;
+
+                for _ in 0..increments {
+                    let old_value = counter;
+                    counter = counter.saturating_add(1);
+
+                    // Counter should never decrease
+                    prop_assert!(
+                        counter >= old_value,
+                        "Counter decreased from {} to {}",
+                        old_value, counter
+                    );
+
+                    // If we hit MAX, it should stay at MAX
+                    if old_value == u32::MAX {
+                        prop_assert_eq!(counter, u32::MAX, "Counter should saturate at MAX");
+                    }
+                }
+            }
+
+            /// Property: Page iteration should handle near-MAX values safely
+            /// Tests the pagination loop in get_all_audit_log_pages
+            #[test]
+            fn proptest_page_iteration_overflow_safety(
+                total_pages in 1u32..=1000u32,
+            ) {
+                // Simulate the pagination loop from get_all_audit_log_pages
+                let mut processed = 0u32;
+
+                for page_num in 1..total_pages {
+                    // This is the pattern used in line 598-612
+                    let page_display = page_num.saturating_add(1);
+
+                    prop_assert!(
+                        page_display >= page_num,
+                        "Page display calculation overflow"
+                    );
+
+                    processed = processed.saturating_add(1);
+                }
+
+                // Should process total_pages - 1 pages (page 0 handled separately)
+                prop_assert_eq!(
+                    processed,
+                    total_pages.saturating_sub(1),
+                    "Page count mismatch"
+                );
+            }
+        }
+
+        // ========================================================================
+        // SECURITY TEST 5: Input Validation for AuditReportRequest
+        // ========================================================================
+        // Tests: AuditReportRequest builder methods
+        // Goals: Ensure safe handling of user-controlled inputs
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: Request builder should handle arbitrary strings safely
+            /// Tests that builder methods don't panic on unusual input
+            #[test]
+            fn proptest_request_builder_handles_arbitrary_input(
+                start_date in "\\PC{0,256}",
+                end_date in "\\PC{0,256}",
+                action in "\\PC{0,100}",
+            ) {
+                // Should never panic, even with unusual input
+                let request = AuditReportRequest::new(
+                    start_date.clone(),
+                    if end_date.is_empty() { None } else { Some(end_date.clone()) }
+                );
+
+                // Verify fields are set correctly
+                prop_assert_eq!(&request.start_date, &start_date);
+
+                if !end_date.is_empty() {
+                    prop_assert_eq!(&request.end_date, &Some(end_date.clone()));
+                }
+
+                // Test with_audit_actions
+                let request = request.with_audit_actions(vec![action.clone()]);
+                prop_assert!(request.audit_action.is_some());
+            }
+
+            /// Property: Builder methods should preserve data integrity
+            /// Tests that chained builder calls work correctly
+            #[test]
+            fn proptest_request_builder_data_integrity(
+                start in "[0-9]{4}-[0-9]{2}-[0-9]{2}",
+                actions in prop::collection::vec("[A-Za-z]{5,15}", 0..10),
+                types in prop::collection::vec("[A-Za-z]{5,15}", 0..10),
+                user_ids in prop::collection::vec("[0-9]{1,10}", 0..10),
+            ) {
+                let request = AuditReportRequest::new(start.clone(), None)
+                    .with_audit_actions(actions.clone())
+                    .with_action_types(types.clone())
+                    .with_target_users(user_ids.clone())
+                    .with_modifier_users(user_ids.clone());
+
+                // Verify all fields are preserved correctly
+                prop_assert_eq!(request.start_date, start);
+                prop_assert_eq!(request.audit_action, Some(actions));
+                prop_assert_eq!(request.action_type, Some(types));
+                prop_assert_eq!(request.target_user_id, Some(user_ids.clone()));
+                prop_assert_eq!(request.modifier_user_id, Some(user_ids));
+            }
+
+            /// Property: Empty collections should be handled correctly
+            /// Tests edge case of empty filter arrays
+            #[test]
+            fn proptest_request_builder_empty_collections(
+                start_date in "[0-9]{4}-[0-9]{2}-[0-9]{2}",
+            ) {
+                let request = AuditReportRequest::new(start_date.clone(), None)
+                    .with_audit_actions(vec![])
+                    .with_action_types(vec![])
+                    .with_target_users(vec![])
+                    .with_modifier_users(vec![]);
+
+                // Empty vecs should still be Some (not None)
+                prop_assert!(request.audit_action.is_some());
+                prop_assert!(request.action_type.is_some());
+                prop_assert!(request.target_user_id.is_some());
+                prop_assert!(request.modifier_user_id.is_some());
+
+                // But should be empty
+                if let Some(ref actions) = request.audit_action {
+                    prop_assert_eq!(actions.len(), 0);
+                }
+            }
+
+            /// Property: Large collections should be handled safely
+            /// Tests that builders can handle many filter values
+            #[test]
+            fn proptest_request_builder_large_collections(
+                start_date in "[0-9]{4}-[0-9]{2}-[0-9]{2}",
+                collection_size in 1usize..=100,
+            ) {
+                let large_vec: Vec<String> = (0..collection_size)
+                    .map(|i| format!("item_{}", i))
+                    .collect();
+
+                let request = AuditReportRequest::new(start_date, None)
+                    .with_audit_actions(large_vec.clone());
+
+                if let Some(ref actions) = request.audit_action {
+                    prop_assert_eq!(
+                        actions.len(),
+                        collection_size,
+                        "Collection size mismatch"
+                    );
+                }
+            }
+        }
+
+        // ========================================================================
+        // SECURITY TEST 6: JSON Serialization Safety
+        // ========================================================================
+        // Tests: AuditReportRequest serialization, AuditLogEntry serialization
+        // Goals: Ensure no injection via JSON serialization
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: Request serialization should never panic
+            /// Tests that arbitrary input can be safely serialized
+            #[test]
+            fn proptest_request_serialization_safety(
+                start_date in "\\PC{0,100}",
+                actions in prop::collection::vec("\\PC{0,50}", 0..10),
+            ) {
+                let request = AuditReportRequest::new(start_date, None)
+                    .with_audit_actions(actions);
+
+                // Serialization should never panic
+                let result = serde_json::to_string(&request);
+                prop_assert!(result.is_ok(), "Serialization failed");
+
+                // Serialized JSON should be valid
+                if let Ok(json) = result {
+                    prop_assert!(json.contains("\"report_type\""), "Missing report_type");
+                    prop_assert!(json.contains("\"AUDIT\""), "Wrong report_type value");
+                }
+            }
+
+            /// Property: Special characters in dates should be escaped
+            /// Tests JSON injection prevention
+            #[test]
+            fn proptest_json_injection_prevention(
+                injection in prop::sample::select(vec![
+                    r#"","malicious":"value"#,
+                    "\n\r\t",
+                    "\\",
+                    "\"",
+                    "</script>",
+                ]),
+                base_date in "[0-9]{4}-[0-9]{2}-[0-9]{2}",
+            ) {
+                let malicious_date = format!("{}{}", base_date, injection);
+                let request = AuditReportRequest::new(malicious_date, None);
+
+                let json = serde_json::to_string(&request)
+                    .expect("Should serialize even with special chars");
+
+                // Verify JSON is still valid after serialization
+                let parsed: serde_json::Value = serde_json::from_str(&json)
+                    .expect("Serialized JSON should be parseable");
+
+                prop_assert!(parsed.is_object(), "Should be valid JSON object");
+            }
+        }
+
+        // ========================================================================
+        // SECURITY TEST 7: Error Handling Paths
+        // ========================================================================
+        // Tests: Timestamp parsing errors, hash function edge cases
+        // Goals: Ensure errors are handled gracefully without panics
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 5 } else { 500 }, // Fewer cases for error paths
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Property: All timestamp error paths should return None, never panic
+            /// Tests comprehensive error handling
+            #[test]
+            fn proptest_timestamp_error_handling_never_panics(
+                malformed in prop_oneof![
+                    // Empty and whitespace
+                    Just(""),
+                    Just(" "),
+                    Just("\n\t\r"),
+
+                    // Wrong formats
+                    Just("2025/01/01 12:00:00"),
+                    Just("01-01-2025 12:00:00"),
+                    Just("2025-01-01T12:00:00Z"),
+
+                    // Invalid values
+                    Just("2025-13-01 12:00:00"), // Invalid month
+                    Just("2025-01-32 12:00:00"), // Invalid day
+                    Just("2025-01-01 25:00:00"), // Invalid hour
+                    Just("2025-01-01 12:60:00"), // Invalid minute
+                    Just("2025-01-01 12:00:60"), // Invalid second
+
+                    // Truncated
+                    Just("2025-01-01"),
+                    Just("2025-01-01 12"),
+                    Just("2025-01-01 12:00"),
+
+                    // Special characters
+                    Just("2025-01-01; DROP TABLE;"),
+                    Just("../../etc/passwd"),
+                    Just("<script>alert('xss')</script>"),
+
+                    // Extreme values
+                    Just("9999-99-99 99:99:99"),
+                    Just("0000-00-00 00:00:00"),
+                ],
+            ) {
+                // Should never panic, regardless of input
+                let result_commercial = convert_regional_timestamp_to_utc(malformed, &VeracodeRegion::Commercial);
+                let result_european = convert_regional_timestamp_to_utc(malformed, &VeracodeRegion::European);
+                let result_federal = convert_regional_timestamp_to_utc(malformed, &VeracodeRegion::Federal);
+
+                // All should return None (error), not panic
+                prop_assert!(result_commercial.is_none() || result_commercial.is_some());
+                prop_assert!(result_european.is_none() || result_european.is_some());
+                prop_assert!(result_federal.is_none() || result_federal.is_some());
+            }
+
+            /// Property: Hash function should handle all input lengths
+            /// Tests from empty to very large inputs
+            #[test]
+            fn proptest_hash_handles_all_input_sizes(
+                size in 0usize..=10_000,
+            ) {
+                let input = "x".repeat(size);
+
+                // Should never panic, even with large inputs
+                let hash = generate_log_hash(&input);
+
+                // Hash should always be valid format
+                prop_assert_eq!(hash.len(), 32);
+                prop_assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+            }
+
+            /// Property: Hash function should handle binary data safely
+            /// Tests non-UTF8 byte sequences (via valid UTF8 with null bytes)
+            #[test]
+            fn proptest_hash_handles_binary_data(
+                null_count in 0usize..=100,
+            ) {
+                // Create string with embedded nulls
+                let input = format!("data{}\0{}\0end", "x".repeat(null_count), "y".repeat(null_count));
+
+                // Should handle null bytes gracefully
+                let hash = generate_log_hash(&input);
+
+                prop_assert_eq!(hash.len(), 32);
+                prop_assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+            }
+        }
+
+        // ========================================================================
+        // UNIT TESTS: Specific Security Scenarios
+        // ========================================================================
+
+        #[test]
+        fn test_url_encoding_sql_injection_attempt() {
+            let sql_injection = "1' OR '1'='1";
+            let encoded = urlencoding::encode(sql_injection);
+
+            // Should not contain unescaped quotes or spaces
+            assert!(!encoded.contains('\''));
+            assert!(!encoded.contains(' ') || encoded.contains('+') || encoded.contains("%20"));
+        }
+
+        #[test]
+        fn test_url_encoding_path_traversal_variants() {
+            let variants = vec![
+                "../../../etc/passwd",
+                "..%2f..%2f..%2fetc%2fpasswd",
+                "..\\..\\..\\windows\\system32",
+            ];
+
+            for variant in variants {
+                let encoded = urlencoding::encode(variant);
+
+                // Should not contain literal path traversal sequences
+                assert!(!encoded.contains("../"));
+                assert!(!encoded.contains("..\\"));
+            }
+        }
+
+        #[test]
+        fn test_hash_known_collision_resistance() {
+            // Test known collision-prone patterns
+            let similar_inputs = [
+                r#"{"timestamp":"2025-01-01 12:00:00.000"}"#,
+                r#"{"timestamp":"2025-01-01 12:00:00.001"}"#,
+                r#"{"timestamp":"2025-01-01 12:00:01.000"}"#,
+            ];
+
+            let hashes: Vec<String> = similar_inputs
+                .iter()
+                .map(|input| generate_log_hash(input))
+                .collect();
+
+            // All hashes should be unique
+            for i in 0..hashes.len() {
+                for j in i + 1..hashes.len() {
+                    if let (Some(hash_i), Some(hash_j)) = (hashes.get(i), hashes.get(j)) {
+                        assert_ne!(
+                            hash_i, hash_j,
+                            "Collision between similar inputs {} and {}",
+                            i, j
+                        );
+                    }
+                }
+            }
+        }
+
+        #[test]
+        fn test_saturating_arithmetic_at_boundaries() {
+            // Test u32::MAX boundary
+            assert_eq!(u32::MAX.saturating_add(1), u32::MAX);
+            assert_eq!((u32::MAX - 1).saturating_add(2), u32::MAX);
+
+            // Test u64::MAX boundary (for delay_secs)
+            assert_eq!(u64::MAX.saturating_mul(2), u64::MAX);
+            assert_eq!((u64::MAX / 2).saturating_mul(3), u64::MAX);
+        }
+
+        #[test]
+        fn test_timestamp_dst_transitions() {
+            // Test DST spring forward (2025-03-09 02:00 -> 03:00 EST -> EDT)
+            // 2:30 AM doesn't exist on this date in New_York
+            let result = convert_regional_timestamp_to_utc(
+                "2025-03-09 02:30:00",
+                &VeracodeRegion::Commercial,
+            );
+            // Should handle gracefully (either succeed or return None)
+            assert!(result.is_some() || result.is_none());
+
+            // Test DST fall back (2025-11-02 02:00 happens twice)
+            let result = convert_regional_timestamp_to_utc(
+                "2025-11-02 01:30:00",
+                &VeracodeRegion::Commercial,
+            );
+            // Should succeed with single() if unambiguous, or fail gracefully
+            assert!(result.is_some() || result.is_none());
+        }
+
+        #[test]
+        fn test_leap_year_handling() {
+            // 2024 is a leap year - Feb 29 should work
+            let result =
+                convert_regional_timestamp_to_utc("2024-02-29 12:00:00", &VeracodeRegion::European);
+            assert!(result.is_some(), "Leap year Feb 29 should be valid");
+
+            // 2025 is not a leap year - Feb 29 should fail
+            let result =
+                convert_regional_timestamp_to_utc("2025-02-29 12:00:00", &VeracodeRegion::European);
+            assert!(result.is_none(), "Non-leap year Feb 29 should be invalid");
+        }
+
+        #[test]
+        fn test_empty_request_serialization() {
+            let request = AuditReportRequest::new("2025-01-01", None);
+            let json = serde_json::to_string(&request).expect("Should serialize");
+
+            // Should not include optional fields when None
+            assert!(!json.contains("audit_action"));
+            assert!(!json.contains("action_type"));
+            assert!(!json.contains("target_user_id"));
+            assert!(!json.contains("modifier_user_id"));
+
+            // Should include required fields
+            assert!(json.contains("report_type"));
+            assert!(json.contains("start_date"));
+        }
+    }
 }

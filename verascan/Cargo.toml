@@ -62,7 +62,7 @@ vaultrs = "0.7"
 backon = "1.3"
 
 [dev-dependencies]
-jsonschema = "0.33.0"
+jsonschema = "0.37.1"
 wiremock = "0.6"
 tokio-test = "0.4"
 

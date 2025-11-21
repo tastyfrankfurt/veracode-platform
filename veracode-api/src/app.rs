@@ -2370,3 +2370,356 @@ mod tests {
         assert!(parsed.profile.business_owners.is_some());
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test-only hardcoded regexes are safe
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Strategy for valid KMS aliases
+    fn valid_kms_alias_strategy() -> impl Strategy<Value = String> {
+        // Valid characters: alphanumeric, hyphen, underscore, forward slash
+        // Length: 8-256 chars including "alias/" prefix
+        // Must not start/end with "aws"
+        prop::string::string_regex("[a-zA-Z0-9_/-]{2,250}")
+            .expect("valid regex pattern for KMS alias")
+            .prop_map(|s| format!("alias/{}", s))
+            .prop_filter("Cannot start with aws", |s| {
+                !s.strip_prefix("alias/").unwrap_or("").starts_with("aws")
+            })
+            .prop_filter("Cannot end with aws", |s| {
+                !s.strip_prefix("alias/").unwrap_or("").ends_with("aws")
+            })
+    }
+
+    fn invalid_kms_alias_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Missing prefix
+            prop::string::string_regex("[a-zA-Z0-9_/-]{5,20}")
+                .expect("valid regex for missing prefix test"),
+            // Wrong prefix
+            Just("arn:aws:kms:us-east-1:123456789:alias/test".to_string()),
+            // AWS reserved
+            Just("alias/aws-managed".to_string()),
+            Just("alias/test-aws".to_string()),
+            // Empty after prefix
+            Just("alias/".to_string()),
+            // Too short
+            Just("alias/a".to_string()),
+            // Invalid characters
+            Just("alias/test@key".to_string()),
+            Just("alias/test key".to_string()),
+            Just("alias/test.key".to_string()),
+            // Too long
+            prop::string::string_regex("[a-z]{252}")
+                .expect("valid regex for too long test")
+                .prop_map(|s| format!("alias/{}", s)),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None, // Required for Miri compatibility
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_valid_kms_aliases_accepted(alias in valid_kms_alias_strategy()) {
+            prop_assert!(validate_kms_alias(&alias).is_ok(),
+                "Valid alias rejected: {}", alias);
+        }
+
+        #[test]
+        fn proptest_invalid_kms_aliases_rejected(alias in invalid_kms_alias_strategy()) {
+            prop_assert!(validate_kms_alias(&alias).is_err(),
+                "Invalid alias accepted: {}", alias);
+        }
+
+        #[test]
+        fn proptest_kms_alias_length_bounds(
+            prefix in prop::string::string_regex("[a-zA-Z0-9_/-]{1,7}").expect("valid regex for prefix"),
+            suffix in prop::string::string_regex("[a-zA-Z0-9_/-]{251,300}").expect("valid regex for suffix")
+        ) {
+            let too_short = format!("alias/{}", prefix);
+            let too_long = format!("alias/{}", suffix);
+
+            prop_assert!(validate_kms_alias(&too_short).is_err() || too_short.len() >= 8,
+                "Too short alias not rejected");
+            prop_assert!(validate_kms_alias(&too_long).is_err(),
+                "Too long alias not rejected");
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test-only hardcoded regexes are safe
+mod query_proptests {
+    use super::*;
+    use crate::validation::encode_query_param;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None, // Required for Miri compatibility
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_query_param_no_injection(
+            value in prop::string::string_regex(".{1,100}").expect("valid regex for query param")
+        ) {
+            let encoded = encode_query_param(&value);
+
+            // Encoded value should not contain raw injection characters
+            prop_assert!(!encoded.contains('&'), "Ampersand not encoded");
+            prop_assert!(!encoded.contains('=') || value.contains('=') && encoded.contains("%3D"),
+                "Equals not encoded");
+            prop_assert!(!encoded.contains(';'), "Semicolon not encoded");
+        }
+
+        #[test]
+        fn proptest_query_param_path_traversal_encoded(
+            segments in prop::collection::vec(
+                prop::string::string_regex("[a-zA-Z0-9]{1,10}").expect("valid regex for path segments"),
+                1..5
+            )
+        ) {
+            let path_traversal = segments.join("../");
+            let encoded = encode_query_param(&path_traversal);
+
+            // Path traversal is prevented by encoding the separators, not the dots
+            // The sequence "../" becomes "..%2F" which won't be interpreted as traversal
+            prop_assert!(!encoded.contains("../"), "Path traversal sequence '../' not broken by encoding");
+            prop_assert!(!encoded.contains("..\\"), "Path traversal sequence '..\\' not broken by encoding");
+            prop_assert!(encoded.contains("%2F") || !path_traversal.contains('/'),
+                "Forward slash not encoded");
+        }
+
+        #[test]
+        fn proptest_application_query_to_params_no_key_pollution(
+            name in prop::option::of(prop::string::string_regex("[a-zA-Z0-9 &=;]{1,50}").expect("valid regex for app name")),
+            compliance in prop::option::of(Just("PASSED".to_string())),
+            page in prop::option::of(0u32..1000u32),
+            size in prop::option::of(1u32..1000u32)
+        ) {
+            let mut query = ApplicationQuery::new();
+            if let Some(n) = name {
+                query = query.with_name(&n);
+            }
+            if let Some(c) = compliance {
+                query = query.with_policy_compliance(&c);
+            }
+            query.page = page;
+            query.size = size;
+
+            let params = query.to_query_params();
+
+            // Verify each key appears at most once
+            let mut seen_keys = std::collections::HashSet::new();
+            for (key, _) in params.iter() {
+                prop_assert!(!seen_keys.contains(key),
+                    "Duplicate parameter key: {}", key);
+                seen_keys.insert(key.clone());
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test-only validation patterns are safe
+mod pagination_proptests {
+    use super::*;
+    use crate::validation::{MAX_PAGE_NUMBER, MAX_PAGE_SIZE};
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None, // Required for Miri compatibility
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_page_size_bounds_enforced(size in 0u32..u32::MAX) {
+            match validate_page_size(Some(size)) {
+                Ok(validated) => {
+                    prop_assert!(validated >= 1, "Zero page size accepted");
+                    prop_assert!(validated <= MAX_PAGE_SIZE,
+                        "Page size {} exceeds maximum {}", validated, MAX_PAGE_SIZE);
+                }
+                Err(_) => {
+                    prop_assert_eq!(size, 0, "Non-zero size rejected");
+                }
+            }
+        }
+
+        #[test]
+        fn proptest_page_number_bounds_enforced(page in 0u32..u32::MAX) {
+            let validated = validate_page_number(Some(page)).expect("page number validation should not fail");
+
+            if let Some(p) = validated {
+                prop_assert!(p <= MAX_PAGE_NUMBER,
+                    "Page number {} exceeds maximum {}", p, MAX_PAGE_NUMBER);
+            }
+        }
+
+        #[test]
+        fn proptest_application_query_normalize_safety(
+            page in prop::option::of(0u32..u32::MAX),
+            size in prop::option::of(0u32..u32::MAX)
+        ) {
+            let mut query = ApplicationQuery::new();
+            query.page = page;
+            query.size = size;
+
+            match query.normalize() {
+                Ok(normalized) => {
+                    // If normalization succeeds, bounds must be enforced
+                    if let Some(s) = normalized.size {
+                        prop_assert!((1..=MAX_PAGE_SIZE).contains(&s),
+                            "Normalized size {} out of bounds", s);
+                    }
+                    if let Some(p) = normalized.page {
+                        prop_assert!(p <= MAX_PAGE_NUMBER,
+                            "Normalized page {} exceeds maximum", p);
+                    }
+                }
+                Err(_) => {
+                    // Errors only for zero size
+                    prop_assert_eq!(size, Some(0), "Unexpected normalization error");
+                }
+            }
+        }
+    }
+}
+#[cfg(test)]
+mod miri_tests {
+    use super::*;
+
+    #[test]
+    fn miri_business_owner_debug_redaction() {
+        let owner = BusinessOwner {
+            email: Some("sensitive@example.com".to_string()),
+            name: Some("Sensitive Name".to_string()),
+        };
+
+        let debug_str = format!("{:?}", owner);
+
+        // Verify redaction occurred
+        assert!(debug_str.contains("[REDACTED]"));
+        assert!(!debug_str.contains("sensitive@example.com"));
+        assert!(!debug_str.contains("Sensitive Name"));
+    }
+
+    #[test]
+    fn miri_business_owner_none_fields() {
+        let owner = BusinessOwner {
+            email: None,
+            name: None,
+        };
+
+        // Should not panic or exhibit UB with None fields
+        let debug_str = format!("{:?}", owner);
+        assert!(debug_str.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn miri_custom_field_debug_redaction() {
+        let field = CustomField {
+            name: Some("API_KEY".to_string()),
+            value: Some("super-secret-key".to_string()),
+        };
+
+        let debug_str = format!("{:?}", field);
+
+        // Verify value is redacted but name is visible
+        assert!(debug_str.contains("API_KEY"));
+        assert!(debug_str.contains("[REDACTED]"));
+        assert!(!debug_str.contains("super-secret-key"));
+    }
+
+    #[test]
+    fn miri_custom_field_none_value() {
+        let field = CustomField {
+            name: Some("EMPTY_FIELD".to_string()),
+            value: None,
+        };
+
+        // Should not panic with None value
+        let debug_str = format!("{:?}", field);
+        assert!(debug_str.contains("EMPTY_FIELD"));
+        assert!(debug_str.contains("[REDACTED]"));
+    }
+}
+
+#[cfg(test)]
+mod miri_validation_tests {
+    use super::*;
+
+    #[test]
+    fn miri_app_name_utf8_boundaries() {
+        // Test with various UTF-8 characters
+        let emoji_name = "MyApp 🚀 Test";
+        let result = AppName::new(emoji_name);
+        assert!(result.is_ok());
+
+        // Test with combining characters
+        let combining = "Café"; // é is a combining character
+        let result = AppName::new(combining);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn miri_description_null_byte_handling() {
+        // Ensure null byte check doesn't cause UB
+        let with_null = "test\0value";
+        let result = Description::new(with_null);
+        assert!(result.is_err());
+
+        // Verify error type
+        if let Err(err) = result {
+            assert!(matches!(err, ValidationError::NullByteInDescription));
+        }
+    }
+
+    #[test]
+    fn miri_kms_alias_character_iteration() {
+        // Test character iteration doesn't violate memory safety
+        let test_cases = vec![
+            "alias/test-key",
+            "alias/test_key_2024",
+            "alias/app/prod/key",
+            "alias/UPPERCASE_KEY",
+        ];
+
+        for alias in test_cases {
+            let _ = validate_kms_alias(alias);
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test-only hardcoded regexes are safe
+mod miri_proptest {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None, // Required for Miri compatibility
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn miri_proptest_app_name_utf8_safety(
+            s in prop::string::string_regex("[\\p{L}\\p{N} ]{1,50}").expect("valid regex")
+        ) {
+            let _ = AppName::new(&s);
+            // Miri will catch any UTF-8 boundary violations
+        }
+    }
+}

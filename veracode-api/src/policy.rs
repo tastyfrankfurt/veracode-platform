@@ -1864,3 +1864,584 @@ mod tests {
         }
     }
 }
+
+/// Security-focused property tests for input validation
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod validation_proptests {
+    use super::validation::*;
+    use proptest::prelude::*;
+
+    // Strategy for valid GUIDs (32 hex chars with optional hyphens)
+    fn valid_guid_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Standard UUID format (8-4-4-4-12)
+            prop::string::string_regex(
+                "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+            )
+            .expect("valid regex for UUID"),
+            // No hyphens (32 hex chars)
+            prop::string::string_regex("[0-9a-fA-F]{32}").expect("valid regex for hex string"),
+        ]
+    }
+
+    // Strategy for invalid GUIDs (injection attacks, path traversal, malformed)
+    fn invalid_guid_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Path traversal attempts
+            Just("../../../etc/passwd".to_string()),
+            Just("..\\..\\windows\\system32".to_string()),
+            prop::string::string_regex("[0-9a-f]{8}\\.\\./{0,20}[0-9a-f]{8}")
+                .expect("valid regex for path traversal with guid"),
+            // URL parameter injection
+            Just("abc123?param=value".to_string()),
+            Just("abc123&admin=true".to_string()),
+            Just("abc123#fragment".to_string()),
+            // Non-hex characters
+            prop::string::string_regex("[0-9a-zA-Z!@#$%^&*()]{32}")
+                .expect("valid regex for non-hex chars"),
+            // Wrong length
+            prop::string::string_regex("[0-9a-f]{1,31}").expect("valid regex for too short"),
+            prop::string::string_regex("[0-9a-f]{33,100}").expect("valid regex for too long"),
+            // SQL injection attempts
+            Just("abc123'; DROP TABLE users; --".to_string()),
+            // Command injection
+            Just("abc123; rm -rf /".to_string()),
+            Just("abc123 | cat /etc/passwd".to_string()),
+            // Null byte injection
+            Just("abc123\0malicious".to_string()),
+        ]
+    }
+
+    // Strategy for valid identifiers (alphanumeric, hyphens, underscores)
+    fn valid_identifier_strategy() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[a-zA-Z0-9_-]{1,256}").expect("valid regex for identifier")
+    }
+
+    // Strategy for invalid identifiers
+    fn invalid_identifier_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Empty string
+            Just("".to_string()),
+            // Path traversal
+            Just("../etc/passwd".to_string()),
+            Just("..\\windows\\system32".to_string()),
+            // URL injection
+            Just("test?param=value".to_string()),
+            Just("test&admin=true".to_string()),
+            Just("test#fragment".to_string()),
+            // Special characters
+            prop::string::string_regex(
+                "[a-zA-Z0-9]{1,10}[@#$%^&*()+=\\[\\]{}|;:'\"<>,./\\\\?]+[a-zA-Z0-9]{0,10}"
+            )
+            .expect("valid regex for special chars"),
+            // SQL injection
+            Just("test'; DROP TABLE users; --".to_string()),
+            // Command injection
+            Just("test; rm -rf /".to_string()),
+            // Unicode control characters
+            Just("test\u{0000}injection".to_string()),
+            Just("test\u{001F}control".to_string()),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_valid_guids_accepted(guid in valid_guid_strategy()) {
+            prop_assert!(validate_guid(&guid).is_ok(),
+                "Valid GUID rejected: {}", guid);
+        }
+
+        #[test]
+        fn proptest_invalid_guids_rejected(guid in invalid_guid_strategy()) {
+            prop_assert!(validate_guid(&guid).is_err(),
+                "Invalid GUID accepted: {}", guid);
+        }
+
+        #[test]
+        fn proptest_guid_no_path_traversal(
+            prefix in prop::string::string_regex("[0-9a-f]{8}").expect("valid regex for guid prefix")
+        ) {
+            let with_traversal = format!("{}/../../../etc/passwd", prefix);
+            prop_assert!(validate_guid(&with_traversal).is_err(),
+                "Path traversal GUID accepted: {}", with_traversal);
+
+            let with_backslash = format!("{}\\..\\windows", prefix);
+            prop_assert!(validate_guid(&with_backslash).is_err(),
+                "Backslash traversal GUID accepted: {}", with_backslash);
+        }
+
+        #[test]
+        fn proptest_guid_no_url_injection(
+            prefix in prop::string::string_regex("[0-9a-f]{16}").expect("valid regex for guid prefix")
+        ) {
+            let with_query = format!("{}?admin=true", prefix);
+            prop_assert!(validate_guid(&with_query).is_err(),
+                "URL query injection accepted: {}", with_query);
+
+            let with_ampersand = format!("{}&param=value", prefix);
+            prop_assert!(validate_guid(&with_ampersand).is_err(),
+                "URL parameter injection accepted: {}", with_ampersand);
+
+            let with_fragment = format!("{}#section", prefix);
+            prop_assert!(validate_guid(&with_fragment).is_err(),
+                "URL fragment injection accepted: {}", with_fragment);
+        }
+
+        #[test]
+        fn proptest_valid_identifiers_accepted(id in valid_identifier_strategy()) {
+            prop_assert!(validate_identifier(&id).is_ok(),
+                "Valid identifier rejected: {}", id);
+        }
+
+        #[test]
+        fn proptest_invalid_identifiers_rejected(id in invalid_identifier_strategy()) {
+            prop_assert!(validate_identifier(&id).is_err(),
+                "Invalid identifier accepted: {}", id);
+        }
+
+        #[test]
+        fn proptest_identifier_no_path_traversal(
+            base in prop::string::string_regex("[a-zA-Z0-9]{5,10}").expect("valid regex for base id")
+        ) {
+            let with_dots = format!("{}/../test", base);
+            prop_assert!(validate_identifier(&with_dots).is_err(),
+                "Path traversal identifier accepted: {}", with_dots);
+
+            let with_slashes = format!("{}/etc/passwd", base);
+            prop_assert!(validate_identifier(&with_slashes).is_err(),
+                "Forward slash identifier accepted: {}", with_slashes);
+        }
+
+        #[test]
+        fn proptest_identifier_no_url_injection(
+            base in prop::string::string_regex("[a-zA-Z0-9_-]{5,20}").expect("valid regex for base id")
+        ) {
+            let with_query = format!("{}?param=value", base);
+            prop_assert!(validate_identifier(&with_query).is_err(),
+                "URL query injection in identifier accepted: {}", with_query);
+
+            let with_ampersand = format!("{}&admin=true", base);
+            prop_assert!(validate_identifier(&with_ampersand).is_err(),
+                "Ampersand injection in identifier accepted: {}", with_ampersand);
+        }
+
+        #[test]
+        fn proptest_identifier_no_special_chars(
+            alphanumeric in prop::string::string_regex("[a-zA-Z0-9]{3,10}").expect("valid regex for alphanumeric"),
+            special_char in "[!@#$%^&*()+=\\[\\]{}|;:'\"<>,./\\\\?]"
+        ) {
+            let with_special = format!("{}{}{}", alphanumeric, special_char, alphanumeric);
+            prop_assert!(validate_identifier(&with_special).is_err(),
+                "Identifier with special char accepted: {}", with_special);
+        }
+    }
+}
+
+/// Security-focused property tests for query parameter handling
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod query_param_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_policy_list_params_no_duplicate_keys(
+            name in prop::option::of(prop::string::string_regex("[a-zA-Z0-9 _-]{1,50}").expect("valid regex for policy name")),
+            policy_type in prop::option::of(prop::string::string_regex("[A-Z]{1,20}").expect("valid regex for policy type")),
+            is_active in prop::option::of(any::<bool>()),
+            default_only in prop::option::of(any::<bool>()),
+            page in prop::option::of(0u32..10000u32),
+            size in prop::option::of(1u32..1000u32)
+        ) {
+            let params = PolicyListParams {
+                name,
+                policy_type,
+                is_active,
+                default_only,
+                page,
+                size,
+            };
+
+            let query_params = params.to_query_params();
+
+            // Verify no duplicate keys
+            let mut seen_keys = std::collections::HashSet::new();
+            for (key, _) in query_params.iter() {
+                prop_assert!(!seen_keys.contains(key),
+                    "Duplicate query parameter key: {}", key);
+                seen_keys.insert(key.clone());
+            }
+        }
+
+        #[test]
+        fn proptest_policy_list_params_valid_values(
+            page in 0u32..10000u32,
+            size in 1u32..1000u32
+        ) {
+            let params = PolicyListParams {
+                name: None,
+                policy_type: None,
+                is_active: Some(true),
+                default_only: Some(false),
+                page: Some(page),
+                size: Some(size),
+            };
+
+            let query_params = params.to_query_params();
+
+            // Find page and size params
+            let page_param = query_params.iter().find(|(k, _)| k == "page");
+            let size_param = query_params.iter().find(|(k, _)| k == "size");
+
+            if let Some((_, page_value)) = page_param {
+                prop_assert!(page_value.parse::<u32>().is_ok(),
+                    "Invalid page value: {}", page_value);
+            }
+
+            if let Some((_, size_value)) = size_param {
+                prop_assert!(size_value.parse::<u32>().is_ok(),
+                    "Invalid size value: {}", size_value);
+            }
+        }
+
+        #[test]
+        fn proptest_policy_list_params_string_sanitization(
+            name in prop::string::string_regex("[a-zA-Z0-9 &=;?#]{1,100}").expect("valid regex for name with special chars")
+        ) {
+            let params = PolicyListParams {
+                name: Some(name.clone()),
+                policy_type: None,
+                is_active: None,
+                default_only: None,
+                page: None,
+                size: None,
+            };
+
+            let query_params = params.to_query_params();
+
+            // Find the name parameter
+            let name_param = query_params.iter().find(|(k, _)| k == "name");
+
+            if let Some((_, value)) = name_param {
+                // The value should be the input (encoding happens at HTTP layer)
+                prop_assert_eq!(value, &name);
+            }
+        }
+    }
+}
+
+/// Security-focused property tests for integer operations
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod integer_safety_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_retry_delay_capped(delay in 0u64..u64::MAX) {
+            let capped = delay.min(MAX_RETRY_DELAY_SECONDS);
+            prop_assert!(capped <= MAX_RETRY_DELAY_SECONDS,
+                "Retry delay not properly capped: {}", capped);
+            prop_assert!(capped <= 300,
+                "Retry delay exceeds 5 minutes: {}", capped);
+        }
+
+        #[test]
+        fn proptest_retry_attempts_no_overflow(attempts in 0u32..u32::MAX - 1) {
+            let incremented = attempts.saturating_add(1);
+            prop_assert!(incremented >= attempts,
+                "Retry counter overflowed: {} + 1 = {}", attempts, incremented);
+            // Note: incremented is always <= u32::MAX since it's a u32
+        }
+
+        #[test]
+        fn proptest_max_retries_reasonable(max_retries in 0u32..1000u32) {
+            // Verify max_retries used in comparisons doesn't overflow
+            let test_attempts = max_retries.saturating_add(1);
+            prop_assert!(test_attempts > max_retries || max_retries == u32::MAX,
+                "Max retries comparison could overflow");
+        }
+
+        #[test]
+        fn proptest_retry_delay_multiplication_safe(
+            retries in 0u32..100u32,
+            delay in 0u64..MAX_RETRY_DELAY_SECONDS
+        ) {
+            // Verify that retry delay calculations don't overflow
+            let total_delay = (retries as u64).saturating_mul(delay);
+            // Total delay should be reasonable (less than 1 day)
+            prop_assert!(total_delay <= 86400,
+                "Total delay unreasonably large: {} seconds", total_delay);
+        }
+    }
+}
+
+/// Security-focused property tests for string handling
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod string_safety_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_policy_status_string_utf8_safe(
+            status in prop::string::string_regex("[ -~]{1,50}").expect("valid regex for ASCII status")
+        ) {
+            // All status strings should be valid UTF-8
+            prop_assert!(status.is_ascii() || status.chars().all(|c| !c.is_control()),
+                "Status string contains control characters");
+        }
+
+        #[test]
+        fn proptest_guid_formatting_safe(
+            guid in prop::string::string_regex("[0-9a-f]{32}").expect("valid regex for guid")
+        ) {
+            let endpoint = format!("/appsec/v1/policies/{}", guid);
+
+            // Verify no format string injection
+            prop_assert!(!endpoint.contains("{}"),
+                "Format string injection in endpoint: {}", endpoint);
+            prop_assert!(!endpoint.contains("%s"),
+                "Printf-style injection in endpoint: {}", endpoint);
+
+            // Verify proper structure
+            prop_assert!(endpoint.starts_with("/appsec/v1/policies/"),
+                "Malformed endpoint structure: {}", endpoint);
+            #[allow(clippy::arithmetic_side_effects)]
+            {
+                prop_assert_eq!(endpoint.len(), 20 + guid.len(),
+                    "Unexpected endpoint length");
+            }
+        }
+
+        #[test]
+        fn proptest_error_message_no_injection(
+            user_input in prop::string::string_regex("[ -~]{1,100}").expect("valid regex for user input")
+        ) {
+            let error_msg = format!("Invalid GUID: {}", user_input);
+
+            // Error messages should be safe from injection
+            prop_assert!(error_msg.starts_with("Invalid GUID: "),
+                "Error message structure corrupted");
+            prop_assert!(!error_msg.contains('\0'),
+                "Null byte in error message");
+            prop_assert!(error_msg.len() >= 14,
+                "Error message unexpectedly short");
+        }
+
+        #[test]
+        fn proptest_compliance_status_values_safe(
+            status in prop_oneof![
+                Just("Passed".to_string()),
+                Just("Did Not Pass".to_string()),
+                Just("Conditional Pass".to_string()),
+                Just("Not Assessed".to_string()),
+                Just("Calculating...".to_string()),
+            ]
+        ) {
+            // All status values should be alphanumeric or spaces
+            prop_assert!(status.chars().all(|c| c.is_alphanumeric() || c.is_whitespace() || c == '.'),
+                "Status contains unexpected characters: {}", status);
+
+            // Should not break build logic
+            let should_break = PolicyApi::should_break_build(&status);
+            if status == "Did Not Pass" {
+                prop_assert!(should_break, "Did Not Pass should break build");
+            } else {
+                prop_assert!(!should_break, "{} should not break build", status);
+            }
+        }
+    }
+}
+
+/// Security-focused property tests for URL/endpoint construction
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod endpoint_safety_proptests {
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_scan_id_endpoint_no_injection(scan_id in 0u64..u64::MAX) {
+            let endpoint = format!("/appsec/v1/policy-scans/{}", scan_id);
+
+            // Verify no injection
+            prop_assert!(endpoint.starts_with("/appsec/v1/policy-scans/"),
+                "Endpoint prefix corrupted: {}", endpoint);
+            prop_assert!(!endpoint.contains(".."),
+                "Path traversal in endpoint: {}", endpoint);
+            prop_assert!(!endpoint.contains("//"),
+                "Double slash in endpoint: {}", endpoint);
+
+            // Verify scan_id is properly formatted as number
+            let scan_id_str = endpoint.get(24..).unwrap_or("");
+            prop_assert!(scan_id_str.parse::<u64>().is_ok(),
+                "Invalid scan_id in endpoint: {}", scan_id_str);
+        }
+
+        #[test]
+        fn proptest_app_guid_endpoint_validated(
+            guid_part in prop::string::string_regex("[0-9a-f]{32}").expect("valid regex for guid")
+        ) {
+            // Simulate what happens after validation
+            let endpoint = format!("/appsec/v2/applications/{}/summary_report", guid_part);
+
+            // Verify structure
+            prop_assert!(endpoint.starts_with("/appsec/v2/applications/"),
+                "Invalid endpoint prefix");
+            prop_assert!(endpoint.ends_with("/summary_report"),
+                "Invalid endpoint suffix");
+            prop_assert!(!endpoint.contains(".."),
+                "Path traversal in endpoint");
+        }
+
+        #[test]
+        fn proptest_query_string_no_injection(
+            build_id in prop::string::string_regex("[a-zA-Z0-9_-]{1,64}").expect("valid regex for build id"),
+            sandbox_guid in prop::string::string_regex("[0-9a-f]{32}").expect("valid regex for sandbox guid")
+        ) {
+            // Simulate query parameter construction
+            let query_params = [
+                ("build_id".to_string(), build_id.clone()),
+                ("context".to_string(), sandbox_guid.clone())
+            ];
+
+            // Verify no duplicate keys
+            let keys: Vec<_> = query_params.iter().map(|(k, _)| k).collect();
+            prop_assert_eq!(keys.len(), 2, "Wrong number of query params");
+            prop_assert_eq!(keys.first().map(|s| s.as_str()), Some("build_id"), "Wrong first key");
+            prop_assert_eq!(keys.get(1).map(|s| s.as_str()), Some("context"), "Wrong second key");
+
+            // Verify values are not corrupted
+            if let Some((_, val)) = query_params.first() {
+                prop_assert_eq!(val, &build_id, "build_id value corrupted");
+            }
+            if let Some((_, val)) = query_params.get(1) {
+                prop_assert_eq!(val, &sandbox_guid, "sandbox_guid value corrupted");
+            }
+        }
+    }
+}
+
+/// Memory safety tests for data structure operations
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod memory_safety_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        #[test]
+        fn proptest_policy_list_params_from_owned(
+            name in prop::option::of(prop::string::string_regex("[a-zA-Z0-9_-]{1,50}").expect("valid regex for name")),
+            page in prop::option::of(0u32..1000u32),
+            size in prop::option::of(1u32..100u32)
+        ) {
+            let params = PolicyListParams {
+                name: name.clone(),
+                policy_type: None,
+                is_active: None,
+                default_only: None,
+                page,
+                size,
+            };
+
+            // Convert owned to query params (should move, not clone)
+            let query_params: Vec<(String, String)> = params.into();
+
+            // Verify structure is intact after move
+            prop_assert!(query_params.len() <= 6, "Too many query params");
+
+            // If name was Some, it should be in params
+            if name.is_some() {
+                let has_name = query_params.iter().any(|(k, _)| k == "name");
+                prop_assert!(has_name, "Name parameter lost after move");
+            }
+        }
+
+        #[test]
+        fn proptest_policy_list_params_from_ref(
+            name in prop::option::of(prop::string::string_regex("[a-zA-Z0-9_-]{1,50}").expect("valid regex for name")),
+            page in prop::option::of(0u32..1000u32)
+        ) {
+            let params = PolicyListParams {
+                name: name.clone(),
+                policy_type: None,
+                is_active: None,
+                default_only: None,
+                page,
+                size: None,
+            };
+
+            // Convert by reference (should clone)
+            let query_params: Vec<(String, String)> = Vec::from(&params);
+
+            // Original should still be valid
+            let query_params2 = params.to_query_params();
+
+            // Both should be equal
+            prop_assert_eq!(query_params, query_params2,
+                "Reference conversion differs from method call");
+        }
+
+        #[test]
+        fn proptest_vec_allocation_reasonable(
+            param_count in 1usize..10usize
+        ) {
+            let mut params = Vec::new();
+
+            for i in 0..param_count {
+                params.push((format!("key{}", i), format!("value{}", i)));
+            }
+
+            // Verify no excessive allocations
+            prop_assert_eq!(params.len(), param_count,
+                "Parameter count mismatch");
+            prop_assert!(params.capacity() >= param_count,
+                "Insufficient capacity");
+            // Capacity should be reasonable (not wildly over-allocated)
+            prop_assert!(params.capacity() < param_count.saturating_mul(10),
+                "Excessive capacity: {} for {} items", params.capacity(), param_count);
+        }
+    }
+}

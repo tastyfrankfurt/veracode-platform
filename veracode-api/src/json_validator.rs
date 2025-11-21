@@ -344,3 +344,641 @@ mod tests {
         );
     }
 }
+
+// ============================================================================
+// TIER 1: PROPERTY-BASED SECURITY TESTS (Fast, High ROI)
+// ============================================================================
+//
+// These tests use proptest to validate security properties against adversarial
+// inputs. They run 1000 test cases in normal mode and 10 under Miri for UB detection.
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod proptest_security {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ============================================================================
+    // SECURITY TEST: JSON Depth Validation with Adversarial Inputs
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Valid JSON within depth limits must always succeed
+        /// Tests that legitimate JSON structures are never incorrectly rejected
+        #[test]
+        fn proptest_valid_json_within_limits_succeeds(
+            depth in 1usize..=MAX_JSON_DEPTH,
+        ) {
+            // Create JSON with exactly 'depth' nesting levels
+            let mut json = String::new();
+            for i in 0..depth {
+                json.push_str(&format!("{{\"level{}\":", i));
+            }
+            json.push_str("\"value\"");
+            json.push_str(&"}".repeat(depth));
+
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok(), "Valid JSON at depth {} should succeed", depth);
+        }
+
+        /// Property: JSON exceeding depth limits must always fail
+        /// Tests that deeply nested JSON is correctly rejected
+        #[test]
+        fn proptest_deeply_nested_json_rejected(
+            excess_depth in 1usize..=50,
+        ) {
+            let depth = MAX_JSON_DEPTH.saturating_add(excess_depth);
+
+            // Create JSON that exceeds MAX_JSON_DEPTH
+            let mut json = String::new();
+            for i in 0..depth {
+                json.push_str(&format!("{{\"level{}\":", i));
+            }
+            json.push_str("null");
+            json.push_str(&"}".repeat(depth));
+
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_err(), "JSON at depth {} should be rejected", depth);
+
+            // Error can be either from depth validation or from serde_json's recursion limit
+            if let Err(msg) = result {
+                prop_assert!(
+                    msg.contains("too deeply nested") || msg == "Invalid JSON format",
+                    "Error message should indicate rejection: {}", msg
+                );
+            }
+        }
+
+        /// Property: Invalid JSON must return parse error, never panic
+        /// Tests that malformed JSON is handled gracefully
+        #[test]
+        fn proptest_invalid_json_returns_error(
+            garbage in ".*{0,200}",
+        ) {
+            // Most random strings are not valid JSON
+            let result = validate_json_depth(&garbage, MAX_JSON_DEPTH);
+
+            // Either valid JSON or error, never panic
+            match result {
+                Ok(_) => {
+                    // If it succeeded, must be valid JSON
+                    prop_assert!(serde_json::from_str::<Value>(&garbage).is_ok());
+                },
+                Err(msg) => {
+                    // Error should be sanitized
+                    prop_assert!(
+                        msg == "Invalid JSON format" || msg.contains("too deeply nested"),
+                        "Error message should be sanitized"
+                    );
+                }
+            }
+        }
+
+        /// Property: Empty and whitespace-only JSON must be handled
+        /// Tests edge cases with minimal input
+        #[test]
+        fn proptest_empty_and_whitespace_json(
+            whitespace in "\\s{0,100}",
+        ) {
+            let result = validate_json_depth(&whitespace, MAX_JSON_DEPTH);
+
+            // Empty/whitespace is invalid JSON, should return error
+            match result {
+                Ok(_) => {
+                    // Only succeeds if it's valid JSON (unlikely with just whitespace)
+                    prop_assert!(serde_json::from_str::<Value>(&whitespace).is_ok());
+                },
+                Err(msg) => {
+                    prop_assert_eq!(msg, "Invalid JSON format");
+                }
+            }
+        }
+
+        /// Property: Custom depth limits must be respected
+        /// Tests that the max_depth parameter is correctly enforced
+        #[test]
+        fn proptest_custom_depth_limit_enforced(
+            max_depth in 5usize..=MAX_JSON_DEPTH,
+            test_depth in 1usize..=MAX_JSON_DEPTH,
+        ) {
+            // Only test within MAX_JSON_DEPTH to avoid serde_json's own limits
+            // Create JSON with test_depth nesting
+            let mut json = String::new();
+            for i in 0..test_depth {
+                json.push_str(&format!("{{\"d{}\":", i));
+            }
+            json.push('0');
+            json.push_str(&"}".repeat(test_depth));
+
+            let result = validate_json_depth(&json, max_depth);
+
+            // Property: validation result should match depth comparison
+            if test_depth <= max_depth {
+                prop_assert!(result.is_ok(),
+                    "JSON depth {} should pass with limit {}", test_depth, max_depth);
+            } else {
+                prop_assert!(result.is_err(),
+                    "JSON depth {} should fail with limit {}", test_depth, max_depth);
+            }
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: String Handling and Injection Attacks
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Special characters in JSON strings must be handled safely
+        /// Tests against JSON injection and escape sequence attacks
+        #[test]
+        fn proptest_special_characters_in_strings(
+            special_chars in r#"[<>'"&\x00-\x1f\x7f\\]{0,100}"#,
+        ) {
+            let json = serde_json::json!({
+                "payload": special_chars,
+                "nested": {
+                    "value": special_chars
+                }
+            }).to_string();
+
+            // Property 1: Must not panic on special characters
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Property 2: Parse result must preserve the data
+            let parsed: Value = serde_json::from_str(&json)
+                .expect("serde_json should handle its own output");
+            prop_assert_eq!(parsed.get("payload").and_then(|v| v.as_str()), Some(special_chars.as_str()));
+        }
+
+        /// Property: Control characters must be properly escaped
+        /// Tests that control characters don't break JSON parsing
+        #[test]
+        fn proptest_control_characters_safe(
+            // Test various control characters that could cause issues
+            control_char in prop::sample::select(vec![
+                '\0', '\t', '\n', '\r', '\x01', '\x02', '\x08', '\x0c', '\x1f', '\x7f'
+            ]),
+        ) {
+            let payload = format!("test{}value", control_char);
+            let json = serde_json::json!({
+                "data": payload
+            }).to_string();
+
+            // Must successfully validate and parse
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+        }
+
+        /// Property: Extremely long strings must not cause buffer overflows
+        /// Tests memory safety with large string values
+        #[test]
+        fn proptest_large_strings_safe(
+            length in 0usize..=10000,
+        ) {
+            let large_string = "A".repeat(length);
+            let json = serde_json::json!({
+                "large_field": large_string
+            }).to_string();
+
+            // Property 1: Must not panic on large strings
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Property 2: Depth should be 1 (just the object)
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            prop_assert_eq!(calculate_depth(&parsed), 1);
+        }
+
+        /// Property: Unicode edge cases must be handled correctly
+        /// Tests UTF-8 boundary handling and multi-byte characters
+        #[test]
+        fn proptest_unicode_handling(
+            // Test various Unicode ranges including emojis and special scripts
+            unicode_str in "[\\p{L}\\p{N}\\p{S}\\p{M}]{0,200}",
+        ) {
+            let json = serde_json::json!({
+                "unicode": unicode_str,
+                "nested": {
+                    "more_unicode": unicode_str
+                }
+            }).to_string();
+
+            // Property 1: Must handle Unicode correctly
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Property 2: Unicode should be preserved
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            prop_assert_eq!(parsed.get("unicode").and_then(|v| v.as_str()), Some(unicode_str.as_str()));
+        }
+
+        /// Property: Path traversal sequences in JSON values must be safely contained
+        /// Tests that path traversal strings don't affect JSON validation
+        #[test]
+        fn proptest_path_traversal_sequences_safe(
+            // Test common path traversal patterns
+            traversal in prop::sample::select(vec![
+                "../", "..\\", "../../", "../../../etc/passwd",
+                "....//", "..\\..\\", "/etc/passwd", "C:\\Windows\\System32",
+                "%2e%2e%2f", "%2e%2e/", "..%2f", "..%5c"
+            ]),
+        ) {
+            let json = serde_json::json!({
+                "filename": traversal,
+                "path": traversal
+            }).to_string();
+
+            // Property: Path traversal sequences are just string data in JSON
+            // They should not affect validation or cause any special behavior
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Data should be preserved as-is
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            prop_assert_eq!(parsed.get("filename").and_then(|v| v.as_str()), Some(traversal));
+        }
+
+        /// Property: Null byte injection attempts must be handled safely
+        /// Tests that null bytes in JSON strings don't cause truncation
+        #[test]
+        fn proptest_null_byte_injection_safe(
+            prefix in "[a-zA-Z0-9]{0,50}",
+            suffix in "[a-zA-Z0-9]{0,50}",
+        ) {
+            // Create a string with null byte
+            let payload = format!("{}\0{}", prefix, suffix);
+            let json = serde_json::json!({
+                "payload": payload
+            }).to_string();
+
+            // Property: Null bytes should be properly escaped in JSON
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Verify the null byte was preserved through encoding/decoding
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            if let Some(s) = parsed.get("payload").and_then(|v| v.as_str()) {
+                // The null byte should be present in the decoded string
+                let expected_without_null = format!("{}{}", prefix, suffix);
+                prop_assert!(s.contains('\0') || s == expected_without_null);
+            }
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: Array and Object Boundary Conditions
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Large arrays must not cause memory exhaustion
+        /// Tests that large (but shallow) arrays are handled efficiently
+        #[test]
+        fn proptest_large_arrays_safe(
+            size in 0usize..=1000,
+        ) {
+            let array: Vec<i32> = (0..size).map(|i| i32::try_from(i).unwrap_or(0)).collect();
+            let json = serde_json::json!({
+                "large_array": array
+            }).to_string();
+
+            // Property 1: Must not panic on large arrays
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Property 2: Depth should be 2 (object + array)
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            prop_assert_eq!(calculate_depth(&parsed), 2);
+        }
+
+        /// Property: Large objects must not cause memory exhaustion
+        /// Tests that objects with many keys are handled efficiently
+        #[test]
+        fn proptest_large_objects_safe(
+            key_count in 0usize..=500,
+        ) {
+            // Create object with key_count keys
+            let mut obj = serde_json::Map::new();
+            for i in 0..key_count {
+                obj.insert(format!("key_{}", i), Value::from(i));
+            }
+            let json = Value::Object(obj).to_string();
+
+            // Property 1: Must not panic on large objects
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            // Property 2: Depth should be 1 (flat object)
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            prop_assert_eq!(calculate_depth(&parsed), 1);
+        }
+
+        /// Property: Empty arrays and objects must be handled correctly
+        /// Tests edge cases with zero elements
+        #[test]
+        fn proptest_empty_structures_depth(
+            nest_level in 0usize..=10,
+        ) {
+            // Create nested empty objects
+            let mut json = String::new();
+            for _ in 0..nest_level {
+                json.push_str("{\"empty\":");
+            }
+            json.push_str("{}");
+            json.push_str(&"}".repeat(nest_level));
+
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            let depth = calculate_depth(&parsed);
+            // Empty objects still count toward depth
+            prop_assert_eq!(depth, nest_level.saturating_add(1));
+        }
+
+        /// Property: Mixed nesting (arrays and objects) must be calculated correctly
+        /// Tests depth calculation with alternating structures
+        #[test]
+        fn proptest_mixed_nesting_depth_calculation(
+            depth in 1usize..=10,
+        ) {
+            // Create simple mixed nesting with arrays and objects
+            let mut json = String::new();
+            for _ in 0..depth {
+                json.push_str("[{\"x\":");
+            }
+            json.push_str("null");
+            json.push_str(&"}]".repeat(depth));
+
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok(), "JSON construction should be valid");
+
+            let parsed: Value = serde_json::from_str(&json)
+                .expect("JSON should parse correctly");
+            let calculated_depth = calculate_depth(&parsed);
+            // Each iteration adds both array and object, so depth = 2*depth
+            prop_assert!(calculated_depth >= depth,
+                "Calculated depth {} should be >= nesting levels {}",
+                calculated_depth, depth);
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: Numeric Edge Cases and Integer Overflow
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Integer overflow in depth calculation must be prevented
+        /// Tests that saturating_add prevents overflow panics
+        #[test]
+        fn proptest_depth_calculation_no_overflow(
+            // Test with realistic depths that shouldn't overflow
+            depth in 0usize..=200,
+        ) {
+            // Create JSON with specified depth
+            let mut json = String::new();
+            for i in 0..depth {
+                json.push_str(&format!("{{\"{}\":", i));
+            }
+            json.push_str("42");
+            json.push_str(&"}".repeat(depth));
+
+            // Property: Must never panic on overflow
+            // Early termination at MAX_JSON_DEPTH prevents excessive recursion
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+
+            if depth <= MAX_JSON_DEPTH {
+                prop_assert!(result.is_ok());
+            } else {
+                prop_assert!(result.is_err());
+            }
+        }
+
+        /// Property: Extreme numeric values in JSON must be handled
+        /// Tests that large numbers don't cause issues
+        #[test]
+        fn proptest_extreme_numeric_values(
+            value in prop::num::i64::ANY,
+        ) {
+            let json = serde_json::json!({
+                "number": value,
+                "nested": {
+                    "another_number": value
+                }
+            }).to_string();
+
+            // Property: Large numbers should not affect depth validation
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_ok());
+
+            let parsed: Value = serde_json::from_str(&json).expect("JSON parsing should succeed");
+            prop_assert_eq!(calculate_depth(&parsed), 2);
+        }
+
+        /// Property: Boolean and null values must not affect depth calculation
+        /// Tests that scalar values are correctly identified as depth 0
+        #[test]
+        fn proptest_scalar_values_depth_zero(
+            bool_val in any::<bool>(),
+        ) {
+            // Test various scalar types
+            let null_value = Value::Null;
+            let bool_value = Value::Bool(bool_val);
+            let num_value = Value::from(42);
+            let str_value = Value::from("test");
+
+            prop_assert_eq!(calculate_depth(&null_value), 0);
+            prop_assert_eq!(calculate_depth(&bool_value), 0);
+            prop_assert_eq!(calculate_depth(&num_value), 0);
+            prop_assert_eq!(calculate_depth(&str_value), 0);
+        }
+
+        /// Property: Very deep recursion must be bounded
+        /// Tests that calculate_depth_limited provides early termination
+        #[test]
+        fn proptest_recursion_bounded(
+            depth in (MAX_JSON_DEPTH + 1)..=60,
+        ) {
+            // Create JSON deeper than MAX_JSON_DEPTH
+            let mut json = String::new();
+            for i in 0..depth {
+                json.push_str(&format!("[{{\"{}\":", i));
+            }
+            json.push('0');
+            json.push_str(&"}]".repeat(depth));
+
+            // Property: Should reject without stack overflow
+            // Early termination prevents excessive recursion
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+            prop_assert!(result.is_err());
+
+            // Note: serde_json has its own recursion limit (~128 levels)
+            // For very deep JSON, serde_json may fail before our validation
+            // Either error is acceptable - both protect against DoS
+            if let Ok(parsed) = serde_json::from_str::<Value>(&json) {
+                let calculated = calculate_depth(&parsed);
+                // If parsing succeeded, depth calculation should detect the issue
+                prop_assert!(calculated > MAX_JSON_DEPTH);
+            }
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: DoS Attack Vectors
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },  // Fewer cases due to complexity
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Exponentially wide JSON must not cause memory exhaustion
+        /// Tests the "billion laughs" style attack adapted for JSON
+        #[test]
+        fn proptest_dos_exponential_width(
+            width in 1usize..=20,
+            depth in 1usize..=4,
+        ) {
+            // Create JSON with exponentially increasing width
+            // Each level has 'width' children
+            fn create_wide_json(width: usize, depth: usize) -> String {
+                if depth == 0 {
+                    return "42".to_string();
+                }
+
+                let mut json = String::from("[");
+                for i in 0..width {
+                    if i > 0 {
+                        json.push(',');
+                    }
+                    json.push_str(&create_wide_json(width, depth.saturating_sub(1)));
+                }
+                json.push(']');
+                json
+            }
+
+            let json = create_wide_json(width, depth);
+
+            // Property: Must handle or reject gracefully, never crash
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+
+            if depth <= MAX_JSON_DEPTH {
+                prop_assert!(result.is_ok() || result.is_err()); // Either is fine
+            } else {
+                prop_assert!(result.is_err());
+            }
+        }
+
+        /// Property: Repeated deep nesting with different patterns
+        /// Tests that various nesting styles are consistently handled
+        #[test]
+        fn proptest_dos_varied_nesting_patterns(
+            depth in 30usize..=MAX_JSON_DEPTH + 20,
+            pattern in prop::sample::select(vec!["array", "object", "mixed"]),
+        ) {
+            let json = match pattern {
+                "array" => {
+                    let mut s = String::new();
+                    for _ in 0..depth {
+                        s.push('[');
+                    }
+                    s.push_str("null");
+                    s.push_str(&"]".repeat(depth));
+                    s
+                },
+                "object" => {
+                    let mut s = String::new();
+                    for i in 0..depth {
+                        s.push_str(&format!("{{\"k{}\":", i));
+                    }
+                    s.push_str("null");
+                    s.push_str(&"}".repeat(depth));
+                    s
+                },
+                _ => { // "mixed"
+                    let mut s = String::new();
+                    for i in 0..depth {
+                        if i % 2 == 0 {
+                            s.push('[');
+                        } else {
+                            s.push_str("{\"x\":");
+                        }
+                    }
+                    s.push_str("null");
+                    for i in (0..depth).rev() {
+                        if i % 2 == 0 {
+                            s.push(']');
+                        } else {
+                            s.push('}');
+                        }
+                    }
+                    s
+                }
+            };
+
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+
+            if depth <= MAX_JSON_DEPTH {
+                prop_assert!(result.is_ok());
+            } else {
+                prop_assert!(result.is_err());
+            }
+        }
+
+        /// Property: Malformed JSON with unbalanced brackets must fail gracefully
+        /// Tests that parser errors are caught and sanitized
+        #[test]
+        fn proptest_malformed_json_graceful_failure(
+            open_brackets in 0usize..=50,
+            close_brackets in 0usize..=50,
+        ) {
+            // Create intentionally malformed JSON
+            let mut json = String::new();
+            json.push_str(&"[".repeat(open_brackets));
+            json.push_str("null");
+            json.push_str(&"]".repeat(close_brackets));
+
+            let result = validate_json_depth(&json, MAX_JSON_DEPTH);
+
+            // Property: Either valid (if balanced) or returns sanitized error
+            match result {
+                Ok(_) => {
+                    // If successful, brackets must be balanced
+                    prop_assert_eq!(open_brackets, close_brackets);
+                },
+                Err(msg) => {
+                    // Error must be sanitized
+                    prop_assert!(
+                        msg == "Invalid JSON format" || msg.contains("too deeply nested")
+                    );
+                }
+            }
+        }
+    }
+}

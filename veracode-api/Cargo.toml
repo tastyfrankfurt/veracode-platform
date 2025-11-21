@@ -21,6 +21,9 @@ exclude = [
 name = "veracode_platform"
 path = "src/lib.rs"
 
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
+
 [lints.clippy]
 # Defensive programming essentials
 indexing_slicing = "deny"              # Prevents direct indexing
@@ -85,6 +88,7 @@ tokio = { version = "1.0", features = ["full"] }
 
 [dev-dependencies]
 tokio-test = "0.4"
+proptest = "1.9"
 
 [features]
 default = ["applications", "identity", "pipeline", "sandbox", "policy"]
