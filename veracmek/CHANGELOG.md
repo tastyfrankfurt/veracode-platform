@@ -5,6 +5,33 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.12] - 2025-11-21
+
+### Changed
+- **Dependency Update**: Updated veracode-platform dependency from 0.7.1 to 0.7.5
+  - **Security Hardening**: Benefits from comprehensive security improvements in veracode-platform library
+  - **Defensive Programming**: Inherits enhanced defensive coding patterns and clippy lints
+  - **Security Testing**: Underlying library now includes proptest, kani, and miri security testing
+  - **Build ID Support**: Access to new build_id parameter in policy compliance methods
+  - **XML Parsing Fix**: Benefits from critical self-closing XML tag parsing bug fix
+  - **No Breaking Changes**: Fully backward compatible upgrade
+  - **Modified Files**: `Cargo.toml`
+
+### Security
+- **Indirect Security Benefits**: All security hardening from veracode-platform 0.7.5 applies to veracmek
+  - Enhanced input validation and error handling
+  - Improved memory safety and integer overflow protection
+  - Comprehensive security testing coverage
+
+## [0.5.11] - 2025-11-10
+
+### Changed
+- **Dependency Migration**: Updated veracode-platform dependency from 0.7.0 to 0.7.1
+  - **Security**: Resolved RUSTSEC-2025-0012 (backoff unmaintained) and RUSTSEC-2024-0384 (instant unmaintained)
+  - **Modern API**: Benefits from improved retry logic using backon crate
+  - **Backward Compatible**: No functional changes required in veracmek
+  - **Modified Files**: `Cargo.toml`
+
 ## [0.5.10] - 2025-11-03
 
 ### Security

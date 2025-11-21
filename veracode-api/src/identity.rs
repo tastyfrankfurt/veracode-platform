@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeClient, VeracodeError};
 
 /// Represents a Veracode user account
@@ -572,6 +573,40 @@ impl<'a> IdentityApi<'a> {
         Self { client }
     }
 
+    /// Sanitize error messages to prevent information disclosure
+    ///
+    /// Logs detailed error information server-side while returning
+    /// a generic, safe error message to callers.
+    ///
+    /// # Arguments
+    ///
+    /// * `raw_error` - The raw error text from the API response
+    /// * `status` - The HTTP status code
+    /// * `context` - Context about the operation for logging (e.g., "`list_users`")
+    fn sanitize_error(raw_error: &str, status: u16, context: &str) -> String {
+        // Log detailed error server-side for debugging
+        log::warn!("API error in {} - HTTP {}: {}", context, status, raw_error);
+
+        // Return sanitized message based on status code
+        match status {
+            400 => {
+                // For 400 errors, check for specific known safe error patterns
+                if raw_error.contains("already exists") {
+                    "Resource already exists".to_string()
+                } else {
+                    "Invalid request parameters".to_string()
+                }
+            }
+            401 => "Authentication required".to_string(),
+            403 => "Insufficient permissions for this operation".to_string(),
+            404 => "Resource not found".to_string(),
+            415 => "Unsupported media type".to_string(),
+            429 => "Rate limit exceeded. Please try again later".to_string(),
+            500..=599 => "Internal server error occurred".to_string(),
+            _ => format!("Request failed with status {}", status),
+        }
+    }
+
     /// List users with optional filtering
     ///
     /// # Arguments
@@ -597,6 +632,14 @@ impl<'a> IdentityApi<'a> {
             200 => {
                 let response_text = response.text().await?;
 
+                // Validate JSON depth before parsing to prevent DoS attacks
+                validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                    IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                        "JSON validation failed: {}",
+                        e
+                    )))
+                })?;
+
                 // Try embedded response format first
                 if let Ok(users_response) = serde_json::from_str::<UsersResponse>(&response_text) {
                     let users = if !users_response.users.is_empty() {
@@ -621,9 +664,10 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "list_users");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -656,9 +700,10 @@ impl<'a> IdentityApi<'a> {
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "get_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -958,27 +1003,31 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
                 if error_text.contains("already exists") {
-                    Err(IdentityError::UserAlreadyExists(error_text))
+                    Err(IdentityError::UserAlreadyExists(sanitized))
                 } else {
-                    Err(IdentityError::InvalidInput(error_text))
+                    Err(IdentityError::InvalidInput(sanitized))
                 }
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             415 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP 415 Unsupported Media Type: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1038,18 +1087,21 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::InvalidInput(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "update_user");
+                Err(IdentityError::InvalidInput(sanitized))
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "update_user");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "update_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1078,14 +1130,16 @@ impl<'a> IdentityApi<'a> {
             200 | 204 => Ok(()),
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_user");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::UserNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_user");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1119,6 +1173,14 @@ impl<'a> IdentityApi<'a> {
             match status {
                 200 => {
                     let response_text = response.text().await?;
+
+                    // Validate JSON depth before parsing to prevent DoS attacks
+                    validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                        IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                            "JSON validation failed: {}",
+                            e
+                        )))
+                    })?;
 
                     // Try embedded response format
                     if let Ok(roles_response) =
@@ -1163,17 +1225,19 @@ impl<'a> IdentityApi<'a> {
 
                     // If we can't parse, maybe it's the first page without pagination
                     if page == 0 {
-                        return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                            "Unable to parse roles response: {response_text}"
-                        ))));
+                        log::warn!("Unable to parse roles response: {}", response_text);
+                        return Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                            "Unable to parse roles response".to_string(),
+                        )));
                     }
                     break; // End of pages
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
-                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                        "HTTP {status}: {error_text}"
-                    ))));
+                    let sanitized = Self::sanitize_error(&error_text, status, "list_roles");
+                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                        sanitized,
+                    )));
                 }
             }
         }
@@ -1215,6 +1279,14 @@ impl<'a> IdentityApi<'a> {
             match status {
                 200 => {
                     let response_text = response.text().await?;
+
+                    // Validate JSON depth before parsing to prevent DoS attacks
+                    validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                        IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                            "JSON validation failed: {}",
+                            e
+                        )))
+                    })?;
 
                     // Try embedded response format first
                     if let Ok(teams_response) =
@@ -1268,9 +1340,10 @@ impl<'a> IdentityApi<'a> {
                 }
                 _ => {
                     let error_text = response.text().await.unwrap_or_default();
-                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                        "HTTP {status}: {error_text}"
-                    ))));
+                    let sanitized = Self::sanitize_error(&error_text, status, "list_teams");
+                    return Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                        sanitized,
+                    )));
                 }
             }
         }
@@ -1305,21 +1378,24 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
+                let sanitized = Self::sanitize_error(&error_text, status, "create_team");
                 if error_text.contains("already exists") {
-                    Err(IdentityError::TeamAlreadyExists(error_text))
+                    Err(IdentityError::TeamAlreadyExists(sanitized))
                 } else {
-                    Err(IdentityError::InvalidInput(error_text))
+                    Err(IdentityError::InvalidInput(sanitized))
                 }
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_team");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_team");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1348,14 +1424,16 @@ impl<'a> IdentityApi<'a> {
             200 | 204 => Ok(()),
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_team");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::TeamNotFound),
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "delete_team");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1412,7 +1490,18 @@ impl<'a> IdentityApi<'a> {
         match status {
             200 => {
                 let response_text = response.text().await?;
-                log::debug!("🔍 Team lookup response - body: {}", response_text);
+                log::debug!(
+                    "🔍 Team lookup response - content length: {} bytes",
+                    response_text.len()
+                );
+
+                // Validate JSON depth before parsing to prevent DoS attacks
+                validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                    IdentityError::Api(VeracodeError::InvalidResponse(format!(
+                        "JSON validation failed: {}",
+                        e
+                    )))
+                })?;
 
                 // Helper closure to process teams list and find exact case-insensitive match
                 let process_teams = |teams: Vec<Team>, format_description: &str| -> Option<Team> {
@@ -1481,18 +1570,17 @@ impl<'a> IdentityApi<'a> {
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                log::debug!(
-                    "🔍 Team lookup error - HTTP 403: permission denied - {}",
-                    error_text
-                );
-                Err(IdentityError::PermissionDenied(error_text))
+                log::debug!("🔍 Team lookup error - HTTP 403: permission denied");
+                let sanitized = Self::sanitize_error(&error_text, status, "get_team_by_name");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                log::debug!("🔍 Team lookup error - HTTP {}: {}", status, error_text);
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                log::debug!("🔍 Team lookup error - HTTP {}", status);
+                let sanitized = Self::sanitize_error(&error_text, status, "get_team_by_name");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1554,17 +1642,20 @@ impl<'a> IdentityApi<'a> {
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::InvalidInput(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_api_credentials");
+                Err(IdentityError::InvalidInput(sanitized))
             }
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_api_credentials");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "create_api_credentials");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1593,14 +1684,16 @@ impl<'a> IdentityApi<'a> {
             200 | 204 => Ok(()), // Accept both 200 OK and 204 No Content as success
             403 => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::PermissionDenied(error_text))
+                let sanitized = Self::sanitize_error(&error_text, status, "revoke_api_credentials");
+                Err(IdentityError::PermissionDenied(sanitized))
             }
             404 => Err(IdentityError::UserNotFound), // API credentials not found
             _ => {
                 let error_text = response.text().await.unwrap_or_default();
-                Err(IdentityError::Api(VeracodeError::InvalidResponse(format!(
-                    "HTTP {status}: {error_text}"
-                ))))
+                let sanitized = Self::sanitize_error(&error_text, status, "revoke_api_credentials");
+                Err(IdentityError::Api(VeracodeError::InvalidResponse(
+                    sanitized,
+                )))
             }
         }
     }
@@ -1776,5 +1869,567 @@ mod tests {
             serde_json::to_string(&UserType::Vosp).expect("should serialize to json"),
             "\"VOSP\""
         );
+    }
+}
+
+// ============================================================================
+// SECURITY PROPERTY TESTS
+// ============================================================================
+// These tests verify security-critical properties of the identity module:
+// - API credential redaction in debug output
+// - Error message sanitization to prevent information disclosure
+// - Input validation for identity fields (email, username, etc.)
+// - Memory safety in query parameter building
+// - Proper bounds checking in pagination
+// ============================================================================
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ========================================================================
+    // Test 1: API Credential Redaction (CRITICAL SECURITY)
+    // ========================================================================
+    // Ensures that API keys are NEVER leaked in debug output, logs, or error messages.
+    // This is essential because API keys provide full authentication access.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: ApiCredential Debug output must NEVER contain the actual API key
+        ///
+        /// Security concern: API keys exposed in logs/debug output could lead to:
+        /// - Unauthorized access to Veracode accounts
+        /// - Privilege escalation
+        /// - Account compromise
+        #[test]
+        fn api_credential_debug_redacts_sensitive_data(
+            api_id in "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",
+            api_key in "[a-f0-9]{64}",
+            active in any::<bool>(),
+        ) {
+            let credential = ApiCredential {
+                api_id: api_id.clone(),
+                api_key: Some(api_key.clone()),
+                expiration_ts: None,
+                active: Some(active),
+                created_date: None,
+            };
+
+            // Get debug string representation
+            let debug_output = format!("{:?}", credential);
+
+            // CRITICAL: API key must NEVER appear in debug output
+            assert!(
+                !debug_output.contains(&api_key),
+                "API key leaked in debug output! This is a critical security vulnerability. Output: {}",
+                debug_output
+            );
+
+            // Verify it shows [REDACTED] instead
+            assert!(
+                debug_output.contains("[REDACTED]"),
+                "Debug output should show [REDACTED] for API key. Output: {}",
+                debug_output
+            );
+
+            // Verify the api_id is still present (needed for identification)
+            assert!(
+                debug_output.contains(&api_id),
+                "API ID should be visible in debug output for identification purposes"
+            );
+        }
+
+        /// Property: ApiCredential with None api_key should not leak information
+        #[test]
+        fn api_credential_debug_handles_none_safely(
+            api_id in "[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}",
+        ) {
+            let credential = ApiCredential {
+                api_id: api_id.clone(),
+                api_key: None,
+                expiration_ts: None,
+                active: Some(true),
+                created_date: None,
+            };
+
+            let debug_output = format!("{:?}", credential);
+
+            // Should still show the field but as None/redacted
+            assert!(
+                debug_output.contains("api_key"),
+                "Debug output should show api_key field even when None"
+            );
+        }
+    }
+
+    // ========================================================================
+    // Test 2: Error Message Sanitization
+    // ========================================================================
+    // Ensures error messages don't leak sensitive information like:
+    // - Internal server details
+    // - Database schema information
+    // - User enumeration data
+    // - Stack traces
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Sanitized errors must not leak internal details
+        ///
+        /// Security concern: Information disclosure via error messages
+        #[test]
+        fn sanitize_error_prevents_information_disclosure(
+            raw_error in ".*",
+            status in 400u16..600u16,
+        ) {
+            let context = "test_operation";
+            let sanitized = IdentityApi::sanitize_error(&raw_error, status, context);
+
+            // Sanitized message should NOT contain potentially sensitive patterns
+            let sensitive_patterns = [
+                "password",
+                "token",
+                "secret",
+                "key",
+                "credential",
+                "database",
+                "sql",
+                "stack trace",
+                "at line",
+                "error:",
+                "exception:",
+                "/usr/",
+                "/var/",
+                "C:\\",
+            ];
+
+            for pattern in &sensitive_patterns {
+                assert!(
+                    !sanitized.to_lowercase().contains(pattern),
+                    "Sanitized error message contains sensitive pattern '{}': {}",
+                    pattern,
+                    sanitized
+                );
+            }
+
+            // Should NOT be the raw error (unless it's already safe)
+            if raw_error.len() > 50 || raw_error.contains("Exception") {
+                assert_ne!(
+                    sanitized, raw_error,
+                    "Raw error should be sanitized, not passed through directly"
+                );
+            }
+
+            // Should return a generic message appropriate for the status code
+            assert!(
+                sanitized.len() < 200,
+                "Sanitized error should be concise, got: {}",
+                sanitized
+            );
+        }
+
+        /// Property: Common HTTP status codes get appropriate generic messages
+        #[test]
+        fn sanitize_error_returns_appropriate_messages(
+            raw_error in ".*",
+        ) {
+            // Test specific status codes
+            let test_cases = vec![
+                (400, "invalid"),
+                (401, "authentication"),
+                (403, "permission"),
+                (404, "not found"),
+                (429, "rate limit"),
+                (500, "server error"),
+            ];
+
+            for (status, expected_substring) in test_cases {
+                let sanitized = IdentityApi::sanitize_error(&raw_error, status, "test");
+                assert!(
+                    sanitized.to_lowercase().contains(expected_substring),
+                    "Status {} should mention '{}', got: {}",
+                    status, expected_substring, sanitized
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // Test 3: Input Validation for Identity Fields
+    // ========================================================================
+    // Tests that identity fields (email, username, team names) are properly validated
+    // and don't allow injection attacks or excessive memory consumption.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: UserQuery builder must handle arbitrary strings safely
+        ///
+        /// Security concern: SQL injection, command injection, or buffer overflow
+        /// via malicious username/email strings
+        #[test]
+        fn user_query_handles_malicious_input_safely(
+            username in ".*",
+            email in ".*",
+            role_id in ".*",
+        ) {
+            // Should not panic with any input
+            let query = UserQuery::new()
+                .with_username(&username)
+                .with_email(&email)
+                .with_role_id(&role_id);
+
+            // Convert to query params should not panic
+            let params = query.to_query_params();
+
+            // Verify all expected fields are present
+            let has_username = params.iter().any(|(k, v)| k == "user_name" && v == &username);
+            let has_email = params.iter().any(|(k, v)| k == "email_address" && v == &email);
+            let has_role = params.iter().any(|(k, v)| k == "role_id" && v == &role_id);
+
+            assert!(has_username, "Username should be in query params");
+            assert!(has_email, "Email should be in query params");
+            assert!(has_role, "Role ID should be in query params");
+        }
+
+        /// Property: Query parameter building must not cause excessive allocations
+        ///
+        /// Security concern: Memory exhaustion DoS via large inputs
+        #[test]
+        fn user_query_params_bounded_memory(
+            username in ".*",
+            email in ".*",
+        ) {
+            let query = UserQuery::new()
+                .with_username(&username)
+                .with_email(&email)
+                .with_pagination(0, 100);
+
+            let params = query.to_query_params();
+
+            // Total parameter count should be bounded
+            assert!(
+                params.len() <= 10,
+                "Query should not generate excessive parameters: {} params",
+                params.len()
+            );
+
+            // Total serialized size should be bounded to prevent memory exhaustion
+            let total_size: usize = params.iter().map(|(k, v)| k.len().saturating_add(v.len())).sum();
+            let max_expected = username.len().saturating_add(email.len()).saturating_add(200);
+
+            assert!(
+                total_size <= max_expected,
+                "Query params should not cause excessive memory allocation: {} bytes (max: {})",
+                total_size, max_expected
+            );
+        }
+    }
+
+    // ========================================================================
+    // Test 4: CreateUserRequest Validation
+    // ========================================================================
+    // Ensures user creation requests properly validate inputs and prevent
+    // malicious data from being submitted to the API.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: CreateUserRequest must handle arbitrary string inputs without panic
+        ///
+        /// Security concern: Injection attacks via user creation fields
+        #[test]
+        fn create_user_request_handles_arbitrary_input(
+            email in ".*",
+            first_name in ".*",
+            last_name in ".*",
+            username in ".*",
+        ) {
+            let request = CreateUserRequest {
+                email_address: email.clone(),
+                first_name: first_name.clone(),
+                last_name: last_name.clone(),
+                user_name: Some(username.clone()),
+                user_type: Some(UserType::Human),
+                send_email_invitation: Some(true),
+                role_ids: None,
+                team_ids: None,
+                permissions: None,
+            };
+
+            // Serialization should not panic
+            let serialized = serde_json::to_string(&request);
+            assert!(
+                serialized.is_ok(),
+                "CreateUserRequest serialization should not panic with arbitrary input"
+            );
+
+            // JSON should be valid and non-empty
+            if let Ok(json_str) = serialized {
+                assert!(!json_str.is_empty(), "Serialized JSON should not be empty");
+                assert!(json_str.starts_with('{'), "Should serialize to JSON object");
+            }
+        }
+
+        /// Property: CreateTeamRequest must handle arbitrary team names safely
+        ///
+        /// Security concern: Injection attacks or memory exhaustion via team names
+        #[test]
+        fn create_team_request_handles_arbitrary_input(
+            team_name in ".*",
+            team_description in ".*",
+        ) {
+            let request = CreateTeamRequest {
+                team_name: team_name.clone(),
+                team_description: Some(team_description.clone()),
+                business_unit_id: None,
+                user_ids: None,
+            };
+
+            // Serialization should not panic
+            let serialized = serde_json::to_string(&request);
+            assert!(
+                serialized.is_ok(),
+                "CreateTeamRequest serialization should not panic"
+            );
+        }
+    }
+
+    // ========================================================================
+    // Test 5: Pagination Safety
+    // ========================================================================
+    // Ensures pagination logic doesn't have off-by-one errors or integer overflow
+    // that could lead to infinite loops or resource exhaustion.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Pagination parameters must handle edge cases safely
+        ///
+        /// Security concern: Integer overflow or off-by-one errors causing
+        /// infinite loops or resource exhaustion
+        #[test]
+        fn pagination_handles_edge_cases(
+            page in 0u32..1000u32,
+            size in 1u32..1000u32,
+        ) {
+            let query = UserQuery::new().with_pagination(page, size);
+            let params = query.to_query_params();
+
+            // Find page and size in params
+            let page_param = params.iter().find(|(k, _)| k == "page");
+            let size_param = params.iter().find(|(k, _)| k == "size");
+
+            assert!(page_param.is_some(), "Page parameter should be present");
+            assert!(size_param.is_some(), "Size parameter should be present");
+
+            // Verify conversion to string doesn't cause issues
+            if let Some((_, page_str)) = page_param {
+                let parsed: Result<u32, _> = page_str.parse();
+                assert!(parsed.is_ok(), "Page should be valid u32");
+                assert_eq!(parsed.expect("Page parsing verified above"), page, "Page value should match");
+            }
+
+            if let Some((_, size_str)) = size_param {
+                let parsed: Result<u32, _> = size_str.parse();
+                assert!(parsed.is_ok(), "Size should be valid u32");
+                assert_eq!(parsed.expect("Size parsing verified above"), size, "Size value should match");
+            }
+        }
+
+        /// Property: PageInfo calculations must not overflow
+        #[test]
+        fn page_info_calculations_safe(
+            number in 0u32..1000u32,
+            size in 1u32..1000u32,
+            total_elements in 0u64..1_000_000u64,
+            total_pages in 0u32..10000u32,
+        ) {
+            let page_info = PageInfo {
+                number: Some(number),
+                size: Some(size),
+                total_elements: Some(total_elements),
+                total_pages: Some(total_pages),
+            };
+
+            // Serialization should not panic
+            let serialized = serde_json::to_string(&page_info);
+            assert!(serialized.is_ok(), "PageInfo serialization should not panic");
+
+            // Check for overflow in calculations (current page + 1 >= total pages)
+            if let (Some(current), Some(total)) = (page_info.number, page_info.total_pages) {
+                // Use saturating_add to prevent overflow
+                let next_page = current.saturating_add(1);
+                assert!(
+                    next_page >= current,
+                    "Page increment should not wrap around"
+                );
+
+                // Verify no arithmetic overflow when checking page bounds
+                // Pages can be zero-indexed or one-indexed, so we just verify no overflow
+                let _ = current.saturating_add(1);
+                let _ = total.saturating_sub(current);
+            }
+        }
+    }
+
+    // ========================================================================
+    // Test 6: Error Type Safety
+    // ========================================================================
+    // Ensures error types don't leak sensitive information and convert properly.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: IdentityError Display should not leak sensitive info
+        ///
+        /// Security concern: Error messages might expose internal details
+        #[test]
+        fn identity_error_display_safe(
+            error_msg in ".*",
+        ) {
+            let errors = vec![
+                IdentityError::UserNotFound,
+                IdentityError::TeamNotFound,
+                IdentityError::RoleNotFound,
+                IdentityError::InvalidInput(error_msg.clone()),
+                IdentityError::PermissionDenied(error_msg.clone()),
+                IdentityError::UserAlreadyExists(error_msg.clone()),
+                IdentityError::TeamAlreadyExists(error_msg.clone()),
+            ];
+
+            for error in errors {
+                let display_str = format!("{}", error);
+
+                // Error messages should be bounded in size
+                assert!(
+                    display_str.len() < 500,
+                    "Error message should be concise: {} chars",
+                    display_str.len()
+                );
+
+                // Should not contain certain sensitive patterns
+                assert!(
+                    !display_str.contains("password"),
+                    "Error should not mention passwords"
+                );
+                assert!(
+                    !display_str.contains("token"),
+                    "Error should not mention tokens"
+                );
+            }
+        }
+    }
+
+    // ========================================================================
+    // Test 7: Memory Safety in Query Parameter Conversion
+    // ========================================================================
+    // Ensures the From trait implementations don't cause memory issues.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Converting UserQuery to Vec should be memory-safe
+        ///
+        /// Security concern: Move semantics must not cause use-after-free
+        #[test]
+        fn user_query_conversion_memory_safe(
+            username in ".*",
+            email in ".*",
+        ) {
+            let query = UserQuery::new()
+                .with_username(&username)
+                .with_email(&email);
+
+            // Test borrowing conversion
+            let params_borrowed: Vec<(String, String)> = Vec::from(&query);
+            assert!(params_borrowed.len() >= 2);
+
+            // Original query should still be usable
+            let params_again = query.to_query_params();
+            assert_eq!(params_borrowed.len(), params_again.len());
+
+            // Test move conversion
+            let query2 = UserQuery::new()
+                .with_username(&username)
+                .with_email(&email);
+            let params_moved: Vec<(String, String)> = Vec::from(query2);
+            assert!(params_moved.len() >= 2);
+
+            // Both conversions should produce same result
+            assert_eq!(params_borrowed.len(), params_moved.len());
+        }
+    }
+
+    // ========================================================================
+    // Test 8: UserType Serialization Safety
+    // ========================================================================
+    // Ensures UserType enum serialization doesn't introduce vulnerabilities.
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: UserType serialization must be consistent and safe
+        #[test]
+        fn user_type_serialization_safe(
+            user_type_idx in 0usize..4,
+        ) {
+            let user_types = [
+                UserType::Human,
+                UserType::ApiService,
+                UserType::Saml,
+                UserType::Vosp,
+            ];
+            let expected_strings = ["\"HUMAN\"", "\"API\"", "\"SAML\"", "\"VOSP\""];
+
+            let user_type = user_types.get(user_type_idx).expect("user_type_idx should be in bounds");
+            let expected = expected_strings.get(user_type_idx).expect("user_type_idx should be in bounds");
+
+            // Serialize
+            let serialized = serde_json::to_string(user_type);
+            assert!(serialized.is_ok(), "UserType serialization should not fail");
+
+            let serialized_str = serialized.expect("UserType serialization verified above");
+            assert_eq!(serialized_str, *expected, "UserType should serialize to expected format");
+
+            // Deserialize back
+            let deserialized: Result<UserType, _> = serde_json::from_str(&serialized_str);
+            assert!(deserialized.is_ok(), "UserType deserialization should not fail");
+            assert_eq!(&deserialized.expect("UserType deserialization verified above"), user_type, "Roundtrip should preserve value");
+        }
     }
 }

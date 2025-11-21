@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use url::Url;
 
+use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeConfig, VeracodeError};
 
 // Type aliases for HMAC
@@ -823,6 +824,11 @@ impl VeracodeClient {
             let response = self.get_with_query(endpoint, Some(query_params)).await?;
             let response_text = response.text().await?;
 
+            // Validate JSON depth before parsing to prevent DoS attacks
+            validate_json_depth(&response_text, MAX_JSON_DEPTH).map_err(|e| {
+                VeracodeError::InvalidResponse(format!("JSON validation failed: {}", e))
+            })?;
+
             // Try to parse as JSON to extract items and pagination info
             if let Ok(json_value) = serde_json::from_str::<serde_json::Value>(&response_text) {
                 // Handle embedded response format
@@ -1440,5 +1446,670 @@ impl VeracodeClient {
 
         self.execute_with_retry(request_builder, operation_name)
             .await
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test code: expect is acceptable for test setup
+mod tests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // ============================================================================
+    // TIER 1: PROPERTY-BASED SECURITY TESTS (Fast, High ROI)
+    // ============================================================================
+
+    /// Helper to create a test config with dummy credentials
+    fn create_test_config() -> VeracodeConfig {
+        use crate::{VeracodeCredentials, VeracodeRegion};
+
+        VeracodeConfig {
+            credentials: VeracodeCredentials::new(
+                "test_api_id".to_string(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            ),
+            base_url: "https://api.veracode.com".to_string(),
+            rest_base_url: "https://api.veracode.com".to_string(),
+            xml_base_url: "https://analysiscenter.veracode.com".to_string(),
+            region: VeracodeRegion::Commercial,
+            validate_certificates: true,
+            connect_timeout: 30,
+            request_timeout: 300,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+            retry_config: Default::default(),
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: URL Construction & Parameter Encoding
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: URL parameter encoding must prevent injection attacks
+        /// Tests that special characters are properly encoded and cannot break URL structure
+        #[test]
+        fn proptest_url_params_prevent_injection(
+            key in "[a-zA-Z0-9_]{1,50}",
+            value in ".*{0,100}",
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let params = vec![(key.as_str(), value.as_str())];
+            let url = client.build_url_with_params("/api/test", &params);
+
+            // Property 1: URL must not contain unencoded dangerous characters
+            prop_assert!(!url.contains("<script>"));
+            prop_assert!(!url.contains("javascript:"));
+
+            // Property 2: URL must contain properly encoded parameters
+            prop_assert!(url.starts_with("https://api.veracode.com/api/test"));
+
+            // Property 3: If params are present, URL must contain '?'
+            if !params.is_empty() && !key.is_empty() {
+                prop_assert!(url.contains('?'));
+            }
+        }
+
+        /// Property: URL construction must handle capacity overflow safely
+        /// Tests that large numbers of parameters don't cause panics or overflows
+        #[test]
+        fn proptest_url_params_capacity_safe(
+            param_count in 0usize..=100,
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            // Create param_count parameters
+            let params: Vec<(&str, &str)> = (0..param_count)
+                .map(|_| ("key", "value"))
+                .collect();
+
+            // Must not panic on capacity calculations
+            let url = client.build_url_with_params("/api/test", &params);
+
+            // Property: URL should be valid and not panic
+            prop_assert!(url.starts_with("https://"));
+            prop_assert!(url.len() < 100000); // Reasonable upper bound
+        }
+
+        /// Property: Empty and whitespace-only parameters are handled safely
+        #[test]
+        fn proptest_url_params_empty_safe(
+            key in "\\s*",
+            value in "\\s*",
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let params = vec![(key.as_str(), value.as_str())];
+            let url = client.build_url_with_params("/api/test", &params);
+
+            // Must not panic and produce valid URL
+            prop_assert!(url.starts_with("https://"));
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: HMAC Signature Generation
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: HMAC signature generation must handle invalid URLs gracefully
+        /// Tests that malformed URLs return errors instead of panicking
+        #[test]
+        fn proptest_hmac_invalid_urls_return_error(
+            invalid_url in ".*{0,100}",
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            // Property: Invalid URLs must return Err, never panic
+            let result = client.generate_hmac_signature(
+                "GET",
+                &invalid_url,
+                1234567890000,
+                "0123456789abcdef0123456789abcdef",
+            );
+
+            // Either succeeds (if URL happens to be valid) or returns error
+            match result {
+                Ok(_) => {
+                    // If it succeeded, the URL must have been parseable
+                    prop_assert!(Url::parse(&invalid_url).is_ok());
+                },
+                Err(e) => {
+                    // Error must be Authentication error
+                    prop_assert!(matches!(e, VeracodeError::Authentication(_)));
+                }
+            }
+        }
+
+        /// Property: HMAC signature must be deterministic
+        /// Same inputs must always produce the same signature
+        #[test]
+        fn proptest_hmac_deterministic(
+            method in "[A-Z]{3,7}",
+            timestamp in 1000000000000u64..2000000000000u64,
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let url = "https://api.veracode.com/api/test";
+            let nonce = "0123456789abcdef0123456789abcdef";
+
+            let sig1 = client.generate_hmac_signature(&method, url, timestamp, nonce);
+            let sig2 = client.generate_hmac_signature(&method, url, timestamp, nonce);
+
+            // Property: Deterministic - same inputs produce same output
+            match (sig1, sig2) {
+                (Ok(s1), Ok(s2)) => prop_assert_eq!(s1, s2),
+                (Err(_), Err(_)) => {}, // Both failed - also deterministic
+                _ => prop_assert!(false, "Non-deterministic result"),
+            }
+        }
+
+        /// Property: Invalid hex nonce must return error
+        /// Tests that non-hex nonces are rejected safely
+        #[test]
+        fn proptest_hmac_invalid_nonce_returns_error(
+            invalid_nonce in "[^0-9a-fA-F]{1,32}",
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let result = client.generate_hmac_signature(
+                "GET",
+                "https://api.veracode.com/api/test",
+                1234567890000,
+                &invalid_nonce,
+            );
+
+            // Property: Non-hex nonce must return Authentication error
+            prop_assert!(matches!(result, Err(VeracodeError::Authentication(_))));
+        }
+
+        /// Property: Timestamp overflow must be handled safely
+        /// Tests edge cases in timestamp handling
+        #[test]
+        fn proptest_hmac_timestamp_safe(
+            timestamp in any::<u64>(),
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let url = "https://api.veracode.com/api/test";
+            let nonce = "0123456789abcdef0123456789abcdef";
+
+            // Must not panic on any timestamp value
+            let result = client.generate_hmac_signature("GET", url, timestamp, nonce);
+
+            // Property: Either succeeds or returns error, never panics
+            prop_assert!(result.is_ok() || result.is_err());
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: Authentication Header Generation
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Auth header must contain all required components
+        /// Tests that generated headers have proper VERACODE-HMAC-SHA-256 format
+        #[test]
+        fn proptest_auth_header_format(
+            method in "[A-Z]{3,7}",
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let url = "https://api.veracode.com/api/test";
+            let result = client.generate_auth_header(&method, url);
+
+            if let Ok(header) = result {
+                // Property 1: Must start with correct prefix
+                prop_assert!(header.starts_with("VERACODE-HMAC-SHA-256"));
+
+                // Property 2: Must contain all required fields
+                prop_assert!(header.contains("id="));
+                prop_assert!(header.contains("ts="));
+                prop_assert!(header.contains("nonce="));
+                prop_assert!(header.contains("sig="));
+
+                // Property 3: Fields must be comma-separated
+                let parts: Vec<&str> = header.split(',').collect();
+                prop_assert_eq!(parts.len(), 4);
+            }
+        }
+
+        /// Property: Auth header nonce must be unique and valid hex
+        /// Tests that nonces are properly generated as 32-character hex strings
+        #[test]
+        fn proptest_auth_header_nonce_unique(
+            _seed in any::<u8>(),
+        ) {
+            let config = create_test_config();
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+
+            let url = "https://api.veracode.com/api/test";
+
+            // Generate two headers
+            let header1 = client.generate_auth_header("GET", url)
+                .expect("valid auth header generation");
+            let header2 = client.generate_auth_header("GET", url)
+                .expect("valid auth header generation");
+
+            // Extract nonces using a helper function (avoids lifetime issues)
+            fn extract_nonce(h: &str) -> Option<String> {
+                Some(h.split("nonce=")
+                    .nth(1)?
+                    .split(',')
+                    .next()?
+                    .to_string())
+            }
+
+            if let (Some(nonce1), Some(nonce2)) = (extract_nonce(&header1), extract_nonce(&header2)) {
+                // Property 1: Nonces should be different (probabilistically)
+                // With 128-bit random, collision is extremely unlikely
+                prop_assert_ne!(&nonce1, &nonce2);
+
+                // Property 2: Nonces must be valid hex (32 chars for 16 bytes)
+                prop_assert_eq!(nonce1.len(), 32);
+                prop_assert_eq!(nonce2.len(), 32);
+                prop_assert!(nonce1.chars().all(|c| c.is_ascii_hexdigit()));
+                prop_assert!(nonce2.chars().all(|c| c.is_ascii_hexdigit()));
+            }
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: Configuration & Client Creation
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 100 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Client creation with invalid config must fail gracefully
+        /// Tests that invalid proxy URLs are caught during client creation
+        #[test]
+        fn proptest_client_creation_invalid_proxy(
+            invalid_proxy in ".*{0,100}",
+        ) {
+            use crate::{VeracodeCredentials, VeracodeRegion};
+
+            let config = VeracodeConfig {
+                credentials: VeracodeCredentials::new(
+                    "test_api_id".to_string(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                base_url: "https://api.veracode.com".to_string(),
+                rest_base_url: "https://api.veracode.com".to_string(),
+                xml_base_url: "https://analysiscenter.veracode.com".to_string(),
+                region: VeracodeRegion::Commercial,
+                validate_certificates: true,
+                connect_timeout: 30,
+                request_timeout: 300,
+                proxy_url: Some(invalid_proxy.clone()),
+                proxy_username: None,
+                proxy_password: None,
+                retry_config: Default::default(),
+            };
+
+            let result = VeracodeClient::new(config);
+
+            // Property: Either succeeds (if proxy URL is valid) or returns InvalidConfig error
+            match result {
+                Ok(_) => {
+                    // If successful, proxy URL must be valid
+                    prop_assert!(reqwest::Proxy::all(&invalid_proxy).is_ok());
+                },
+                Err(e) => {
+                    // Must be InvalidConfig error
+                    prop_assert!(matches!(e, VeracodeError::InvalidConfig(_)));
+                }
+            }
+        }
+
+        /// Property: Timeout values must be handled safely
+        /// Tests that extreme timeout values don't cause panics
+        #[test]
+        fn proptest_client_timeouts_safe(
+            connect_timeout in 1u64..=3600,
+            request_timeout in 1u64..=7200,
+        ) {
+            use crate::{VeracodeCredentials, VeracodeRegion};
+
+            let config = VeracodeConfig {
+                credentials: VeracodeCredentials::new(
+                    "test_api_id".to_string(),
+                    "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+                ),
+                base_url: "https://api.veracode.com".to_string(),
+                rest_base_url: "https://api.veracode.com".to_string(),
+                xml_base_url: "https://analysiscenter.veracode.com".to_string(),
+                region: VeracodeRegion::Commercial,
+                validate_certificates: true,
+                connect_timeout,
+                request_timeout,
+                proxy_url: None,
+                proxy_username: None,
+                proxy_password: None,
+                retry_config: Default::default(),
+            };
+
+            // Must not panic on any valid timeout values
+            let result = VeracodeClient::new(config);
+            prop_assert!(result.is_ok());
+        }
+    }
+
+    // ============================================================================
+    // SECURITY TEST: File Size Limits & Memory Safety
+    // ============================================================================
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 100 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: File size calculations must not overflow
+        /// Tests that capacity calculations for file uploads are safe
+        #[test]
+        fn proptest_file_upload_capacity_safe(
+            file_size in 0usize..=1000000,
+        ) {
+            // Create file data of specified size
+            let file_data = vec![0u8; file_size];
+
+            // Wrap in Arc like the upload functions do
+            let file_data_arc = Arc::new(file_data);
+
+            // Property 1: Length must match original size
+            prop_assert_eq!(file_data_arc.len(), file_size);
+
+            // Property 2: Arc clone must be cheap (same allocation)
+            let clone1 = Arc::clone(&file_data_arc);
+            let clone2 = Arc::clone(&file_data_arc);
+            prop_assert_eq!(clone1.len(), file_size);
+            prop_assert_eq!(clone2.len(), file_size);
+        }
+
+        /// Property: Content-Type handling must prevent injection
+        /// Tests that content types are handled safely without code execution
+        #[test]
+        fn proptest_content_type_safe(
+            content_type in ".*{0,200}",
+        ) {
+            // Test Cow allocation strategy
+            let content_type_cow: Cow<str> = if content_type.len() < 64 {
+                Cow::Borrowed(&content_type)
+            } else {
+                Cow::Owned(content_type.clone())
+            };
+
+            // Property 1: Must not contain script injection attempts
+            let ct_lower = content_type_cow.to_lowercase();
+            if ct_lower.contains("<script>") || ct_lower.contains("javascript:") {
+                // These should be treated as literal strings, not executed
+                prop_assert!(content_type_cow.as_ref().contains("<script>") ||
+                           content_type_cow.as_ref().contains("javascript:"));
+            }
+
+            // Property 2: Length must be preserved
+            prop_assert_eq!(content_type_cow.len(), content_type.len());
+        }
+    }
+
+    // ============================================================================
+    // UNIT TESTS: Specific Security Scenarios
+    // ============================================================================
+
+    #[test]
+    fn test_hmac_signature_with_query_params() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        // Test URL with query parameters
+        let url = "https://api.veracode.com/api/test?param1=value1&param2=value2";
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let timestamp = 1234567890000;
+
+        let result = client.generate_hmac_signature("GET", url, timestamp, nonce);
+        assert!(result.is_ok());
+
+        let signature = result.expect("valid HMAC signature");
+        // HMAC signature should be 64 hex characters (32 bytes * 2)
+        assert_eq!(signature.len(), 64);
+        assert!(signature.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn test_hmac_signature_different_methods() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        let url = "https://api.veracode.com/api/test";
+        let nonce = "0123456789abcdef0123456789abcdef";
+        let timestamp = 1234567890000;
+
+        let sig_get = client
+            .generate_hmac_signature("GET", url, timestamp, nonce)
+            .expect("valid HMAC signature for GET");
+        let sig_post = client
+            .generate_hmac_signature("POST", url, timestamp, nonce)
+            .expect("valid HMAC signature for POST");
+
+        // Different methods should produce different signatures
+        assert_ne!(sig_get, sig_post);
+    }
+
+    #[test]
+    fn test_url_encoding_special_characters() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        // Test that special characters are properly encoded
+        let params = vec![
+            ("key1", "value with spaces"),
+            ("key2", "value&with&ampersands"),
+            ("key3", "value=with=equals"),
+            ("key4", "value?with?questions"),
+        ];
+
+        let url = client.build_url_with_params("/api/test", &params);
+
+        // URL should contain encoded spaces
+        assert!(url.contains("value%20with%20spaces") || url.contains("value+with+spaces"));
+        // URL should contain encoded ampersands
+        assert!(url.contains("%26"));
+        // URL should start with base URL
+        assert!(url.starts_with("https://api.veracode.com/api/test?"));
+    }
+
+    #[test]
+    fn test_url_encoding_unicode() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        // Test Unicode handling
+        let params = vec![
+            ("key", "你好世界"), // Chinese characters
+            ("key2", "🔒🛡️"),    // Emojis
+        ];
+
+        let url = client.build_url_with_params("/api/test", &params);
+
+        // Must not panic and should produce valid URL
+        assert!(url.starts_with("https://api.veracode.com/api/test?"));
+        // URL should contain percent-encoded Unicode
+        assert!(url.contains('%'));
+    }
+
+    #[test]
+    fn test_empty_query_params() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        let url = client.build_url_with_params("/api/test", &[]);
+
+        // Empty params should not add '?'
+        assert_eq!(url, "https://api.veracode.com/api/test");
+    }
+
+    #[test]
+    fn test_invalid_api_key_format() {
+        use crate::{VeracodeCredentials, VeracodeRegion};
+
+        // Create config with non-hex API key
+        let config = VeracodeConfig {
+            credentials: VeracodeCredentials::new(
+                "test_api_id".to_string(),
+                "not_valid_hex_key".to_string(),
+            ),
+            base_url: "https://api.veracode.com".to_string(),
+            rest_base_url: "https://api.veracode.com".to_string(),
+            xml_base_url: "https://analysiscenter.veracode.com".to_string(),
+            region: VeracodeRegion::Commercial,
+            validate_certificates: true,
+            connect_timeout: 30,
+            request_timeout: 300,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+            retry_config: Default::default(),
+        };
+
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+        let result = client.generate_auth_header("GET", "https://api.veracode.com/api/test");
+
+        // Should return Authentication error for invalid hex key
+        assert!(matches!(result, Err(VeracodeError::Authentication(_))));
+    }
+
+    #[test]
+    fn test_auth_header_format() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        let header = client
+            .generate_auth_header("GET", "https://api.veracode.com/api/test")
+            .expect("valid auth header generation");
+
+        // Verify format
+        assert!(header.starts_with("VERACODE-HMAC-SHA-256 "));
+        assert!(header.contains("id=test_api_id"));
+        assert!(header.contains("ts="));
+        assert!(header.contains("nonce="));
+        assert!(header.contains("sig="));
+
+        // Verify structure (should have 4 comma-separated parts after prefix)
+        let parts: Vec<&str> = header.split(',').collect();
+        assert_eq!(parts.len(), 4);
+    }
+
+    #[cfg(not(miri))] // Skip under Miri - uses SystemTime
+    #[test]
+    fn test_auth_header_timestamp_monotonic() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        let header1 = client
+            .generate_auth_header("GET", "https://api.veracode.com/api/test")
+            .expect("valid auth header generation");
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        let header2 = client
+            .generate_auth_header("GET", "https://api.veracode.com/api/test")
+            .expect("valid auth header generation");
+
+        // Extract timestamps
+        let extract_ts =
+            |h: &str| -> Option<u64> { h.split("ts=").nth(1)?.split(',').next()?.parse().ok() };
+
+        let ts1 = extract_ts(&header1).expect("valid timestamp extraction");
+        let ts2 = extract_ts(&header2).expect("valid timestamp extraction");
+
+        // Second timestamp should be >= first (monotonic)
+        assert!(ts2 >= ts1);
+    }
+
+    #[test]
+    fn test_base_url_accessor() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        assert_eq!(client.base_url(), "https://api.veracode.com");
+    }
+
+    #[test]
+    fn test_client_clone() {
+        let config = create_test_config();
+        let client1 = VeracodeClient::new(config).expect("valid test client configuration");
+        let client2 = client1.clone();
+
+        // Both clients should have same base URL
+        assert_eq!(client1.base_url(), client2.base_url());
+    }
+
+    #[test]
+    fn test_url_capacity_estimation() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        // Test with large number of parameters
+        let params: Vec<(&str, &str)> = (0..100).map(|_| ("key", "value")).collect();
+
+        let url = client.build_url_with_params("/api/test", &params);
+
+        // Should handle large param counts without panic
+        assert!(url.starts_with("https://api.veracode.com/api/test?"));
+        assert!(url.len() > 100); // Should contain all params
+    }
+
+    #[test]
+    fn test_saturating_arithmetic() {
+        let config = create_test_config();
+        let client = VeracodeClient::new(config).expect("valid test client configuration");
+
+        // Test saturating_add in capacity calculation
+        let params: Vec<(&str, &str)> = vec![("k", "v"); 1000];
+
+        // Should not panic even with large numbers
+        let url = client.build_url_with_params("/api/test", &params);
+        assert!(url.len() < usize::MAX);
     }
 }

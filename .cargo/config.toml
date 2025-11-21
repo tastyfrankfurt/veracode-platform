@@ -3,7 +3,9 @@
 rustflags = ["-C", "target-feature=+crt-static"]
 # Dynamic linking for glibc (proc-macros work, requires runtime libraries)
 
-# Miri test configuration
-[env]
-RUSTFLAGS = "-Zmiri-backtrace=full"
-MIRIFLAGS="-Zmiri-disable-isolation"
+[target.x86_64-unknown-linux-gnu]
+# Fuzzing-specific rustflags (when using +nightly)
+rustflags = [
+    # Better error messages
+    "-C", "symbol-mangling-version=v0",
+]

