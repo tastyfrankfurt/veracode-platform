@@ -1719,7 +1719,8 @@ mod kani_proofs {
         let sandbox_name = String::from("TestSandbox");
 
         let config1 = WorkflowConfig::new(app_name.clone(), sandbox_name.clone());
-        let config2 = config1.clone()
+        let config2 = config1
+            .clone()
             .with_auto_scan(false)
             .with_scan_all_modules(false);
 
@@ -1753,7 +1754,7 @@ mod kani_proofs {
 
         // Verify conversion produces Api variant
         match workflow_err {
-            WorkflowError::Api(_) => {},
+            WorkflowError::Api(_) => {}
             _ => unreachable!("Should always convert to Api variant"),
         }
     }
