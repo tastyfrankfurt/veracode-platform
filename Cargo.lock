@@ -2786,7 +2786,7 @@ dependencies = [
 
 [[package]]
 name = "veraaudit"
-version = "0.5.12"
+version = "0.5.13"
 dependencies = [
  "anyhow",
  "backon",
@@ -2811,7 +2811,7 @@ dependencies = [
 
 [[package]]
 name = "veracmek"
-version = "0.5.11"
+version = "0.5.12"
 dependencies = [
  "anyhow",
  "backon",
@@ -2856,7 +2856,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.6.3"
+version = "0.6.4"
 dependencies = [
  "backon",
  "chrono",
