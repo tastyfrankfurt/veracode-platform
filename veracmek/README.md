@@ -339,9 +339,9 @@ veracmek status
 - **clap**: Command-line argument parsing
 - **tokio**: Async runtime
 - **serde/serde_json**: JSON serialization
-- **veracode-platform**: Veracode API client library
+- **veracode-platform** (v0.7.5): Veracode API client library with comprehensive security hardening
 - **vaultrs**: HashiCorp Vault client
-- **backoff**: Retry logic with exponential backoff
+- **backon**: Retry logic with exponential backoff
 - **secrecy**: Secure handling of sensitive data
 - **anyhow/thiserror**: Error handling
 
