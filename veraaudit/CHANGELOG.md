@@ -5,6 +5,42 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.13] - 2025-11-21
+
+### Changed
+- **Dependency Update**: Upgraded `veracode-platform` from v0.7.1 to v0.7.5
+  - **Security Hardening**: Benefits from comprehensive security improvements in the API library
+    - JSON depth validation to prevent DoS attacks from deeply nested structures
+    - Error message sanitization to prevent information disclosure
+    - Enhanced input validation across all API endpoints
+    - Protection against OWASP Top 10 vulnerabilities (injection, insecure design, security misconfiguration)
+  - **Advanced Security Testing**: API library now includes property-based testing (proptest), formal verification (kani), and memory safety testing (miri)
+  - **No Breaking Changes**: Fully backward compatible upgrade with enhanced security posture
+  - See `veracode-api/CHANGELOG.md` for complete details of security improvements
+
+### Technical Details
+- **Modified Files**: `Cargo.toml` - Updated `veracode-platform` dependency version
+- **Impact**: All API calls (credential retrieval, audit log fetching) now benefit from enhanced security validations
+- **Compatibility**: No changes to veraaudit functionality or API - purely security improvements in underlying library
+
+## [0.5.12] - 2025-11-11
+
+### Enhanced
+- **Code Quality**: Applied strict clippy lints and defensive programming practices
+  - Added comprehensive clippy lint rules for defensive programming (indexing_slicing, unwrap_used, panic, etc.)
+  - Fixed all arithmetic operations to use checked/saturating operations to prevent integer overflow
+  - Enhanced documentation with error conditions and panic scenarios
+  - Added validation module for input sanitization
+  - All code now passes `cargo clippy` with strict warning levels
+
+### Changed
+- **Dependency Update**: Updated `veracode-platform` to v0.7.2 for improved code quality
+
+### Technical Details
+- **Clippy Lints Added**: 20+ defensive programming lints (see `Cargo.toml`)
+- **Modified Files**: All source files - enhanced with safer arithmetic and better documentation
+- **Testing**: All 100+ tests continue to pass with stricter lint rules
+
 ## [0.5.11] - 2025-11-03
 
 ### Security
