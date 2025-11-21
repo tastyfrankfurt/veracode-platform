@@ -50,10 +50,15 @@ jobs:
       with:
         toolchain: stable
         override: true
-        components: rustfmt, clippy, audit, auditable
-        
+        components: rustfmt, clippy
+
     - name: Add target
       run: rustup target add ${{ matrix.target }}
+
+    - name: Install cargo-audit and cargo-auditable
+      run: |
+        cargo install cargo-audit --locked
+        cargo install cargo-auditable --locked
     
     - name: Cache cargo registry
       uses: actions/cache@v3

@@ -222,11 +222,16 @@ jobs:
       with:
         toolchain: stable
         override: true
-        components: audit, auditable
 
     - name: Add target
       if: steps.check_package.outputs.skip != 'true'
       run: rustup target add ${{ matrix.target }}
+
+    - name: Install cargo-audit and cargo-auditable
+      if: steps.check_package.outputs.skip != 'true'
+      run: |
+        cargo install cargo-audit --locked
+        cargo install cargo-auditable --locked
 
     - name: Install build-essential for glibc Linux
       if: matrix.target == 'x86_64-unknown-linux-gnu' && steps.check_package.outputs.skip != 'true'
@@ -242,7 +247,7 @@ jobs:
 
     - name: Build release binary
       if: steps.check_package.outputs.skip != 'true'
-      run: cargo auditable build --release --target ${{ matrix.target }} -p ${{ matrix.package }}
+      run: cargo auditable build --profile release --target ${{ matrix.target }} -p ${{ matrix.package }}
 
     - name: Create zip archive Windows
       if: matrix.os == 'windows-latest' && steps.check_package.outputs.skip != 'true'
