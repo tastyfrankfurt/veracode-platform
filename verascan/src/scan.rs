@@ -15,18 +15,18 @@ use std::path::{Path, PathBuf};
 // IdentityApi import removed - no longer needed since team validation is handled in app creation
 use veracode_platform::{RetryConfig, VeracodeConfig, VeracodeRegion};
 
-/// Configure VeracodeConfig with VERASCAN environment variables
+/// Configure `VeracodeConfig` with VERASCAN environment variables
 ///
 /// This function applies the same environment variables used by GitLab HTTP client
-/// to the VeracodeConfig for consistent configuration across the application.
+/// to the `VeracodeConfig` for consistent configuration across the application.
 #[must_use]
 pub fn configure_veracode_with_env_vars(config: VeracodeConfig) -> VeracodeConfig {
     configure_veracode_with_env_vars_conditional(config, true)
 }
 
-/// Configure VeracodeConfig with environment variables (with conditional proxy loading)
+/// Configure `VeracodeConfig` with environment variables (with conditional proxy loading)
 ///
-/// This function applies various environment variable settings to the VeracodeConfig.
+/// This function applies various environment variable settings to the `VeracodeConfig`.
 /// If `include_proxy` is false, proxy configuration from env vars is skipped.
 #[must_use]
 pub fn configure_veracode_with_env_vars_conditional(
@@ -150,6 +150,9 @@ pub fn configure_veracode_with_env_vars_conditional(
 }
 
 /// Validate baseline file early before starting the scan
+///
+/// # Errors
+/// Returns an error code if the baseline file does not exist, is not a file, or has invalid size
 pub fn validate_baseline_file_early(baseline_path: &str) -> Result<(), i32> {
     debug!("🔍 Validating baseline file: {baseline_path}");
 
@@ -213,7 +216,8 @@ pub fn validate_baseline_file_early(baseline_path: &str) -> Result<(), i32> {
         return Err(1);
     }
 
-    if baseline.metadata.finding_count != baseline.findings.len() as u32 {
+    if baseline.metadata.finding_count != u32::try_from(baseline.findings.len()).unwrap_or(u32::MAX)
+    {
         error!(
             "⚠️  Warning: Baseline file '{}' metadata.finding_count ({}) does not match actual findings count ({})",
             baseline_path,
@@ -223,14 +227,13 @@ pub fn validate_baseline_file_early(baseline_path: &str) -> Result<(), i32> {
     }
 
     // Check for minimal required fields in findings
-    if !baseline.findings.is_empty() {
-        let first_finding = &baseline.findings[0];
-        if first_finding.finding_id.is_empty() || first_finding.cwe_id.is_empty() {
-            error!(
-                "❌ Baseline file '{baseline_path}' contains findings with empty required fields (finding_id, cwe_id)"
-            );
-            return Err(1);
-        }
+    if let Some(first_finding) = baseline.findings.first()
+        && (first_finding.finding_id.is_empty() || first_finding.cwe_id.is_empty())
+    {
+        error!(
+            "❌ Baseline file '{baseline_path}' contains findings with empty required fields (finding_id, cwe_id)"
+        );
+        return Err(1);
     }
 
     debug!("   ✅ Baseline file validation passed");
@@ -249,6 +252,10 @@ pub fn validate_baseline_file_early(baseline_path: &str) -> Result<(), i32> {
     Ok(())
 }
 
+/// Execute pipeline scan workflow
+///
+/// # Errors
+/// Returns an error code if pipeline scan submission or processing fails
 pub fn execute_pipeline_scan(
     matched_files: &[PathBuf],
     veracode_config: &VeracodeConfig,
@@ -300,7 +307,7 @@ fn parse_region(region_str: &str) -> Result<VeracodeRegion, i32> {
     }
 }
 
-/// Parse development stage string to DevStage enum
+/// Parse development stage string to `DevStage` enum
 fn parse_dev_stage(stage_str: &str) -> veracode_platform::pipeline::DevStage {
     use veracode_platform::pipeline::DevStage;
 
@@ -401,9 +408,12 @@ fn strip_credentials_from_http_url(url: &str) -> String {
 
     if let Some(at_pos) = url.find('@') {
         // Find the protocol part (http:// or https://)
-        if let Some(protocol_end) = url.find("://") {
-            let protocol = &url[..protocol_end + 3]; // Include ://
-            let after_at = &url[at_pos + 1..]; // Everything after @
+        if let Some(protocol_end) = url.find("://")
+            && let (Some(protocol), Some(after_at)) = (
+                url.get(..protocol_end.saturating_add(3)),
+                url.get(at_pos.saturating_add(1)..),
+            )
+        {
             return format!("{protocol}{after_at}");
         }
     }
@@ -419,18 +429,25 @@ fn redact_url_password(url: &str) -> String {
 
     if let Some(at_pos) = url.find('@') {
         // Find the protocol part (http:// or https://)
-        if let Some(protocol_end) = url.find("://") {
-            let protocol = &url[..protocol_end + 3]; // Include ://
-            let credentials_and_host = &url[protocol_end + 3..]; // Everything after protocol
-
-            if let Some(colon_pos) = credentials_and_host.find(':')
-                && colon_pos < at_pos - protocol_end - 3
-            {
+        if let Some(protocol_end) = url.find("://")
+            && let (Some(protocol), Some(credentials_and_host)) = (
+                url.get(..protocol_end.saturating_add(3)),
+                url.get(protocol_end.saturating_add(3)..),
+            )
+            && let Some(colon_pos) = credentials_and_host.find(':')
+            && colon_pos < at_pos.saturating_sub(protocol_end).saturating_sub(3)
+            && let (Some(username), Some(after_at)) = (
                 // Colon is in credentials part
-                let username = &credentials_and_host[..colon_pos];
-                let after_at = &credentials_and_host[at_pos - protocol_end - 3 + 1..]; // Everything after @
-                return format!("{protocol}{username}:[REDACTED]@{after_at}");
-            }
+                credentials_and_host.get(..colon_pos),
+                credentials_and_host.get(
+                    at_pos
+                        .saturating_sub(protocol_end)
+                        .saturating_sub(3)
+                        .saturating_add(1)..,
+                ),
+            )
+        {
+            return format!("{protocol}{username}:[REDACTED]@{after_at}");
         }
     }
 
@@ -481,7 +498,7 @@ fn extract_ssh_url_parts(ssh_url: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = without_prefix.splitn(2, ':').collect();
 
     if parts.len() == 2 {
-        Some((parts[0].to_string(), parts[1].to_string()))
+        Some((parts.first()?.to_string(), parts.get(1)?.to_string()))
     } else {
         None
     }
@@ -522,7 +539,21 @@ fn create_pipeline_config(args: &Args, region: VeracodeRegion) -> PipelineScanCo
             threads: *threads,
         }
     } else {
-        panic!("create_pipeline_config called with non-pipeline command");
+        // This should never happen as this function is only called with Pipeline commands
+        // Return a default config instead of panicking
+        error!("create_pipeline_config called with non-pipeline command");
+        PipelineScanConfig {
+            project_name: "Unknown".to_string(),
+            project_uri: None,
+            dev_stage: veracode_platform::pipeline::DevStage::Development,
+            region,
+            timeout: Some(60),
+            include_low_severity: Some(true),
+            max_findings: None,
+            selected_modules: None,
+            app_profile_name: None,
+            threads: 10,
+        }
     }
 }
 
@@ -651,7 +682,7 @@ fn display_concurrent_results(
     for (index, results) in results_vec.iter().enumerate() {
         info!(
             "\n--- Scan {} of {} ({}) ---",
-            index + 1,
+            index.saturating_add(1),
             results_vec.len(),
             results.scan.binary_name
         );
@@ -661,7 +692,7 @@ fn display_concurrent_results(
     let total_findings: u32 = results_vec.iter().map(|r| r.summary.total).sum();
     let total_high_critical: u32 = results_vec
         .iter()
-        .map(|r| r.summary.very_high + r.summary.high)
+        .map(|r| r.summary.very_high.saturating_add(r.summary.high))
         .sum();
 
     info!("\n🎯 Overall Summary:");
@@ -1160,7 +1191,7 @@ fn handle_baseline_operations<'a>(
 
                     // Update stats
                     filtered_aggregated.stats.total_findings =
-                        filtered_aggregated.findings.len() as u32;
+                        u32::try_from(filtered_aggregated.findings.len()).unwrap_or(u32::MAX);
 
                     return Cow::Owned(filtered_aggregated);
                 }
@@ -1226,7 +1257,7 @@ async fn handle_policy_assessment<'a>(
 
                         // Update stats
                         filtered_aggregated.stats.total_findings =
-                            filtered_aggregated.findings.len() as u32;
+                            u32::try_from(filtered_aggregated.findings.len()).unwrap_or(u32::MAX);
 
                         return (Some(assessment), Cow::Owned(filtered_aggregated));
                     }
@@ -1542,7 +1573,8 @@ fn calculate_severity_breakdown(findings: &[FindingWithSource]) -> serde_json::V
             5 => "Very High",
             _ => "Unknown",
         };
-        *breakdown.entry(severity_name.to_string()).or_insert(0u32) += 1;
+        let count = breakdown.entry(severity_name.to_string()).or_insert(0u32);
+        *count = count.saturating_add(1);
     }
 
     serde_json::to_value(breakdown).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))
@@ -1553,9 +1585,10 @@ fn calculate_cwe_breakdown(findings: &[FindingWithSource]) -> serde_json::Value 
     let mut breakdown = std::collections::HashMap::new();
 
     for finding in findings {
-        *breakdown
+        let count = breakdown
             .entry(finding.finding.cwe_id.clone())
-            .or_insert(0u32) += 1;
+            .or_insert(0u32);
+        *count = count.saturating_add(1);
     }
 
     // Get top 10 CWEs by count
@@ -1569,6 +1602,9 @@ fn calculate_cwe_breakdown(findings: &[FindingWithSource]) -> serde_json::Value 
 // Team validation removed - now handled during application creation with efficient individual lookups
 
 /// Execute assessment scan workflow
+///
+/// # Errors
+/// Returns an error code if assessment scan upload or processing fails
 pub fn execute_assessment_scan(
     matched_files: &[PathBuf],
     veracode_config: &VeracodeConfig,
@@ -1661,13 +1697,17 @@ fn execute_assessment_scan_with_runtime(
 ) -> Result<(), i32> {
     submitter.display_config();
 
-    tokio::runtime::Builder::new_multi_thread()
+    let runtime = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()
-        .unwrap()
-        .block_on(
-            async move { execute_assessment_scan_async(submitter, matched_files, args).await },
-        )
+        .map_err(|e| {
+            error!("❌ Failed to create async runtime: {e}");
+            1
+        })?;
+
+    runtime.block_on(
+        async move { execute_assessment_scan_async(submitter, matched_files, args).await },
+    )
 }
 
 /// Async execution of assessment scan
@@ -1786,6 +1826,7 @@ async fn execute_assessment_scan_async(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
@@ -1795,36 +1836,52 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_adds_extension() {
-        let result = ensure_extension("test-file", "json").unwrap();
-        assert_eq!(result.extension().unwrap(), "json");
-        assert_eq!(result.file_stem().unwrap(), "test-file");
+        let result = ensure_extension("test-file", "json").expect("should add extension");
+        assert_eq!(result.extension().expect("should have extension"), "json");
+        assert_eq!(
+            result.file_stem().expect("should have file stem"),
+            "test-file"
+        );
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_preserves_existing_extension() {
-        let result = ensure_extension("test-file.json", "json").unwrap();
-        assert_eq!(result.extension().unwrap(), "json");
-        assert_eq!(result.file_stem().unwrap(), "test-file");
+        let result = ensure_extension("test-file.json", "json").expect("should preserve extension");
+        assert_eq!(result.extension().expect("should have extension"), "json");
+        assert_eq!(
+            result.file_stem().expect("should have file stem"),
+            "test-file"
+        );
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_replaces_wrong_extension() {
-        let result = ensure_extension("test-file.txt", "json").unwrap();
-        assert_eq!(result.extension().unwrap(), "json");
-        assert_eq!(result.file_stem().unwrap(), "test-file");
+        let result = ensure_extension("test-file.txt", "json").expect("should replace extension");
+        assert_eq!(result.extension().expect("should have extension"), "json");
+        assert_eq!(
+            result.file_stem().expect("should have file stem"),
+            "test-file"
+        );
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_rejects_directory() {
-        let temp_dir = TempDir::new().unwrap();
-        let dir_path = temp_dir.path().to_str().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
+        let dir_path = temp_dir
+            .path()
+            .to_str()
+            .expect("should convert path to str");
 
         let result = ensure_extension(dir_path, "json");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("is a directory"));
+        assert!(
+            result
+                .expect_err("should be error")
+                .contains("is a directory")
+        );
     }
 
     #[test]
@@ -1832,26 +1889,30 @@ mod tests {
     fn test_ensure_extension_rejects_nonexistent_parent() {
         let result = ensure_extension("/nonexistent/dir/file.json", "json");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("does not exist"));
+        assert!(
+            result
+                .expect_err("should be error")
+                .contains("does not exist")
+        );
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension_works_with_existing_parent() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
         let file_path = temp_dir.path().join("test-file");
-        let file_path_str = file_path.to_str().unwrap();
+        let file_path_str = file_path.to_str().expect("should convert path to str");
 
-        let result = ensure_extension(file_path_str, "json").unwrap();
-        assert_eq!(result.extension().unwrap(), "json");
+        let result = ensure_extension(file_path_str, "json").expect("should add extension");
+        assert_eq!(result.extension().expect("should have extension"), "json");
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_validate_export_paths_early_success() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
         let file_path = temp_dir.path().join("test-report");
-        let file_path_str = file_path.to_str().unwrap();
+        let file_path_str = file_path.to_str().expect("should convert path to str");
 
         let args = Args {
             command: Commands::Pipeline {

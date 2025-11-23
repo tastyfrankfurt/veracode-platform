@@ -275,6 +275,9 @@ impl GitLabExporter {
     }
 
     /// Export aggregated findings to GitLab SAST format
+    ///
+    /// # Errors
+    /// Returns an error if GitLab SAST report generation or file writing fails
     pub async fn export_to_gitlab_sast(
         &self,
         aggregated: &AggregatedFindings,
@@ -398,12 +401,12 @@ impl GitLabExporter {
         let findings_vec = vec![finding_with_source.clone()];
         let vulnerabilities = unified_mapper.map_pipeline_findings(&findings_vec)?;
 
-        if vulnerabilities.is_empty() {
-            return Err("Failed to map finding to GitLab vulnerability".into());
-        }
-
         // Apply file path resolution to the mapped vulnerability
-        let mut vulnerability = vulnerabilities.into_iter().next().unwrap();
+        let mut vulnerability = vulnerabilities
+            .into_iter()
+            .next()
+            .ok_or("Failed to map finding to GitLab vulnerability")?;
+
         if let Some(ref file) = vulnerability.location.file {
             let resolved_file_path = self.resolve_file_path(file);
             vulnerability.location.file = Some(resolved_file_path.clone());
@@ -420,9 +423,10 @@ impl GitLabExporter {
                 if identifier.identifier_type == "veracode" {
                     // Extract the original components from the value
                     let parts: Vec<&str> = identifier.value.split(':').collect();
-                    if parts.len() == 3 {
-                        let category_id = parts[0];
-                        let line_number = parts[2];
+                    if parts.len() == 3
+                        && let (Some(&category_id), Some(&line_number)) =
+                            (parts.first(), parts.get(2))
+                    {
                         // Reconstruct with resolved file path
                         identifier.value =
                             format!("{category_id}:{resolved_file_path}:{line_number}");
@@ -435,6 +439,9 @@ impl GitLabExporter {
     }
 
     /// Convert REST API finding (policy/sandbox scan) to GitLab vulnerability format
+    ///
+    /// # Errors
+    /// Returns an error if finding conversion or field mapping fails
     pub fn convert_rest_finding_to_vulnerability(
         &self,
         rest_finding: &veracode_platform::findings::RestFinding,
@@ -460,12 +467,12 @@ impl GitLabExporter {
         let vulnerabilities =
             unified_mapper.map_policy_findings(&rest_findings_vec, scan_id, project_name)?;
 
-        if vulnerabilities.is_empty() {
-            return Err("Failed to map REST finding to GitLab vulnerability".into());
-        }
-
         // Apply file path resolution to the mapped vulnerability
-        let mut vulnerability = vulnerabilities.into_iter().next().unwrap();
+        let mut vulnerability = vulnerabilities
+            .into_iter()
+            .next()
+            .ok_or("Failed to map REST finding to GitLab vulnerability")?;
+
         if let Some(ref file) = vulnerability.location.file {
             let resolved_file_path = self.resolve_file_path(file);
             vulnerability.location.file = Some(resolved_file_path.clone());
@@ -482,9 +489,10 @@ impl GitLabExporter {
                 if identifier.identifier_type == "veracode" {
                     // Extract the original components from the value
                     let parts: Vec<&str> = identifier.value.split(':').collect();
-                    if parts.len() == 3 {
-                        let category_id = parts[0];
-                        let line_number = parts[2];
+                    if parts.len() == 3
+                        && let (Some(&category_id), Some(&line_number)) =
+                            (parts.first(), parts.get(2))
+                    {
                         // Reconstruct with resolved file path
                         identifier.value =
                             format!("{category_id}:{resolved_file_path}:{line_number}");
@@ -501,6 +509,7 @@ impl GitLabExporter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::findings::{FindingWithSource, ScanSource};
@@ -560,7 +569,7 @@ mod tests {
 
         let vulnerability = exporter
             .convert_finding_to_vulnerability(&finding_with_source)
-            .unwrap();
+            .expect("Expected valid vulnerability conversion");
 
         assert_eq!(vulnerability.name, Some("Cross-Site Scripting".to_string()));
         assert!(matches!(vulnerability.severity, Some(GitLabSeverity::High)));
@@ -587,7 +596,9 @@ mod tests {
             vulnerability.details.is_some(),
             "Details should be included in GitLab vulnerability"
         );
-        let details = vulnerability.details.unwrap();
+        let details = vulnerability
+            .details
+            .expect("Expected details to be present");
         assert!(details.items.contains_key("veracode_issue_id"));
         assert!(details.items.contains_key("scan_id"));
     }
@@ -633,10 +644,11 @@ mod tests {
 
         let vulnerability = exporter
             .convert_finding_to_vulnerability(&finding_with_source)
-            .unwrap();
+            .expect("Expected valid vulnerability conversion");
 
         // Serialize to JSON to verify the details are included
-        let json = serde_json::to_string_pretty(&vulnerability).unwrap();
+        let json = serde_json::to_string_pretty(&vulnerability)
+            .expect("Expected valid JSON serialization");
         info!("GitLab Vulnerability JSON:\n{json}");
 
         // Check that details are in the JSON
@@ -976,10 +988,14 @@ mod tests {
                 info!("📝 Test report ({}) written to: {}", version, output_path);
             }
 
-            match validate_against_schema(version, &report).await {
-                Ok(_) => info!("✅ Schema {} validation passed!", version),
-                Err(e) => panic!("Schema {} validation failed: {}", version, e),
-            }
+            let validation_result = validate_against_schema(version, &report).await;
+            assert!(
+                validation_result.is_ok(),
+                "Schema {} validation failed: {}",
+                version,
+                validation_result.unwrap_err()
+            );
+            info!("✅ Schema {} validation passed!", version);
         }
 
         info!(

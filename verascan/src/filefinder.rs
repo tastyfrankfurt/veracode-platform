@@ -52,6 +52,13 @@ impl FileFinder {
         }
     }
 
+    /// Parses and validates search configuration from raw parameters.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SearchError::DirectoryNotFound` if the directory does not exist.
+    /// Returns `SearchError::NotADirectory` if the path exists but is not a directory.
+    /// Returns `SearchError::InvalidPattern` if any pattern has invalid glob syntax or if no valid patterns are provided.
     pub fn parse_config(
         directory: &str,
         patterns_str: &str,
@@ -95,6 +102,11 @@ impl FileFinder {
         })
     }
 
+    /// Searches for files matching the configured patterns.
+    ///
+    /// # Errors
+    ///
+    /// Returns `SearchError::IoError` if reading the directory or directory entries fails.
     pub fn search(&self, config: &SearchConfig) -> Result<Vec<PathBuf>, SearchError> {
         let mut matched_files = Vec::new();
 
@@ -337,6 +349,7 @@ impl FileFinder {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
@@ -348,10 +361,11 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_parse_config_valid() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
         let temp_path = temp_dir.path().to_string_lossy();
 
-        let config = FileFinder::parse_config(&temp_path, "*.txt,*.rs", false, false).unwrap();
+        let config = FileFinder::parse_config(&temp_path, "*.txt,*.rs", false, false)
+            .expect("should parse config");
         assert_eq!(config.patterns.len(), 2);
         assert!(!config.recursive);
     }
@@ -366,7 +380,7 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_parse_config_invalid_pattern() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
         let temp_path = temp_dir.path().to_string_lossy();
 
         let result = FileFinder::parse_config(&temp_path, "[invalid", false, false);
@@ -376,14 +390,14 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_directory_search() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
         let temp_path = temp_dir.path();
 
         // Create test files
-        File::create(temp_path.join("test.txt")).unwrap();
-        File::create(temp_path.join("example.rs")).unwrap();
-        File::create(temp_path.join("data.csv")).unwrap();
-        File::create(temp_path.join("test_file.log")).unwrap();
+        File::create(temp_path.join("test.txt")).expect("should create test.txt");
+        File::create(temp_path.join("example.rs")).expect("should create example.rs");
+        File::create(temp_path.join("data.csv")).expect("should create data.csv");
+        File::create(temp_path.join("test_file.log")).expect("should create test_file.log");
 
         let finder = FileFinder::new();
         let config = FileFinder::parse_config(
@@ -392,38 +406,38 @@ mod tests {
             false,
             false,
         )
-        .unwrap();
+        .expect("should parse config");
 
-        let matched_files = finder.search(&config).unwrap();
+        let matched_files = finder.search(&config).expect("should search files");
         assert_eq!(matched_files.len(), 3); // test.txt, example.rs, test_file.log
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_recursive_search() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("should create temp dir");
         let temp_path = temp_dir.path();
 
         // Create subdirectory
         let sub_dir = temp_path.join("subdir");
-        create_dir(&sub_dir).unwrap();
+        create_dir(&sub_dir).expect("should create subdir");
 
         // Create nested subdirectory
         let nested_dir = sub_dir.join("nested");
-        create_dir(&nested_dir).unwrap();
+        create_dir(&nested_dir).expect("should create nested dir");
 
         // Create test files in different directories
-        File::create(temp_path.join("root.txt")).unwrap();
-        File::create(temp_path.join("root.rs")).unwrap();
-        File::create(sub_dir.join("sub.txt")).unwrap();
-        File::create(nested_dir.join("nested.txt")).unwrap();
-        File::create(nested_dir.join("other.log")).unwrap();
+        File::create(temp_path.join("root.txt")).expect("should create root.txt");
+        File::create(temp_path.join("root.rs")).expect("should create root.rs");
+        File::create(sub_dir.join("sub.txt")).expect("should create sub.txt");
+        File::create(nested_dir.join("nested.txt")).expect("should create nested.txt");
+        File::create(nested_dir.join("other.log")).expect("should create other.log");
 
         let finder = FileFinder::new();
-        let config =
-            FileFinder::parse_config(&temp_path.to_string_lossy(), "*.txt", true, false).unwrap();
+        let config = FileFinder::parse_config(&temp_path.to_string_lossy(), "*.txt", true, false)
+            .expect("should parse config");
 
-        let matched_files = finder.search(&config).unwrap();
+        let matched_files = finder.search(&config).expect("should search files");
         assert_eq!(matched_files.len(), 3); // root.txt, sub.txt, nested.txt
     }
 }

@@ -28,7 +28,7 @@ pub struct ExportConfig<'a> {
     pub app_profile_name: Cow<'a, str>,
     /// Optional sandbox name for sandbox scans (if None, retrieves policy scan findings)
     pub sandbox_name: Option<Cow<'a, str>>,
-    /// Optional sandbox GUID for sandbox scans (resolved internally from sandbox_name)
+    /// Optional sandbox GUID for sandbox scans (resolved internally from `sandbox_name`)
     pub sandbox_guid: Option<Cow<'a, str>>,
     /// Export format: "gitlab", "json", "csv", "all"
     pub export_format: Cow<'a, str>,
@@ -84,7 +84,14 @@ impl From<VeracodeError> for ExportError {
     fn from(err: VeracodeError) -> Self {
         match err {
             VeracodeError::NotFound(_) => ExportError::BuildNotFound,
-            _ => ExportError::Api(err),
+            VeracodeError::Http(_)
+            | VeracodeError::Serialization(_)
+            | VeracodeError::Authentication(_)
+            | VeracodeError::InvalidResponse(_)
+            | VeracodeError::InvalidConfig(_)
+            | VeracodeError::RetryExhausted(_)
+            | VeracodeError::RateLimited { .. }
+            | VeracodeError::Validation(_) => ExportError::Api(err),
         }
     }
 }
@@ -127,6 +134,9 @@ impl ExportWorkflow {
     }
 
     /// Execute the complete export workflow
+    ///
+    /// # Errors
+    /// Returns an error if configuration validation fails, scan retrieval fails, or export operations fail
     pub async fn execute(&self) -> Result<(), ExportError> {
         debug!("🚀 Starting findings export from completed scan");
         debug!("   Application Profile: {}", self.config.app_profile_name);
@@ -284,7 +294,16 @@ impl ExportWorkflow {
                             ExportError::ApplicationNotFound
                         }
                     }
-                    _ => ExportError::Api(VeracodeError::InvalidResponse(e.to_string())),
+                    veracode_platform::policy::PolicyError::Api(_)
+                    | veracode_platform::policy::PolicyError::InvalidConfig(_)
+                    | veracode_platform::policy::PolicyError::ScanFailed(_)
+                    | veracode_platform::policy::PolicyError::EvaluationError(_)
+                    | veracode_platform::policy::PolicyError::PermissionDenied
+                    | veracode_platform::policy::PolicyError::Unauthorized
+                    | veracode_platform::policy::PolicyError::InternalServerError
+                    | veracode_platform::policy::PolicyError::Timeout => {
+                        ExportError::Api(VeracodeError::InvalidResponse(e.to_string()))
+                    }
                 }
             })?;
 
@@ -344,7 +363,7 @@ impl ExportWorkflow {
         Ok(aggregated)
     }
 
-    /// Convert REST findings and summary report to AggregatedFindings format (hybrid approach)
+    /// Convert REST findings and summary report to `AggregatedFindings` format (hybrid approach)
     fn convert_findings_to_aggregated(
         &self,
         summary_report: &veracode_platform::policy::SummaryReport,
@@ -387,7 +406,7 @@ impl ExportWorkflow {
             scan_status: veracode_platform::pipeline::ScanStatus::Success,
             project_uri: Some("".to_string()),
             source_file: self.create_source_file_name(),
-            finding_count: converted_findings.len() as u32, // Actual processed count after filtering
+            finding_count: u32::try_from(converted_findings.len()).unwrap_or(u32::MAX), // Actual processed count after filtering
         }];
 
         // Calculate severity breakdown from converted findings for GitLab export needs
@@ -402,15 +421,15 @@ impl ExportWorkflow {
         for finding in &converted_findings {
             let severity_key = finding.finding.severity.to_string();
             let count = severity_distribution.entry(severity_key).or_insert(0u32);
-            *count += 1;
+            *count = count.saturating_add(1);
 
             match finding.finding.severity {
-                5 => very_high += 1,
-                4 => high += 1,
-                3 => medium += 1,
-                2 => low += 1,
-                1 => very_low += 1,
-                0 => informational += 1,
+                5 => very_high = very_high.saturating_add(1),
+                4 => high = high.saturating_add(1),
+                3 => medium = medium.saturating_add(1),
+                2 => low = low.saturating_add(1),
+                1 => very_low = very_low.saturating_add(1),
+                0 => informational = informational.saturating_add(1),
                 _ => {}
             }
         }
@@ -427,26 +446,33 @@ impl ExportWorkflow {
         };
 
         // Calculate stats from converted findings (needed for detailed export)
-        let unique_cwe_count = converted_findings
-            .iter()
-            .map(|f| &f.finding.cwe_id)
-            .filter(|cwe| !cwe.is_empty() && *cwe != "0")
-            .collect::<std::collections::HashSet<_>>()
-            .len() as u32;
+        let unique_cwe_count = u32::try_from(
+            converted_findings
+                .iter()
+                .map(|f| &f.finding.cwe_id)
+                .filter(|cwe| !cwe.is_empty() && *cwe != "0")
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+        )
+        .unwrap_or(u32::MAX);
 
-        let unique_files_count = converted_findings
-            .iter()
-            .map(|f| &f.finding.files.source_file.file)
-            .collect::<std::collections::HashSet<_>>()
-            .len() as u32;
+        let unique_files_count = u32::try_from(
+            converted_findings
+                .iter()
+                .map(|f| &f.finding.files.source_file.file)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+        )
+        .unwrap_or(u32::MAX);
 
         let top_cwe_ids = {
             let mut cwe_counts: HashMap<String, u32> = HashMap::new();
             for finding in &converted_findings {
                 if !finding.finding.cwe_id.is_empty() && finding.finding.cwe_id != "0" {
-                    *cwe_counts
+                    let count = cwe_counts
                         .entry(finding.finding.cwe_id.clone())
-                        .or_insert(0) += 1;
+                        .or_insert(0);
+                    *count = count.saturating_add(1);
                 }
             }
             let mut cwe_vec: Vec<_> = cwe_counts.into_iter().collect();
@@ -454,14 +480,19 @@ impl ExportWorkflow {
             cwe_vec
                 .into_iter()
                 .take(10)
-                .map(|(cwe_id, count)| CweStatistic {
-                    cwe_id,
-                    count,
-                    percentage: if !converted_findings.is_empty() {
+                .map(|(cwe_id, count)| {
+                    // Precision loss acceptable: converting counts to f64 for percentage calculation
+                    #[allow(clippy::cast_precision_loss)]
+                    let percentage = if !converted_findings.is_empty() {
                         (count as f64 / converted_findings.len() as f64) * 100.0
                     } else {
                         0.0
-                    },
+                    };
+                    CweStatistic {
+                        cwe_id,
+                        count,
+                        percentage,
+                    }
                 })
                 .collect()
         };
@@ -715,6 +746,7 @@ impl ExportWorkflow {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use std::borrow::Cow;
@@ -825,13 +857,19 @@ mod tests {
         // Test adding extension
         let path = Path::new("report");
         let result = workflow.ensure_extension(path, "json");
-        assert_eq!(result.extension().unwrap(), "json");
+        assert_eq!(result.extension().expect("should have extension"), "json");
 
         // Test preserving existing extension
         let path_with_ext = Path::new("report.json");
         let result_with_ext = workflow.ensure_extension(path_with_ext, "json");
-        assert_eq!(result_with_ext.extension().unwrap(), "json");
-        assert_eq!(result_with_ext.file_stem().unwrap(), "report");
+        assert_eq!(
+            result_with_ext.extension().expect("should have extension"),
+            "json"
+        );
+        assert_eq!(
+            result_with_ext.file_stem().expect("should have file stem"),
+            "report"
+        );
     }
 
     #[test]
@@ -854,12 +892,18 @@ mod tests {
         // Test adding suffix to path with extension
         let path = Path::new("report.json");
         let result = workflow.add_suffix_to_path(path, "_gitlab_sast", "json");
-        assert_eq!(result.file_name().unwrap(), "report_gitlab_sast.json");
+        assert_eq!(
+            result.file_name().expect("should have file name"),
+            "report_gitlab_sast.json"
+        );
 
         // Test adding suffix to path without extension
         let path_no_ext = Path::new("report");
         let result_no_ext = workflow.add_suffix_to_path(path_no_ext, "_test", "csv");
-        assert_eq!(result_no_ext.file_name().unwrap(), "report_test.csv");
+        assert_eq!(
+            result_no_ext.file_name().expect("should have file name"),
+            "report_test.csv"
+        );
     }
 
     #[test]
@@ -1093,7 +1137,7 @@ mod tests {
 
         let pipeline_finding = workflow
             .convert_rest_finding_to_pipeline(&rest_finding)
-            .unwrap();
+            .expect("should convert finding");
 
         assert_eq!(pipeline_finding.issue_id, 123);
         assert_eq!(pipeline_finding.cwe_id, "79");
@@ -1122,9 +1166,18 @@ mod tests {
 
         // Verify all fields are set correctly
         assert_eq!(config.app_profile_name, "Test Application");
-        assert_eq!(config.sandbox_name.as_ref().unwrap(), "test-sandbox");
         assert_eq!(
-            config.sandbox_guid.as_ref().unwrap(),
+            config
+                .sandbox_name
+                .as_ref()
+                .expect("should have sandbox name"),
+            "test-sandbox"
+        );
+        assert_eq!(
+            config
+                .sandbox_guid
+                .as_ref()
+                .expect("should have sandbox guid"),
             "87654321-4321-4321-4321-210987654321"
         );
         assert_eq!(config.export_format, "all");

@@ -3,6 +3,10 @@ use crate::cli::{Args, Commands};
 use log::{debug, error, info};
 use std::path::PathBuf;
 
+/// Execute file search workflow
+///
+/// # Errors
+/// Returns an error code if file search fails or no valid files are found
 pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
     let (filepath, filefilter, recursive, validate) = match &args.command {
         Commands::Pipeline {

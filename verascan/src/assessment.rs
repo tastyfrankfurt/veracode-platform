@@ -26,7 +26,7 @@ pub struct ApplicationId {
 }
 
 impl ApplicationId {
-    /// Create new ApplicationId from both identifiers
+    /// Create new `ApplicationId` from both identifiers
     pub fn new(
         guid: impl Into<Cow<'static, str>>,
         legacy_id: impl Into<Cow<'static, str>>,
@@ -69,7 +69,7 @@ pub struct BuildId {
 }
 
 impl BuildId {
-    /// Create new BuildId from identifier
+    /// Create new `BuildId` from identifier
     pub fn new(id: impl Into<Cow<'static, str>>) -> Self {
         Self { id: id.into() }
     }
@@ -88,7 +88,7 @@ impl std::fmt::Display for BuildId {
 }
 
 impl SandboxId {
-    /// Create new SandboxId from all identifiers
+    /// Create new `SandboxId` from all identifiers
     pub fn new(
         guid: impl Into<Cow<'static, str>>,
         legacy_id: impl Into<Cow<'static, str>>,
@@ -123,18 +123,23 @@ impl SandboxId {
 /// Helper function to format bytes for display
 fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB"];
+    // Precision loss acceptable: converting bytes to f64 for human-readable display
+    #[allow(clippy::cast_precision_loss)]
     let mut size = bytes as f64;
     let mut unit_index = 0;
 
-    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+    while size >= 1024.0 && unit_index < UNITS.len().saturating_sub(1) {
         size /= 1024.0;
-        unit_index += 1;
+        unit_index = unit_index.saturating_add(1);
     }
 
     if unit_index == 0 {
-        format!("{bytes} {}", UNITS[unit_index])
+        format!("{bytes} {}", UNITS.get(unit_index).copied().unwrap_or("B"))
     } else {
-        format!("{size:.1} {}", UNITS[unit_index])
+        format!(
+            "{size:.1} {}",
+            UNITS.get(unit_index).copied().unwrap_or("B")
+        )
     }
 }
 
@@ -252,6 +257,9 @@ pub struct AssessmentSubmitter {
 
 impl AssessmentSubmitter {
     /// Create a new assessment submitter
+    ///
+    /// # Errors
+    /// Returns an error if the Veracode client cannot be initialized
     pub fn new(
         veracode_config: VeracodeConfig,
         assessment_config: AssessmentScanConfig,
@@ -310,8 +318,7 @@ impl AssessmentSubmitter {
                         Cow::Owned(sandbox.guid),
                         sandbox
                             .id
-                            .map(|id| Cow::Owned(id.to_string()))
-                            .unwrap_or(Cow::Borrowed("")),
+                            .map_or_else(|| Cow::Borrowed(""), |id| Cow::Owned(id.to_string())),
                         Cow::Owned(sandbox.name),
                     );
 
@@ -376,6 +383,9 @@ impl AssessmentSubmitter {
     }
 
     /// Upload files for assessment scanning using concurrent uploads
+    ///
+    /// # Errors
+    /// Returns an error if no valid files are provided, file validation fails, or upload operations fail
     pub async fn upload_files(
         &self,
         files: &[PathBuf],
@@ -393,6 +403,8 @@ impl AssessmentSubmitter {
             .validate_assessment_cumulative_size(&file_paths)
             .await?;
 
+        // Precision loss acceptable: converting bytes to MB for human-readable display
+        #[allow(clippy::cast_precision_loss)]
         let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
         debug!(
             "✅ Cumulative file size validation passed: {total_size_mb:.2} MB total (within 5120 MB limit)"
@@ -445,7 +457,7 @@ impl AssessmentSubmitter {
         for (index, file) in files.iter().enumerate() {
             debug!(
                 "📤 Uploading file {}/{}: {}",
-                index + 1,
+                index.saturating_add(1),
                 files.len(),
                 file.display()
             );
@@ -459,8 +471,8 @@ impl AssessmentSubmitter {
                     let file_name = file
                         .file_name()
                         .and_then(|name| name.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
+                        .map(str::to_string)
+                        .unwrap_or_else(|| "unknown".to_string());
                     info!("✅ File uploaded: {file_name}");
                     uploaded_files.push(file_name);
                 }
@@ -531,17 +543,17 @@ impl AssessmentSubmitter {
             let sandbox_id_ref = sandbox_legacy_id_arc.clone();
 
             join_set.spawn(async move {
-                let _permit = semaphore_ref.acquire().await.unwrap();
+                let _permit = semaphore_ref.acquire().await.ok();
 
                 let file_name = file_path
                     .file_name()
                     .and_then(|name| name.to_str())
-                    .unwrap_or("unknown")
-                    .to_string();
+                    .map(str::to_string)
+                    .unwrap_or_else(|| "unknown".to_string());
 
                 debug!(
                     "📤 Thread {}: Starting upload for {}",
-                    index + 1,
+                    index.saturating_add(1),
                     file_path.display()
                 );
 
@@ -556,7 +568,7 @@ impl AssessmentSubmitter {
                     Ok(_) => {
                         debug!(
                             "✅ Thread {}: Upload completed for {}",
-                            index + 1,
+                            index.saturating_add(1),
                             file_name
                         );
                         info!("✅ File uploaded: {file_name}");
@@ -565,7 +577,7 @@ impl AssessmentSubmitter {
                     Err(e) => {
                         error!(
                             "❌ Thread {}: Failed to upload {}: {}",
-                            index + 1,
+                            index.saturating_add(1),
                             file_name,
                             e
                         );
@@ -584,12 +596,18 @@ impl AssessmentSubmitter {
             match task_result {
                 Ok(upload_result) => match upload_result {
                     Ok((index, file_name)) => {
-                        uploaded_files[index] = Some(file_name);
+                        if let Some(slot) = uploaded_files.get_mut(index) {
+                            *slot = Some(file_name);
+                        }
                     }
                     Err((index, e)) => {
                         has_error = true;
                         if first_error.is_none() {
-                            first_error = Some(format!("Upload task {} failed: {}", index + 1, e));
+                            first_error = Some(format!(
+                                "Upload task {} failed: {}",
+                                index.saturating_add(1),
+                                e
+                            ));
                         }
                     }
                 },
@@ -604,7 +622,7 @@ impl AssessmentSubmitter {
 
         if has_error {
             return Err(AssessmentError::UploadError(
-                first_error.unwrap_or_else(|| UNKNOWN_UPLOAD_ERROR.into()),
+                first_error.unwrap_or_else(|| UNKNOWN_UPLOAD_ERROR.to_string()),
             ));
         }
 
@@ -636,13 +654,15 @@ impl AssessmentSubmitter {
         let file_name = file
             .file_name()
             .and_then(|name| name.to_str())
-            .unwrap_or("unknown")
-            .to_string();
+            .map(str::to_string)
+            .unwrap_or_else(|| "unknown".to_string());
 
         // Validate file size (2GB limit for assessment scans)
         let validator = FileValidator::new();
         let file_size = validator.validate_assessment_file_size(file).await?;
 
+        // Precision loss acceptable: converting bytes to MB for human-readable display
+        #[allow(clippy::cast_precision_loss)]
         let size_mb = file_size as f64 / (1024.0 * 1024.0);
         debug!("📁 File: {file_name} ({size_mb:.2} MB)");
         debug!("✅ File size validation passed (within 2048 MB limit)");
@@ -664,8 +684,8 @@ impl AssessmentSubmitter {
                         // Create progress callback for large file uploads
                         let progress_callback =
                             |bytes_sent: u64, total_bytes: u64, progress: f64| {
-                                if progress > 0.0 && ((progress * 100.0) as u64).is_multiple_of(25)
-                                {
+                                let percentage = (progress * 100.0).round();
+                                if progress > 0.0 && percentage % 25.0 == 0.0 {
                                     info!(
                                         "   📈 {}: {:.0}% ({}/{})",
                                         file_name,
@@ -704,7 +724,8 @@ impl AssessmentSubmitter {
 
                     // Create progress callback for large file uploads
                     let progress_callback = |bytes_sent: u64, total_bytes: u64, progress: f64| {
-                        if progress > 0.0 && ((progress * 100.0) as u64).is_multiple_of(25) {
+                        let percentage = (progress * 100.0).round();
+                        if progress > 0.0 && percentage % 25.0 == 0.0 {
                             info!(
                                 "   📈 {}: {:.0}% ({}/{})",
                                 file_name,
@@ -763,6 +784,9 @@ impl AssessmentSubmitter {
     }
 
     /// Start prescan analysis
+    ///
+    /// # Errors
+    /// Returns an error if the scan API cannot be accessed, sandbox ID is missing for sandbox scans, or prescan fails to start
     pub async fn start_prescan(
         &self,
         app_id: &str,
@@ -831,6 +855,9 @@ impl AssessmentSubmitter {
     }
 
     /// Start scan with modules (always scans all nonfatal top level modules)
+    ///
+    /// # Errors
+    /// Returns an error if the scan API cannot be accessed, sandbox ID is missing for sandbox scans, or scan fails to start
     pub async fn start_scan(
         &self,
         app_id: &str,
@@ -925,6 +952,9 @@ impl AssessmentSubmitter {
     }
 
     /// Upload files and run complete scan workflow
+    ///
+    /// # Errors
+    /// Returns an error if sandbox or build creation fails, file upload fails, scan operations fail, or result export fails
     pub async fn upload_and_scan(
         &self,
         files: &[PathBuf],
@@ -1013,6 +1043,9 @@ impl AssessmentSubmitter {
     }
 
     /// Wait for prescan to complete
+    ///
+    /// # Errors
+    /// Returns an error if the scan API cannot be accessed, prescan status check fails, or timeout is exceeded
     pub async fn wait_for_prescan(
         &self,
         app_id: &str,
@@ -1026,7 +1059,7 @@ impl AssessmentSubmitter {
         let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 30; // Poll every 30 seconds
-        let max_polls = (timeout_minutes * 60) / poll_interval;
+        let max_polls = timeout_minutes.saturating_mul(60) / poll_interval;
 
         for poll_count in 1..=max_polls {
             info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
@@ -1084,6 +1117,9 @@ impl AssessmentSubmitter {
     }
 
     /// Wait for main scan to complete
+    ///
+    /// # Errors
+    /// Returns an error if the scan API cannot be accessed, scan status check fails, scan fails, or timeout is exceeded
     pub async fn wait_for_scan_completion(
         &self,
         app_id: &str,
@@ -1097,7 +1133,7 @@ impl AssessmentSubmitter {
         let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 60; // Poll every 60 seconds for main scan (longer than prescan)
-        let max_polls = (timeout_minutes * 60) / poll_interval;
+        let max_polls = timeout_minutes.saturating_mul(60) / poll_interval;
 
         for poll_count in 1..=max_polls {
             info!("🔄 Scan poll attempt {poll_count}/{max_polls}");
@@ -1186,6 +1222,9 @@ impl AssessmentSubmitter {
     /// Note: Phase 3 (policy evaluation monitoring) is handled separately in the main
     /// workflow when XML API mode is detected, as it's only needed for the getbuildinfo.do
     /// fallback API. The summary report API has built-in retry logic for policy evaluation.
+    ///
+    /// # Errors
+    /// Returns an error if prescan monitoring fails, build monitoring fails, or any API calls fail
     pub async fn monitor_scan_progress(
         &self,
         app_id: &str,
@@ -1236,7 +1275,7 @@ impl AssessmentSubmitter {
         let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 30; // Java uses 30-second intervals for prescan
-        let max_polls = (timeout_minutes * 60) / poll_interval;
+        let max_polls = timeout_minutes.saturating_mul(60) / poll_interval;
 
         for poll_count in 1..=max_polls {
             info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
@@ -1304,7 +1343,7 @@ impl AssessmentSubmitter {
         let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
         let poll_interval = 60; // Java uses 60-second intervals for build monitoring
-        let max_polls = (timeout_minutes * 60) / poll_interval;
+        let max_polls = timeout_minutes.saturating_mul(60) / poll_interval;
 
         for poll_count in 1..=max_polls {
             info!("🔄 Build status poll attempt {poll_count}/{max_polls}");
@@ -1386,7 +1425,7 @@ impl AssessmentSubmitter {
     /// Phase 3: Monitor policy evaluation until ready (XML API only)
     ///
     /// This phase waits for policy compliance evaluation to complete when using the XML API.
-    /// It uses the existing retry logic in evaluate_policy_compliance_via_buildinfo_with_retry() to poll until
+    /// It uses the existing retry logic in `evaluate_policy_compliance_via_buildinfo_with_retry()` to poll until
     /// the status is no longer "Not Assessed" or "Calculating...".
     /// This phase is only needed when using the XML API (getbuildinfo.do) since the
     /// summary report API already has built-in retry logic for policy evaluation.
@@ -1402,7 +1441,7 @@ impl AssessmentSubmitter {
         let policy_api = self.client.policy_api();
         let timeout_minutes = self.config.timeout;
         let poll_interval = 30; // 30-second intervals for policy evaluation
-        let max_retries = (timeout_minutes * 60) / poll_interval;
+        let max_retries = timeout_minutes.saturating_mul(60) / poll_interval;
 
         let sandbox_legacy_id = match self.config.scan_type {
             ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
@@ -1433,6 +1472,9 @@ impl AssessmentSubmitter {
     }
 
     /// Retrieve and export scan results with policy compliance check
+    ///
+    /// # Errors
+    /// Returns an error if policy compliance check fails, result retrieval fails, or file export fails
     pub async fn export_scan_results(
         &self,
         app_id: &ApplicationId,
@@ -1510,7 +1552,11 @@ impl AssessmentSubmitter {
         let results = match api_source {
             ApiSource::SummaryReport => {
                 // Full summary report export
-                let summary_report = summary_report_opt.unwrap(); // Safe unwrap - if SummaryReport source, we have the report
+                let Some(summary_report) = summary_report_opt else {
+                    return Err(AssessmentError::ScanError(
+                        "Summary report missing for SummaryReport API source".to_string(),
+                    ));
+                };
                 serde_json::json!({
                     "summary_report": summary_report,
                     "export_metadata": {
@@ -1679,8 +1725,8 @@ impl AssessmentSubmitter {
                 "   Policy Wait: {} retries, {} seconds interval (max {} minutes)",
                 self.config.policy_wait_max_retries,
                 self.config.policy_wait_retry_delay_seconds,
-                (self.config.policy_wait_max_retries as u64
-                    * self.config.policy_wait_retry_delay_seconds)
+                (self.config.policy_wait_max_retries as u64)
+                    .saturating_mul(self.config.policy_wait_retry_delay_seconds)
                     / 60
             );
         }
@@ -1688,6 +1734,7 @@ impl AssessmentSubmitter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 

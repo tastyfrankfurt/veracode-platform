@@ -26,7 +26,7 @@ pub fn create_finding_hash(finding: &Finding) -> String {
     format!("{:x}", hasher.finish())
 }
 
-/// Extract hash from finding_id (format: "cwe_id:file:line:hash")
+/// Extract hash from `finding_id` (format: `"cwe_id:file:line:hash"`)
 #[must_use]
 pub fn extract_hash_from_finding_id(finding_id: &str) -> &str {
     finding_id.split(':').next_back().unwrap_or("")
@@ -176,7 +176,7 @@ impl FindingsAggregator {
             finding.cwe_id,
             finding.files.source_file.file,
             finding.files.source_file.line,
-            &finding_hash[..8]
+            finding_hash.get(..8).unwrap_or(&finding_hash)
         )
     }
 
@@ -213,12 +213,12 @@ impl FindingsAggregator {
         // Process each scan result
         for (index, results) in scan_results.iter().enumerate() {
             // Handle default file name properly to avoid borrowing issues
-            let default_file_name = format!("file_{}", index + 1);
+            let default_file_name = format!("file_{}", index.saturating_add(1));
             let source_file = source_files.get(index).unwrap_or(&default_file_name);
 
             debug!(
                 "📊 Processing scan {} of {}: {} findings",
-                index + 1,
+                index.saturating_add(1),
                 scan_results.len(),
                 results.findings.len()
             );
@@ -230,7 +230,7 @@ impl FindingsAggregator {
                 scan_status: results.scan.scan_status,
                 project_uri: results.scan.project_uri.clone(),
                 source_file: source_file.clone(),
-                finding_count: results.findings.len() as u32,
+                finding_count: u32::try_from(results.findings.len()).unwrap_or(u32::MAX),
             };
             scan_metadata.push(metadata);
 
@@ -300,18 +300,18 @@ impl FindingsAggregator {
             low: 0,
             very_low: 0,
             informational: 0,
-            total: findings.len() as u32,
+            total: u32::try_from(findings.len()).unwrap_or(u32::MAX),
         };
 
         for finding_with_source in findings {
             let finding = &finding_with_source.finding;
             match finding.severity {
-                5 => summary.very_high += 1,
-                4 => summary.high += 1,
-                3 => summary.medium += 1,
-                2 => summary.low += 1,
-                1 => summary.very_low += 1,
-                0 => summary.informational += 1,
+                5 => summary.very_high = summary.very_high.saturating_add(1),
+                4 => summary.high = summary.high.saturating_add(1),
+                3 => summary.medium = summary.medium.saturating_add(1),
+                2 => summary.low = summary.low.saturating_add(1),
+                1 => summary.very_low = summary.very_low.saturating_add(1),
+                0 => summary.informational = summary.informational.saturating_add(1),
                 _ => {} // Unknown severity
             }
         }
@@ -335,25 +335,25 @@ impl FindingsAggregator {
 
             // Count CWE IDs - use entry API more efficiently
             let cwe_count = cwe_counts.entry(finding.cwe_id.clone()).or_insert(0);
-            *cwe_count += 1;
+            *cwe_count = cwe_count.saturating_add(1);
 
             // Count files with findings - reuse file reference
             let file_count = file_counts
                 .entry(finding.files.source_file.file.clone())
                 .or_insert(0);
-            *file_count += 1;
+            *file_count = file_count.saturating_add(1);
 
             // Count by severity - use static strings to avoid allocations
             let severity_name = severity_to_static_str(finding.severity);
             let severity_count = severity_counts.entry(severity_name.into()).or_insert(0);
-            *severity_count += 1;
+            *severity_count = severity_count.saturating_add(1);
         }
 
         // Get top 5 CWE IDs
         let mut cwe_vec: Vec<(String, u32)> = cwe_counts.into_iter().collect();
         cwe_vec.sort_by(|a, b| b.1.cmp(&a.1));
 
-        let total_findings = findings.len() as u32;
+        let total_findings = u32::try_from(findings.len()).unwrap_or(u32::MAX);
         let top_cwe_ids: Vec<CweStatistic> = cwe_vec
             .into_iter()
             .take(5)
@@ -369,16 +369,19 @@ impl FindingsAggregator {
             .collect();
 
         AggregationStats {
-            total_scans: scan_count as u32,
+            total_scans: u32::try_from(scan_count).unwrap_or(u32::MAX),
             total_findings,
-            unique_cwe_count: top_cwe_ids.len() as u32,
-            unique_files_count: file_counts.len() as u32,
+            unique_cwe_count: u32::try_from(top_cwe_ids.len()).unwrap_or(u32::MAX),
+            unique_files_count: u32::try_from(file_counts.len()).unwrap_or(u32::MAX),
             top_cwe_ids,
             severity_distribution: severity_counts,
         }
     }
 
     /// Export aggregated findings to JSON file
+    ///
+    /// # Errors
+    /// Returns an error if JSON serialization fails or file writing fails
     pub async fn export_to_json(
         &self,
         aggregated: &AggregatedFindings,
@@ -400,6 +403,9 @@ impl FindingsAggregator {
     }
 
     /// Export aggregated findings in baseline-compatible format
+    ///
+    /// # Errors
+    /// Returns an error if baseline conversion or file writing fails
     pub async fn export_to_baseline_format(
         &self,
         aggregated: &AggregatedFindings,
@@ -423,7 +429,7 @@ impl FindingsAggregator {
         Ok(())
     }
 
-    /// Convert AggregatedFindings to BaselineFile format
+    /// Convert `AggregatedFindings` to `BaselineFile` format
     fn convert_to_baseline_format(
         &self,
         aggregated: &AggregatedFindings,
@@ -467,17 +473,19 @@ impl FindingsAggregator {
                 commit_hash: None,
                 branch: None,
             },
-            finding_count: baseline_findings.len() as u32,
+            finding_count: u32::try_from(baseline_findings.len()).unwrap_or(u32::MAX),
         };
 
         // Convert summary to baseline format
         let summary = BaselineSummary {
-            total: aggregated.summary.very_high
-                + aggregated.summary.high
-                + aggregated.summary.medium
-                + aggregated.summary.low
-                + aggregated.summary.very_low
-                + aggregated.summary.informational,
+            total: aggregated
+                .summary
+                .very_high
+                .saturating_add(aggregated.summary.high)
+                .saturating_add(aggregated.summary.medium)
+                .saturating_add(aggregated.summary.low)
+                .saturating_add(aggregated.summary.very_low)
+                .saturating_add(aggregated.summary.informational),
             very_high: aggregated.summary.very_high,
             high: aggregated.summary.high,
             medium: aggregated.summary.medium,
@@ -500,7 +508,7 @@ impl FindingsAggregator {
         })
     }
 
-    /// Convert FindingWithSource to BaselineFinding
+    /// Convert `FindingWithSource` to `BaselineFinding`
     fn convert_to_baseline_finding<'a>(
         &self,
         finding_with_source: &'a FindingWithSource,
@@ -529,6 +537,9 @@ impl FindingsAggregator {
     }
 
     /// Export aggregated findings to CSV file (simplified format)
+    ///
+    /// # Errors
+    /// Returns an error if CSV writing or file creation fails
     pub async fn export_to_csv(
         &self,
         aggregated: &AggregatedFindings,
@@ -613,7 +624,7 @@ impl FindingsAggregator {
             let finding = &finding_with_source.finding;
             let source = &finding_with_source.source_scan;
 
-            info!("\n{}. 🚨 {}", index + 1, finding.title);
+            info!("\n{}. 🚨 {}", index.saturating_add(1), finding.title);
             info!(
                 "   ┌─ Severity: {} ({})",
                 self.severity_to_emoji(finding.severity),
@@ -642,7 +653,7 @@ impl FindingsAggregator {
         if filtered_findings.len() > display_count {
             info!(
                 "\n... and {} more findings",
-                filtered_findings.len() - display_count
+                filtered_findings.len().saturating_sub(display_count)
             );
             info!("Use --findings-limit 0 to show all findings or increase the limit");
         }
@@ -656,8 +667,8 @@ impl FindingsAggregator {
         let mut severity_counts = [0u32; 6]; // Index 0-5 for severity levels
 
         for finding in findings {
-            if finding.finding.severity <= 5 {
-                severity_counts[finding.finding.severity as usize] += 1;
+            if let Some(count) = severity_counts.get_mut(finding.finding.severity as usize) {
+                *count = count.saturating_add(1);
             }
         }
 
@@ -673,11 +684,13 @@ impl FindingsAggregator {
         let severity_emojis = ["ℹ️", "🟢", "🟡", "🟠", "🔴", "🔥"];
 
         for (severity_level, &count) in severity_counts.iter().enumerate() {
-            if count > 0 {
-                info!(
-                    "   {} {}: {}",
-                    severity_emojis[severity_level], severity_names[severity_level], count
-                );
+            if count > 0
+                && let (Some(&emoji), Some(&name)) = (
+                    severity_emojis.get(severity_level),
+                    severity_names.get(severity_level),
+                )
+            {
+                info!("   {} {}: {}", emoji, name, count);
             }
         }
     }
@@ -778,7 +791,7 @@ impl FindingsAggregator {
             for (index, cwe_stat) in aggregated.stats.top_cwe_ids.iter().enumerate() {
                 info!(
                     "   {}. CWE-{}: {} occurrences ({:.1}%)",
-                    index + 1,
+                    index.saturating_add(1),
                     cwe_stat.cwe_id,
                     cwe_stat.count,
                     cwe_stat.percentage
@@ -791,7 +804,7 @@ impl FindingsAggregator {
         for (index, metadata) in aggregated.scan_metadata.iter().enumerate() {
             info!(
                 "   Scan {}: {} ({} findings)",
-                index + 1,
+                index.saturating_add(1),
                 metadata.source_file,
                 metadata.finding_count
             );
@@ -815,6 +828,7 @@ fn escape_csv(value: &str) -> String {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

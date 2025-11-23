@@ -29,23 +29,26 @@ const MAX_SECRET_KEYS: usize = 100; // Maximum number of keys in secret
 const MAX_KEY_LENGTH: usize = 256; // Maximum length for secret key names
 const MAX_VALUE_LENGTH: usize = 64 * 1024; // 64KB per secret value
 
-/// Secure HashMap that deserializes string values directly into SecretString
+/// Secure `HashMap` that deserializes string values directly into `SecretString`
 /// This avoids creating intermediate plain text strings during deserialization
 #[derive(Debug)]
 pub struct SecureSecretMap(HashMap<String, SecretString>);
 
 impl SecureSecretMap {
     /// Get a secret by key
+    #[must_use]
     pub fn get(&self, key: &str) -> Option<&SecretString> {
         self.0.get(key)
     }
 
     /// Get the number of secrets
+    #[must_use]
     pub fn len(&self) -> usize {
         self.0.len()
     }
 
     /// Check if empty
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
@@ -86,6 +89,9 @@ pub struct VaultCredentialClient {
 
 impl VaultCredentialClient {
     /// Create a new vault client from configuration
+    ///
+    /// # Errors
+    /// Returns an error if vault client creation fails or authentication fails
     pub async fn new(config: &VaultConfig) -> Result<Self, CredentialError> {
         let mut client = create_vault_client(config)?;
         authenticate_vault(&mut client, config).await?;
@@ -93,7 +99,10 @@ impl VaultCredentialClient {
         Ok(Self { client })
     }
 
-    /// Retrieve credentials from vault directly into VeracodeCredentials
+    /// Retrieve credentials from vault directly into `VeracodeCredentials`
+    ///
+    /// # Errors
+    /// Returns an error if vault secret retrieval fails or required credentials are missing
     pub async fn get_veracode_credentials(
         &self,
         secret_path: &str,
@@ -147,6 +156,9 @@ impl VaultCredentialClient {
     }
 
     /// Retrieve credentials from vault (legacy method for backward compatibility)
+    ///
+    /// # Errors
+    /// Returns an error if Veracode credentials cannot be retrieved from vault
     pub async fn get_credentials(
         &self,
         secret_path: &str,
@@ -164,7 +176,10 @@ impl VaultCredentialClient {
     }
 
     /// Retrieve optional proxy credentials from vault
-    /// Returns (proxy_url, proxy_username, proxy_password) as optional values
+    /// Returns (`proxy_url`, `proxy_username`, `proxy_password`) as optional values
+    ///
+    /// # Errors
+    /// Returns an error if vault secret retrieval fails or secret data validation fails
     pub async fn get_proxy_credentials(
         &self,
         secret_path: &str,
@@ -197,12 +212,18 @@ impl VaultCredentialClient {
     }
 
     /// Revoke the vault token after use
+    ///
+    /// # Errors
+    /// Returns an error if vault token revocation fails
     pub async fn revoke_token(&self) -> Result<(), CredentialError> {
         revoke_vault_token(&self.client).await
     }
 }
 
 /// Load vault configuration from environment variables
+///
+/// # Errors
+/// Returns an error if required vault environment variables are missing
 pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
     debug!("Attempting to load vault configuration from environment");
 
@@ -242,7 +263,10 @@ pub fn load_vault_config_from_env() -> Result<VaultConfig, CredentialError> {
     })
 }
 
-/// Load credentials from vault directly into VeracodeCredentials
+/// Load credentials from vault directly into `VeracodeCredentials`
+///
+/// # Errors
+/// Returns an error if vault client creation fails or credential retrieval fails
 pub async fn load_veracode_credentials_from_vault(
     config: VaultConfig,
 ) -> Result<veracode_platform::VeracodeCredentials, CredentialError> {
@@ -264,7 +288,10 @@ pub async fn load_veracode_credentials_from_vault(
     Ok(credentials)
 }
 
-/// Load VeracodeCredentials with vault support and environment fallback
+/// Load `VeracodeCredentials` with vault support and environment fallback
+///
+/// # Errors
+/// Returns an error if both vault and environment variable credential loading fail
 pub async fn load_veracode_credentials_with_vault()
 -> Result<veracode_platform::VeracodeCredentials, CredentialError> {
     // Priority 1: Try vault configuration
@@ -292,8 +319,11 @@ pub async fn load_veracode_credentials_with_vault()
     crate::credentials::load_veracode_credentials_from_env()
 }
 
-/// Load VeracodeCredentials and proxy configuration from Vault with environment fallback
-/// Returns (credentials, proxy_url, proxy_username, proxy_password)
+/// Load `VeracodeCredentials` and proxy configuration from Vault with environment fallback
+/// Returns (credentials, `proxy_url`, `proxy_username`, `proxy_password`)
+///
+/// # Errors
+/// Returns an error if both vault and environment variable credential loading fail
 pub async fn load_credentials_and_proxy_from_vault() -> Result<
     (
         veracode_platform::VeracodeCredentials,
@@ -573,8 +603,11 @@ async fn retrieve_vault_secret(
 /// Parse secret path to extract engine name and path
 fn parse_secret_path(full_path: &str) -> (String, String) {
     if let Some(at_pos) = full_path.rfind('@') {
-        let secret_path = full_path[..at_pos].to_string();
-        let secret_engine = full_path[at_pos + 1..].to_string();
+        let secret_path = full_path.get(..at_pos).unwrap_or(full_path).to_string();
+        let secret_engine = full_path
+            .get(at_pos.saturating_add(1)..)
+            .unwrap_or("")
+            .to_string();
         if secret_engine.is_empty() {
             // If @ is present but engine is empty, default to kvv2
             (secret_path, "kvv2".to_string())
@@ -608,7 +641,7 @@ fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError>
         });
     }
 
-    let mut total_size = 0;
+    let mut total_size: usize = 0;
 
     for (key, value) in secret.iter() {
         // Validate key length
@@ -667,7 +700,9 @@ fn validate_secret_data(secret: &SecureSecretMap) -> Result<(), CredentialError>
         }
 
         // Accumulate total size
-        total_size += key.len() + value_len;
+        total_size = total_size
+            .saturating_add(key.len())
+            .saturating_add(value_len);
     }
 
     // Check total size limit
@@ -715,6 +750,12 @@ async fn revoke_vault_token(client: &VaultClient) -> Result<(), CredentialError>
 /// the error source chain and checking for specific rustls error types.
 ///
 /// This uses proper type-based error detection instead of fragile string matching.
+///
+/// # Note on `if let` pattern matching
+/// This function uses `if let` chains to traverse the error hierarchy. The pattern
+/// matching is intentionally non-exhaustive - we only want to detect certificate errors,
+/// so if the patterns don't match, we continue traversing the error chain. This is the
+/// correct behavior and not a silent failure case.
 fn is_certificate_error(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut current: Option<&dyn std::error::Error> = Some(error);
 
@@ -724,10 +765,12 @@ fn is_certificate_error(error: &(dyn std::error::Error + 'static)) -> bool {
         let error_type = format!("{:?}", err);
 
         // Check for io::Error with InvalidData kind (often wraps rustls errors)
+        // If this pattern doesn't match, we continue to check other error types
         if let Some(io_err) = err.downcast_ref::<std::io::Error>()
             && io_err.kind() == std::io::ErrorKind::InvalidData
         {
             // Check the inner error recursively
+            // If no inner error exists, we fall through to check the error message
             if let Some(inner) = io_err.get_ref()
                 && is_certificate_error(inner)
             {
@@ -758,11 +801,17 @@ fn is_certificate_error(error: &(dyn std::error::Error + 'static)) -> bool {
 
 /// Checks if an error chain contains a retryable network error
 /// by traversing the error source chain and checking for specific error types.
+///
+/// # Note on `if let` pattern matching
+/// This function uses `if let` to check for specific error types. The pattern matching
+/// is intentionally non-exhaustive - we only want to detect network errors, so if the
+/// downcast fails, we continue traversing the error chain. This is the correct behavior.
 fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
     let mut current: Option<&dyn std::error::Error> = Some(error);
 
     while let Some(err) = current {
         // Check for io::Error with retryable kinds
+        // If downcast fails, we continue to check other error types
         if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
             match io_err.kind() {
                 std::io::ErrorKind::ConnectionRefused
@@ -771,7 +820,21 @@ fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
                 | std::io::ErrorKind::NotConnected
                 | std::io::ErrorKind::TimedOut
                 | std::io::ErrorKind::WouldBlock => return true,
-                _ => {}
+                std::io::ErrorKind::NotFound
+                | std::io::ErrorKind::PermissionDenied
+                | std::io::ErrorKind::AddrInUse
+                | std::io::ErrorKind::AddrNotAvailable
+                | std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::AlreadyExists
+                | std::io::ErrorKind::InvalidInput
+                | std::io::ErrorKind::InvalidData
+                | std::io::ErrorKind::WriteZero
+                | std::io::ErrorKind::Interrupted
+                | std::io::ErrorKind::Unsupported
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::OutOfMemory
+                | std::io::ErrorKind::Other
+                | _ => {}
             }
         }
 
@@ -788,7 +851,7 @@ fn is_network_error(error: &(dyn std::error::Error + 'static)) -> bool {
     false
 }
 
-/// Determine if a ClientError should be retried based on error type
+/// Determine if a `ClientError` should be retried based on error type
 ///
 /// Returns true for transient/retryable errors, false for permanent errors
 fn is_retryable_vault_error(error: &ClientError) -> bool {
@@ -844,11 +907,11 @@ fn is_retryable_vault_error(error: &ClientError) -> bool {
     }
 }
 
-/// Classify a ClientError and create a CredentialError with proper context
+/// Classify a `ClientError` and create a `CredentialError` with proper context
 ///
 /// This function implements proper error handling based on:
 /// - Vault API documentation for HTTP status codes
-/// - vaultrs ClientError variants
+/// - vaultrs `ClientError` variants
 /// - Provides detailed error messages for debugging
 fn classify_vault_error<E>(
     error: &ClientError,
@@ -1048,11 +1111,11 @@ fn classify_vault_error<E>(
             // Log the full error chain for debugging
             error!("{operation_context}: REST client error: {source}");
             let mut error_source = source.source();
-            let mut level = 1;
+            let mut level: u32 = 1;
             while let Some(err) = error_source {
                 error!("Error source level {level}: {err}");
                 error_source = err.source();
-                level += 1;
+                level = level.saturating_add(1);
             }
 
             if is_certificate_error(source) {
@@ -1072,6 +1135,7 @@ fn classify_vault_error<E>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1108,8 +1172,13 @@ mod tests {
             "secret/path",
             "auth/jwt",
         );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("HTTPS"));
+        assert!(result.is_err(), "Should fail for non-HTTPS URL");
+        let err = result.expect_err("should be error");
+        assert!(
+            err.to_string().contains("HTTPS"),
+            "Error should mention HTTPS requirement, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -1122,8 +1191,13 @@ mod tests {
             "secret/path",
             "auth/jwt",
         );
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("exceed"));
+        assert!(result.is_err(), "Should fail for excessively long address");
+        let err = result.expect_err("should be error");
+        assert!(
+            err.to_string().contains("exceed"),
+            "Error should mention exceeding limit, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -1135,12 +1209,12 @@ mod tests {
             "secret/path",
             "auth/jwt",
         );
-        assert!(result.is_err());
+        assert!(result.is_err(), "Should fail for invalid JWT characters");
+        let err = result.expect_err("should be error");
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("invalid characters")
+            err.to_string().contains("invalid characters"),
+            "Error should mention invalid characters, got: {}",
+            err
         );
     }
 
@@ -1216,12 +1290,15 @@ mod tests {
     #[test]
     fn test_auth_path_validation_invalid_chars() {
         let result = validate_auth_path("auth/jwt@invalid");
-        assert!(result.is_err());
         assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("invalid characters")
+            result.is_err(),
+            "Should fail for invalid characters in auth path"
+        );
+        let err = result.expect_err("should be error");
+        assert!(
+            err.to_string().contains("invalid characters"),
+            "Error should mention invalid characters, got: {}",
+            err
         );
     }
 
@@ -1229,8 +1306,16 @@ mod tests {
     fn test_auth_path_validation_too_long() {
         let long_path = format!("auth/{}", "a".repeat(100));
         let result = validate_auth_path(&long_path);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("exceed"));
+        assert!(
+            result.is_err(),
+            "Should fail for excessively long auth path"
+        );
+        let err = result.expect_err("should be error");
+        assert!(
+            err.to_string().contains("exceed"),
+            "Error should mention exceeding limit, got: {}",
+            err
+        );
     }
 
     #[test]
@@ -1286,8 +1371,9 @@ mod tests {
         let secret = SecureSecretMap(map);
 
         let value = secret.get("test_key");
-        assert!(value.is_some());
-        assert_eq!(value.unwrap().expose_secret(), "test_value");
+        assert!(value.is_some(), "Should find test_key in map");
+        let secret_value = value.expect("should have value");
+        assert_eq!(secret_value.expose_secret(), "test_value");
     }
 
     #[test]
@@ -1329,12 +1415,13 @@ mod tests {
         assert_eq!(secret.len(), 2);
 
         let removed = secret.remove("key1");
-        assert!(removed.is_some());
-        assert_eq!(removed.unwrap().expose_secret(), "value1");
+        assert!(removed.is_some(), "Should successfully remove key1");
+        let removed_value = removed.expect("should have removed value");
+        assert_eq!(removed_value.expose_secret(), "value1");
         assert_eq!(secret.len(), 1);
 
         let missing = secret.remove("nonexistent");
-        assert!(missing.is_none());
+        assert!(missing.is_none(), "Should return None for nonexistent key");
     }
 
     // Tests for is_retryable_vault_error function

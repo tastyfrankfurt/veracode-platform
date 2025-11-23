@@ -25,15 +25,15 @@ pub struct Args {
     #[arg(long = "region", help = "Veracode regions (commercial, european, federal)", default_value = "commercial", value_parser = validate_region, global = true)]
     pub region: String,
 
-    /// GitLab SAST schema version (set VERASCAN_GITLAB_SCHEMA env var)
+    /// GitLab SAST schema version (set `VERASCAN_GITLAB_SCHEMA` env var)
     #[arg(long = "gitlab-schema", help = "GitLab SAST report schema version (15.2.1, 15.2.2, 15.2.3)", default_value = "15.2.1", value_parser = validate_gitlab_schema_version, global = true)]
     pub gitlab_schema_version: String,
 
-    /// Veracode API ID (set VERACODE_API_ID env var)
+    /// Veracode API ID (set `VERACODE_API_ID` env var)
     #[arg(skip)]
     pub api_id: Option<String>,
 
-    /// Veracode API Key (set VERACODE_API_KEY env var)
+    /// Veracode API Key (set `VERACODE_API_KEY` env var)
     #[arg(skip)]
     pub api_key: Option<String>,
 }
@@ -347,6 +347,9 @@ pub enum Commands {
 
 impl Args {
     /// Validate conditional requirements after parsing
+    ///
+    /// # Errors
+    /// Returns an error if required argument combinations are missing or invalid
     pub fn validate_conditional_requirements(&self) -> Result<(), String> {
         match &self.command {
             Commands::Pipeline {
@@ -510,7 +513,7 @@ fn validate_name_field(s: &str) -> Result<String, String> {
 }
 
 /// Validate sandbox name with forward slash replacement
-/// Replaces forward slashes (/) with underscores (_) and then validates using validate_name_field
+/// Replaces forward slashes (/) with underscores (_) and then validates using `validate_name_field`
 fn validate_sandbox_name(s: &str) -> Result<String, String> {
     // Replace forward slashes with underscores
     let sanitized_name = s.replace('/', "_");
@@ -734,7 +737,7 @@ fn validate_fail_on_cwe(s: &str) -> Result<String, String> {
     for cwe in &cwes {
         // CWE should be numeric (with or without "CWE-" prefix)
         let cwe_number = if cwe.to_lowercase().starts_with("cwe-") {
-            &cwe[4..]
+            cwe.get(4..).unwrap_or(cwe)
         } else {
             cwe
         };
@@ -911,7 +914,7 @@ fn validate_cmek_alias(s: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
-/// Parse business criticality string to BusinessCriticality enum
+/// Parse business criticality string to `BusinessCriticality` enum
 #[must_use]
 pub fn parse_business_criticality(
     criticality_str: &str,
@@ -1048,6 +1051,7 @@ pub fn print_environment_variables() {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1087,11 +1091,8 @@ mod tests {
 
         let result = args.validate_conditional_requirements();
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("--baseline-file requires --export-findings")
-        );
+        let e = result.unwrap_err();
+        assert!(e.contains("--baseline-file requires --export-findings"));
     }
 
     #[test]
@@ -1130,11 +1131,8 @@ mod tests {
 
         let result = args.validate_conditional_requirements();
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("--filtered-json-output-file requires --baseline-file")
-        );
+        let e = result.unwrap_err();
+        assert!(e.contains("--filtered-json-output-file requires --baseline-file"));
     }
 
     #[test]
@@ -1188,7 +1186,8 @@ mod tests {
     fn test_validate_business_criticality_invalid() {
         let result = validate_business_criticality("invalid");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid business criticality"));
+        let e = result.unwrap_err();
+        assert!(e.contains("Invalid business criticality"));
     }
 
     #[test]
@@ -1222,7 +1221,8 @@ mod tests {
     fn test_validate_modules_list_valid() {
         let result = validate_modules_list("module1,module2,module3");
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "module1,module2,module3");
+        let value = result.unwrap();
+        assert_eq!(value, "module1,module2,module3");
     }
 
     #[test]
@@ -1235,14 +1235,16 @@ mod tests {
     fn test_validate_modules_list_empty() {
         let result = validate_modules_list("");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be empty"));
+        let e = result.unwrap_err();
+        assert!(e.contains("cannot be empty"));
     }
 
     #[test]
     fn test_validate_modules_list_invalid_characters() {
         let result = validate_modules_list("module1,module@2");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("Invalid module name"));
+        let e = result.unwrap_err();
+        assert!(e.contains("Invalid module name"));
     }
 
     #[test]
@@ -1250,25 +1252,39 @@ mod tests {
         let long_module = "a".repeat(101);
         let result = validate_modules_list(&long_module);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("too long"));
+        let e = result.unwrap_err();
+        assert!(e.contains("too long"));
     }
 
     #[test]
     fn test_validate_delete_incomplete_scan_valid() {
-        assert_eq!(validate_delete_incomplete_scan("0").unwrap(), 0);
-        assert_eq!(validate_delete_incomplete_scan("1").unwrap(), 1);
-        assert_eq!(validate_delete_incomplete_scan("2").unwrap(), 2);
+        let result = validate_delete_incomplete_scan("0");
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert_eq!(value, 0);
+
+        let result = validate_delete_incomplete_scan("1");
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert_eq!(value, 1);
+
+        let result = validate_delete_incomplete_scan("2");
+        assert!(result.is_ok());
+        let value = result.unwrap();
+        assert_eq!(value, 2);
     }
 
     #[test]
     fn test_validate_delete_incomplete_scan_invalid() {
         let result = validate_delete_incomplete_scan("3");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must be 0, 1, or 2"));
+        let e = result.unwrap_err();
+        assert!(e.contains("must be 0, 1, or 2"));
 
         let result = validate_delete_incomplete_scan("invalid");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("must be a valid number"));
+        let e = result.unwrap_err();
+        assert!(e.contains("must be a valid number"));
     }
 
     #[test]
@@ -1294,18 +1310,21 @@ mod tests {
         // Too short
         let result = validate_cmek_alias("short");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("between 8 and 256 characters"));
+        let e = result.unwrap_err();
+        assert!(e.contains("between 8 and 256 characters"));
 
         // Empty
         let result = validate_cmek_alias("");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be empty"));
+        let e = result.unwrap_err();
+        assert!(e.contains("cannot be empty"));
 
         // Too long (over 256 characters)
         let long_alias = format!("alias/{}", "a".repeat(252));
         let result = validate_cmek_alias(&long_alias);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("between 8 and 256 characters"));
+        let e = result.unwrap_err();
+        assert!(e.contains("between 8 and 256 characters"));
     }
 
     #[test]
@@ -1313,38 +1332,26 @@ mod tests {
         // Invalid character: @
         let result = validate_cmek_alias("alias/my@key");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("can only contain alphanumeric")
-        );
+        let e = result.unwrap_err();
+        assert!(e.contains("can only contain alphanumeric"));
 
         // Invalid character: space
         let result = validate_cmek_alias("alias/my key");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("can only contain alphanumeric")
-        );
+        let e = result.unwrap_err();
+        assert!(e.contains("can only contain alphanumeric"));
 
         // Invalid character: dot
         let result = validate_cmek_alias("alias/my.key");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("can only contain alphanumeric")
-        );
+        let e = result.unwrap_err();
+        assert!(e.contains("can only contain alphanumeric"));
 
         // Invalid character: special symbols
         let result = validate_cmek_alias("alias/my$key!");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .contains("can only contain alphanumeric")
-        );
+        let e = result.unwrap_err();
+        assert!(e.contains("can only contain alphanumeric"));
     }
 
     // Security edge case tests for validate_cmek_alias
@@ -1355,17 +1362,20 @@ mod tests {
         // Reject non-breaking space (U+00A0)
         let result = validate_cmek_alias("alias/my\u{00A0}key");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
 
         // Reject zero-width space (U+200B)
         let result = validate_cmek_alias("alias/my\u{200B}key");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
 
         // Reject ideographic space (U+3000)
         let result = validate_cmek_alias("alias/my\u{3000}key");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
     }
 
     #[test]
@@ -1373,22 +1383,26 @@ mod tests {
         // Reject newline
         let result = validate_cmek_alias("alias/my\nkey");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
 
         // Reject carriage return
         let result = validate_cmek_alias("alias/my\rkey");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
 
         // Reject null byte
         let result = validate_cmek_alias("alias/my\0key");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
 
         // Reject tab
         let result = validate_cmek_alias("alias/my\tkey");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        let e = result.unwrap_err();
+        assert!(e.contains("alphanumeric"));
     }
 
     #[test]
@@ -1423,7 +1437,8 @@ mod tests {
         // HTTP should be rejected when cert validation is enabled
         let result = validate_project_url("http://example.com");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("https://"));
+        let e = result.unwrap_err();
+        assert!(e.contains("https://"));
     }
 
     #[test]
@@ -1431,28 +1446,33 @@ mod tests {
         // Missing protocol
         let result = validate_project_url("example.com");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("https://"));
+        let e = result.unwrap_err();
+        assert!(e.contains("https://"));
 
         // Wrong protocol
         let result = validate_project_url("ftp://example.com");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("https://"));
+        let e = result.unwrap_err();
+        assert!(e.contains("https://"));
 
         // File protocol (potential SSRF)
         let result = validate_project_url("file:///etc/passwd");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("https://"));
+        let e = result.unwrap_err();
+        assert!(e.contains("https://"));
     }
 
     #[test]
     fn test_validate_project_url_rejects_empty() {
         let result = validate_project_url("");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be empty"));
+        let e = result.unwrap_err();
+        assert!(e.contains("cannot be empty"));
 
         let result = validate_project_url("   ");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be empty"));
+        let e = result.unwrap_err();
+        assert!(e.contains("cannot be empty"));
     }
 
     #[test]
@@ -1461,7 +1481,8 @@ mod tests {
         let long_url = format!("https://example.com/{}", "a".repeat(100));
         let result = validate_project_url(&long_url);
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("100 characters or less"));
+        let e = result.unwrap_err();
+        assert!(e.contains("100 characters or less"));
     }
 
     #[test]
@@ -1519,11 +1540,13 @@ mod tests {
         // JavaScript protocol injection attempt
         let result = validate_project_url("javascript:alert('XSS')");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("https://"));
+        let e = result.unwrap_err();
+        assert!(e.contains("https://"));
 
         // Data URI injection
         let result = validate_project_url("data:text/html,<script>alert('XSS')</script>");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("https://"));
+        let e = result.unwrap_err();
+        assert!(e.contains("https://"));
     }
 }

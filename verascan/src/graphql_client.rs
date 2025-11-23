@@ -1,6 +1,6 @@
 //! GraphQL client using centralized HTTP client
 //!
-//! This module demonstrates how to use the centralized RobustHttpClient
+//! This module demonstrates how to use the centralized `RobustHttpClient`
 //! for GraphQL API integrations, maintaining all robust networking features.
 
 use crate::http_client::{
@@ -100,6 +100,9 @@ pub struct GraphQLClient {
 
 impl GraphQLClient {
     /// Create a new GraphQL client
+    ///
+    /// # Errors
+    /// Returns an error if authentication strategy configuration fails or HTTP client creation fails
     pub fn new(config: GraphQLClientConfig) -> Result<Self, GraphQLClientError> {
         let mut builder =
             HttpClientConfigBuilder::for_api_client(config.endpoint.clone(), &config.env_prefix)
@@ -142,6 +145,9 @@ impl GraphQLClient {
     }
 
     /// Execute a GraphQL query
+    ///
+    /// # Errors
+    /// Returns an error if the GraphQL query fails or response deserialization fails
     pub async fn query<T>(
         &self,
         query: &str,
@@ -177,6 +183,9 @@ impl GraphQLClient {
     }
 
     /// Execute a GraphQL mutation
+    ///
+    /// # Errors
+    /// Returns an error if the GraphQL mutation fails or response deserialization fails
     pub async fn mutate<T>(
         &self,
         mutation: &str,
@@ -190,6 +199,9 @@ impl GraphQLClient {
     }
 
     /// Execute a raw GraphQL request and return the full response
+    ///
+    /// # Errors
+    /// Returns an error if the GraphQL request fails or HTTP request fails
     pub async fn execute_raw(
         &self,
         request: &GraphQLRequest,
@@ -199,6 +211,9 @@ impl GraphQLClient {
     }
 
     /// Test connectivity to the GraphQL endpoint
+    ///
+    /// # Errors
+    /// Returns an error if the introspection query fails or the GraphQL endpoint is unreachable
     pub async fn test_connectivity(&self) -> Result<(), GraphQLClientError> {
         // Use a simple introspection query to test connectivity
         let introspection_query = r"
@@ -221,8 +236,7 @@ impl GraphQLClient {
 
         let response: GraphQLResponse = self.http_client.post("", &request).await?;
 
-        if response.errors.is_some() {
-            let errors = response.errors.unwrap();
+        if let Some(errors) = response.errors {
             let error_messages: Vec<String> = errors.iter().map(|e| e.message.clone()).collect();
             return Err(HttpClientError::GraphQLError(format!(
                 "Connectivity test failed: {}",
@@ -249,6 +263,9 @@ pub struct GitHubGraphQLClient {
 
 impl GitHubGraphQLClient {
     /// Create a new GitHub GraphQL client
+    ///
+    /// # Errors
+    /// Returns an error if the GraphQL client cannot be created with the provided token
     pub fn new(token: String) -> Result<Self, GraphQLClientError> {
         let config = GraphQLClientConfig::new("https://api.github.com/graphql".to_string())
             .with_auth_token(token);
@@ -259,6 +276,9 @@ impl GitHubGraphQLClient {
     }
 
     /// Get repository information
+    ///
+    /// # Errors
+    /// Returns an error if the GitHub GraphQL query fails or repository is not found
     pub async fn get_repository(
         &self,
         owner: &str,
@@ -309,6 +329,9 @@ impl GitHubGraphQLClient {
     }
 
     /// Create an issue
+    ///
+    /// # Errors
+    /// Returns an error if the GitHub GraphQL mutation fails or issue creation fails
     pub async fn create_issue(
         &self,
         repository_id: &str,
@@ -346,12 +369,16 @@ impl GitHubGraphQLClient {
     }
 
     /// Test connectivity to GitHub GraphQL API
+    ///
+    /// # Errors
+    /// Returns an error if the GitHub GraphQL API is unreachable or authentication fails
     pub async fn test_connectivity(&self) -> Result<(), GraphQLClientError> {
         self.client.test_connectivity().await
     }
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -363,7 +390,7 @@ mod tests {
             operation_name: Some("GetUser".to_string()),
         };
 
-        let json = serde_json::to_string(&request).unwrap();
+        let json = serde_json::to_string(&request).expect("test value");
         assert!(json.contains("query"));
         assert!(json.contains("variables"));
         assert!(json.contains("operationName"));
@@ -380,13 +407,17 @@ mod tests {
             "errors": null
         }"#;
 
-        let response: GraphQLResponse = serde_json::from_str(response_json).unwrap();
+        let response: GraphQLResponse = serde_json::from_str(response_json).expect("test value");
         assert!(response.data.is_some());
         assert!(response.errors.is_none());
 
-        if let Some(data) = response.data {
-            assert_eq!(data["user"]["name"], "John Doe");
-        }
+        let data = response.data.expect("data should be present");
+        assert_eq!(
+            data.get("user")
+                .and_then(|u| u.get("name"))
+                .and_then(|n| n.as_str()),
+            Some("John Doe")
+        );
     }
 
     #[test]
@@ -402,14 +433,19 @@ mod tests {
             ]
         }"#;
 
-        let response: GraphQLResponse = serde_json::from_str(response_json).unwrap();
+        let response: GraphQLResponse = serde_json::from_str(response_json).expect("test value");
         assert!(response.data.is_none());
         assert!(response.errors.is_some());
 
-        if let Some(errors) = response.errors {
-            assert_eq!(errors.len(), 1);
-            assert!(errors[0].message.contains("invalidField"));
-        }
+        let errors = response.errors.expect("errors should be present");
+        assert_eq!(errors.len(), 1);
+        assert!(
+            errors
+                .first()
+                .expect("test value")
+                .message
+                .contains("invalidField")
+        );
     }
 
     #[test]
@@ -435,7 +471,7 @@ mod tests {
         let client = GraphQLClient::new(config);
         assert!(client.is_ok());
 
-        let client = client.unwrap();
+        let client = client.expect("test value");
         assert_eq!(client.endpoint(), "https://api.example.com/graphql");
     }
 }

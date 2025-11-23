@@ -89,7 +89,7 @@ impl TempDir {
         let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_else(|_| std::time::Duration::from_secs(0))
             .as_nanos();
         let pid = std::process::id();
 
@@ -116,6 +116,7 @@ impl TempDir {
     }
 
     /// Get the path to the temporary directory
+    #[must_use]
     pub fn path(&self) -> &Path {
         &self.path
     }
@@ -124,6 +125,7 @@ impl TempDir {
     ///
     /// Returns the path to the directory
     #[allow(dead_code)]
+    #[must_use]
     pub fn into_path(mut self) -> PathBuf {
         self.persist = true;
         self.path.clone()
@@ -148,6 +150,7 @@ impl AsRef<Path> for TempDir {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
@@ -157,7 +160,9 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_temp_dir_creation() {
-        let temp_dir = TempDir::new().unwrap();
+        let result = TempDir::new();
+        assert!(result.is_ok(), "Failed to create temp dir");
+        let temp_dir = result.unwrap();
         assert!(temp_dir.path().exists());
         assert!(temp_dir.path().is_dir());
     }
@@ -166,11 +171,14 @@ mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_temp_dir_cleanup() {
         let path = {
-            let temp_dir = TempDir::new().unwrap();
+            let result = TempDir::new();
+            assert!(result.is_ok(), "Failed to create temp dir");
+            let temp_dir = result.unwrap();
             let path = temp_dir.path().to_path_buf();
 
             // Create a file
-            File::create(path.join("test.txt")).unwrap();
+            let file_result = File::create(path.join("test.txt"));
+            assert!(file_result.is_ok(), "Failed to create test file");
             assert!(path.join("test.txt").exists());
 
             path
@@ -184,10 +192,13 @@ mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_temp_dir_persist() {
         let path = {
-            let temp_dir = TempDir::new().unwrap();
+            let result = TempDir::new();
+            assert!(result.is_ok(), "Failed to create temp dir");
+            let temp_dir = result.unwrap();
             let path = temp_dir.path().to_path_buf();
 
-            File::create(path.join("test.txt")).unwrap();
+            let file_result = File::create(path.join("test.txt"));
+            assert!(file_result.is_ok(), "Failed to create test file");
 
             temp_dir.into_path()
         }; // temp_dir NOT dropped (persisted)
@@ -196,14 +207,20 @@ mod tests {
         assert!(path.exists());
 
         // Manual cleanup
-        fs::remove_dir_all(&path).unwrap();
+        let cleanup_result = fs::remove_dir_all(&path);
+        assert!(cleanup_result.is_ok(), "Failed to clean up persisted dir");
     }
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_unique_directories() {
-        let dir1 = TempDir::new().unwrap();
-        let dir2 = TempDir::new().unwrap();
+        let result1 = TempDir::new();
+        assert!(result1.is_ok(), "Failed to create temp dir 1");
+        let dir1 = result1.unwrap();
+
+        let result2 = TempDir::new();
+        assert!(result2.is_ok(), "Failed to create temp dir 2");
+        let dir2 = result2.unwrap();
 
         assert_ne!(dir1.path(), dir2.path());
     }
@@ -213,8 +230,13 @@ mod tests {
     fn test_unix_permissions() {
         use std::os::unix::fs::PermissionsExt;
 
-        let temp_dir = TempDir::new().unwrap();
-        let metadata = fs::metadata(temp_dir.path()).unwrap();
+        let result = TempDir::new();
+        assert!(result.is_ok(), "Failed to create temp dir");
+        let temp_dir = result.unwrap();
+
+        let metadata_result = fs::metadata(temp_dir.path());
+        assert!(metadata_result.is_ok(), "Failed to get metadata");
+        let metadata = metadata_result.unwrap();
         let permissions = metadata.permissions();
 
         // Should be 0o700 (owner only)

@@ -6,8 +6,8 @@
 //! without running a full pipeline scan.
 //!
 //! Usage:
-//! 1. Set environment variables (PRIVATE_TOKEN, CI_PROJECT_ID, etc.)
-//! 2. Run: cargo run --example validate_gitlab
+//! 1. Set environment variables (`PRIVATE_TOKEN`, `CI_PROJECT_ID`, etc.)
+//! 2. Run: cargo run --example `validate_gitlab`
 
 use std::env;
 use verascan::gitlab_issues::GitLabIssuesClient;
@@ -41,7 +41,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "✅ {}: {}...",
                 var,
-                &value[..std::cmp::min(10, value.len())]
+                value.get(..std::cmp::min(10, value.len())).unwrap_or(&value)
             );
             break;
         }

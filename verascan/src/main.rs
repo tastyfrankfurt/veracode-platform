@@ -50,7 +50,13 @@ fn main() {
         Ok(_) => {
             debug!("Vault configuration detected, attempting Vault credential and proxy loading");
             // Create runtime only for vault credential loading
-            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    error!("❌ Failed to create tokio runtime: {e}");
+                    std::process::exit(1);
+                }
+            };
             match runtime.block_on(load_credentials_and_proxy_from_vault()) {
                 Ok((credentials, proxy_url, proxy_username, proxy_password)) => {
                     // Create config with credentials and proxy - Vault proxy takes precedence!
@@ -116,7 +122,13 @@ fn main() {
         }
         Commands::Export { .. } => {
             // Set up runtime for async execution
-            let runtime = tokio::runtime::Runtime::new().unwrap();
+            let runtime = match tokio::runtime::Runtime::new() {
+                Ok(rt) => rt,
+                Err(e) => {
+                    error!("❌ Failed to create tokio runtime: {e}");
+                    std::process::exit(1);
+                }
+            };
             runtime.block_on(async {
                 execute_findings_export(&veracode_config, &args)
                     .await

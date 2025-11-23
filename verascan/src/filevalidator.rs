@@ -82,6 +82,12 @@ impl FileValidator {
     }
 
     /// Validate a file by checking its header signature
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError::IoError` if the file cannot be opened or read.
+    /// Returns `ValidationError::InvalidFileHeader` if the file is empty or has an invalid header signature.
+    /// Returns `ValidationError::UnsupportedFileType` if the file type is not supported for Veracode scanning.
     pub fn validate_file(&self, file_path: &Path) -> Result<SupportedFileType, ValidationError> {
         // Read the first 512 bytes to check file signatures
         let mut file = File::open(file_path).map_err(|e| {
@@ -115,7 +121,7 @@ impl FileValidator {
 
         debug!(
             "🔍 DEBUG: First 16 bytes: {:02x?}",
-            &buffer[..std::cmp::min(16, buffer.len())]
+            buffer.get(..std::cmp::min(16, buffer.len())).unwrap_or(&[])
         );
 
         // Use infer library for MIME type detection
@@ -255,10 +261,12 @@ impl FileValidator {
         // PK\x03\x04 (local file header)
         // PK\x05\x06 (end of central directory)
         // PK\x01\x02 (central directory file header)
-        matches!(
-            buffer[0..4],
-            [0x50, 0x4B, 0x03, 0x04] | [0x50, 0x4B, 0x05, 0x06] | [0x50, 0x4B, 0x01, 0x02]
-        )
+        buffer.get(0..4).is_some_and(|bytes| {
+            matches!(
+                bytes,
+                [0x50, 0x4B, 0x03, 0x04] | [0x50, 0x4B, 0x05, 0x06] | [0x50, 0x4B, 0x01, 0x02]
+            )
+        })
     }
 
     /// Enhanced JAR detection - looks for JAR-specific patterns
@@ -295,8 +303,8 @@ impl FileValidator {
             return false;
         }
 
-        for i in 0..=(buffer.len() - pattern.len()) {
-            if &buffer[i..i + pattern.len()] == pattern {
+        for i in 0..=buffer.len().saturating_sub(pattern.len()) {
+            if buffer.get(i..i.saturating_add(pattern.len())) == Some(pattern) {
                 return true;
             }
         }
@@ -329,6 +337,11 @@ impl FileValidator {
     }
 
     /// Validate file size against specified limit
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError::IoError` if file metadata cannot be accessed.
+    /// Returns `ValidationError::FileTooLarge` if the file size exceeds the specified limit.
     pub async fn validate_file_size(
         &self,
         file_path: &Path,
@@ -343,6 +356,8 @@ impl FileValidator {
         })?;
 
         let file_size_bytes = metadata.len();
+        // Precision loss acceptable: converting bytes to MB for validation and display
+        #[allow(clippy::cast_precision_loss)]
         let file_size_mb = file_size_bytes as f64 / (1024.0 * 1024.0);
 
         if file_size_mb > max_size_mb {
@@ -357,6 +372,11 @@ impl FileValidator {
     }
 
     /// Validate file size for pipeline scans (200MB limit)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError::IoError` if file metadata cannot be accessed.
+    /// Returns `ValidationError::FileTooLarge` if the file exceeds 200MB.
     pub async fn validate_pipeline_file_size(
         &self,
         file_path: &Path,
@@ -365,6 +385,11 @@ impl FileValidator {
     }
 
     /// Validate file size for assessment scans (2GB limit)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError::IoError` if file metadata cannot be accessed.
+    /// Returns `ValidationError::FileTooLarge` if the file exceeds 2GB.
     pub async fn validate_assessment_file_size(
         &self,
         file_path: &Path,
@@ -373,6 +398,11 @@ impl FileValidator {
     }
 
     /// Validate cumulative file sizes for assessment scans (5GB total limit)
+    ///
+    /// # Errors
+    ///
+    /// Returns `ValidationError::IoError` if file metadata cannot be accessed for any file.
+    /// Returns `ValidationError::FileTooLarge` if the total cumulative size exceeds 5GB.
     pub async fn validate_assessment_cumulative_size(
         &self,
         file_paths: &[&Path],
@@ -389,9 +419,11 @@ impl FileValidator {
                 ))
             })?;
 
-            total_size_bytes += metadata.len();
+            total_size_bytes = total_size_bytes.saturating_add(metadata.len());
         }
 
+        // Precision loss acceptable: converting bytes to MB for validation and display
+        #[allow(clippy::cast_precision_loss)]
         let total_size_mb = total_size_bytes as f64 / (1024.0 * 1024.0);
 
         if total_size_mb > max_total_mb {
@@ -407,6 +439,7 @@ impl FileValidator {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

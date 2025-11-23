@@ -44,7 +44,8 @@ impl ScanTypeDetector {
             // Check if it's a sandbox scan by looking for sandbox context
             if let Some(findings) = embedded.get("findings").and_then(|f| f.as_array())
                 && !findings.is_empty()
-                && let Some(context_type) = findings[0].get("context_type")
+                && let Some(first_finding) = findings.first()
+                && let Some(context_type) = first_finding.get("context_type")
             {
                 if context_type == "SANDBOX" {
                     return ScanType::Sandbox;
@@ -190,9 +191,9 @@ impl UrlFilter {
 #[must_use]
 pub fn extract_cwe_id_from_url(url: &str) -> Option<String> {
     if let Some(start) = url.find("/cwes/") {
-        let after_cwes = &url[start + 6..];
+        let after_cwes = url.get(start.saturating_add(6)..)?;
         if let Some(end) = after_cwes.find('/').or_else(|| after_cwes.find('?')) {
-            Some(after_cwes[..end].to_string())
+            after_cwes.get(..end).map(String::from)
         } else {
             Some(after_cwes.to_string())
         }
@@ -396,7 +397,7 @@ impl ScanResultData for RestFindingWrapper {
     }
 
     fn get_exploitability(&self) -> Option<u32> {
-        Some(self.finding.finding_details.exploitability as u32)
+        u32::try_from(self.finding.finding_details.exploitability).ok()
     }
 }
 
@@ -895,7 +896,7 @@ impl GitLabFieldMapper for PolicyScanMapper {
 }
 
 /// Convert Veracode severity to GitLab severity
-/// Based on Veracode documentation: https://docs.veracode.com/r/review_severity_exploitability
+/// Based on Veracode documentation: <https://docs.veracode.com/r/review_severity_exploitability>
 /// 0: Informational, 1: Very Low, 2: Low, 3: Medium, 4: High, 5: Very High (Critical)
 fn convert_severity(veracode_severity: u32) -> GitLabSeverity {
     match veracode_severity {
@@ -910,7 +911,7 @@ fn convert_severity(veracode_severity: u32) -> GitLabSeverity {
 }
 
 /// Convert severity number to string
-/// Based on Veracode documentation: https://docs.veracode.com/r/review_severity_exploitability
+/// Based on Veracode documentation: <https://docs.veracode.com/r/review_severity_exploitability>
 fn severity_to_string(severity: u32) -> &'static str {
     match severity {
         5 => "Very High",     // Critical weakness
@@ -924,7 +925,7 @@ fn severity_to_string(severity: u32) -> &'static str {
 }
 
 /// Convert exploitability number to string
-/// Based on Veracode documentation: https://docs.veracode.com/r/review_severity_exploitability
+/// Based on Veracode documentation: <https://docs.veracode.com/r/review_severity_exploitability>
 fn exploitability_to_string(exploitability: u32) -> &'static str {
     match exploitability {
         4 => "Very High", // Very easily exploitable
@@ -961,6 +962,9 @@ impl UnifiedGitLabMapper {
     }
 
     /// Map pipeline scan findings to GitLab vulnerabilities
+    ///
+    /// # Errors
+    /// Returns an error if finding mapping or conversion fails
     pub fn map_pipeline_findings(
         &self,
         findings: &[FindingWithSource],
@@ -976,6 +980,9 @@ impl UnifiedGitLabMapper {
     }
 
     /// Map policy/sandbox scan findings to GitLab vulnerabilities
+    ///
+    /// # Errors
+    /// Returns an error if finding mapping or conversion fails
     pub fn map_policy_findings(
         &self,
         rest_findings: &[RestFinding],
@@ -998,6 +1005,9 @@ impl UnifiedGitLabMapper {
     }
 
     /// Auto-detect scan type and map accordingly
+    ///
+    /// # Errors
+    /// Returns an error if scan type detection fails or finding mapping fails
     pub fn map_scan_data(
         &self,
         scan_data: &serde_json::Value,
@@ -1143,6 +1153,7 @@ impl GitLabMapperFactory {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use crate::findings::ScanSource;
@@ -1370,14 +1381,20 @@ mod tests {
 
         let cwe_id = identifiers.iter().find(|id| id.identifier_type == "cwe");
         assert!(cwe_id.is_some());
-        assert_eq!(cwe_id.unwrap().value, "79");
+        assert_eq!(cwe_id.expect("test value").value, "79");
 
         // Test links mapping
         let links = mapper.map_links(&finding, &url_filter);
         assert!(links.is_some());
-        let links = links.unwrap();
+        let links = links.expect("test value");
         assert!(!links.is_empty());
-        assert!(links[0].url.contains("cwe.mitre.org"));
+        assert!(
+            links
+                .first()
+                .expect("test value")
+                .url
+                .contains("cwe.mitre.org")
+        );
 
         // Test tracking mapping
         let tracking = mapper.map_tracking(&finding, &url_filter);
@@ -1425,7 +1442,7 @@ mod tests {
         let identifiers = mapper.map_identifiers(&wrapper, &url_filter);
         let cwe_id = identifiers.iter().find(|id| id.identifier_type == "cwe");
         assert!(cwe_id.is_some());
-        assert_eq!(cwe_id.unwrap().value, "259");
+        assert_eq!(cwe_id.expect("test value").value, "259");
     }
 
     #[test]
@@ -1434,10 +1451,12 @@ mod tests {
 
         // Test pipeline mapping
         let pipeline_findings = vec![create_test_pipeline_finding()];
-        let vulnerabilities = mapper.map_pipeline_findings(&pipeline_findings).unwrap();
+        let vulnerabilities = mapper
+            .map_pipeline_findings(&pipeline_findings)
+            .expect("test value");
         assert_eq!(vulnerabilities.len(), 1);
         assert_eq!(
-            vulnerabilities[0].name,
+            vulnerabilities.first().expect("test value").name,
             Some("Cross-Site Scripting".to_string())
         );
 
@@ -1445,10 +1464,10 @@ mod tests {
         let rest_findings = vec![create_test_rest_finding()];
         let vulnerabilities = mapper
             .map_policy_findings(&rest_findings, "scan-123", "Test App")
-            .unwrap();
+            .expect("test value");
         assert_eq!(vulnerabilities.len(), 1);
         assert_eq!(
-            vulnerabilities[0].name,
+            vulnerabilities.first().expect("test value").name,
             Some("Credentials Management".to_string())
         );
     }
@@ -1476,7 +1495,14 @@ mod tests {
         // Test custom identifiers
         let custom_mapper = GitLabMapperFactory::with_identifiers(vec!["cwe".to_string()]);
         assert_eq!(custom_mapper.get_config().identifier_types.len(), 1);
-        assert_eq!(custom_mapper.get_config().identifier_types[0], "cwe");
+        assert_eq!(
+            custom_mapper
+                .get_config()
+                .identifier_types
+                .first()
+                .expect("test value"),
+            "cwe"
+        );
     }
 
     #[test]
@@ -1569,12 +1595,12 @@ mod tests {
         let config = MappingConfig::default();
 
         // Test serialization
-        let serialized = serde_json::to_string(&config).unwrap();
+        let serialized = serde_json::to_string(&config).expect("test value");
         assert!(serialized.contains("identifier_types"));
         assert!(serialized.contains("include_tracking"));
 
         // Test deserialization
-        let deserialized: MappingConfig = serde_json::from_str(&serialized).unwrap();
+        let deserialized: MappingConfig = serde_json::from_str(&serialized).expect("test value");
         assert_eq!(config.identifier_types, deserialized.identifier_types);
         assert_eq!(config.include_tracking, deserialized.include_tracking);
     }
@@ -1623,7 +1649,10 @@ mod tests {
 
         // Should only have CWE identifier, not Veracode identifier
         assert_eq!(identifiers.len(), 1);
-        assert_eq!(identifiers[0].identifier_type, "cwe");
+        assert_eq!(
+            identifiers.first().expect("test value").identifier_type,
+            "cwe"
+        );
     }
 
     #[test]
@@ -1640,7 +1669,7 @@ mod tests {
         let details = mapper.map_details(&wrapper);
         assert!(details.is_some());
 
-        let details = details.unwrap();
+        let details = details.expect("test value");
         assert!(details.items.contains_key("exploitability"));
         assert!(details.items.contains_key("exploitability_text"));
         assert!(details.items.contains_key("veracode_issue_id"));
@@ -1648,10 +1677,13 @@ mod tests {
         assert!(details.items.contains_key("finding_category_name"));
 
         // Check exploitability value
-        let exploitability = details.items.get("exploitability").unwrap();
+        let exploitability = details.items.get("exploitability").expect("test value");
         assert_eq!(exploitability["value"].as_u64(), Some(1));
 
-        let exploitability_text = details.items.get("exploitability_text").unwrap();
+        let exploitability_text = details
+            .items
+            .get("exploitability_text")
+            .expect("test value");
         assert_eq!(exploitability_text["value"].as_str(), Some("Low"));
     }
 
@@ -1667,7 +1699,7 @@ mod tests {
             "Pipeline details should always be included"
         );
 
-        let details = details.unwrap();
+        let details = details.expect("test value");
         assert!(details.items.contains_key("veracode_issue_id"));
         assert!(details.items.contains_key("scan_id"));
 
@@ -1675,7 +1707,7 @@ mod tests {
         assert!(!details.items.contains_key("exploitability"));
 
         // Check that issue ID is correct
-        let issue_id = details.items.get("veracode_issue_id").unwrap();
+        let issue_id = details.items.get("veracode_issue_id").expect("test value");
         assert_eq!(issue_id["value"].as_u64(), Some(123));
     }
 
@@ -1685,14 +1717,16 @@ mod tests {
 
         // Test empty pipeline findings
         let empty_pipeline: Vec<FindingWithSource> = vec![];
-        let vulnerabilities = mapper.map_pipeline_findings(&empty_pipeline).unwrap();
+        let vulnerabilities = mapper
+            .map_pipeline_findings(&empty_pipeline)
+            .expect("test value");
         assert_eq!(vulnerabilities.len(), 0);
 
         // Test empty policy findings
         let empty_policy: Vec<RestFinding> = vec![];
         let vulnerabilities = mapper
             .map_policy_findings(&empty_policy, "scan", "project")
-            .unwrap();
+            .expect("test value");
         assert_eq!(vulnerabilities.len(), 0);
     }
 }

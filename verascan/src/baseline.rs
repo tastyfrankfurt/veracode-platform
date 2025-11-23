@@ -323,6 +323,9 @@ impl BaselineManager {
     }
 
     /// Create a baseline file from aggregated findings
+    ///
+    /// # Errors
+    /// Returns an error if JSON serialization fails or the output file cannot be written
     pub fn create_baseline(
         &self,
         aggregated: &AggregatedFindings,
@@ -347,7 +350,10 @@ impl BaselineManager {
         Ok(())
     }
 
-    /// Load a baseline file  
+    /// Load a baseline file
+    ///
+    /// # Errors
+    /// Returns an error if the file does not exist, cannot be read, or contains invalid JSON
     pub fn load_baseline(
         &self,
         baseline_path: &Path,
@@ -373,6 +379,9 @@ impl BaselineManager {
     }
 
     /// Compare current findings against a baseline
+    ///
+    /// # Errors
+    /// Returns an error if the comparison operation fails or findings cannot be processed
     pub fn compare_with_baseline<'a>(
         &self,
         current: &AggregatedFindings,
@@ -399,6 +408,9 @@ impl BaselineManager {
     }
 
     /// Export comparison results
+    ///
+    /// # Errors
+    /// Returns an error if JSON serialization fails or the file cannot be written
     pub fn export_comparison<'a>(
         &self,
         comparison: &BaselineComparison<'a>,
@@ -474,12 +486,15 @@ impl BaselineManager {
                 .take(5)
                 .enumerate()
             {
-                info!("   {}. CWE-{}", index + 1, cwe_id);
+                info!("   {}. CWE-{}", index.saturating_add(1), cwe_id);
             }
         }
     }
 
     /// Convert aggregated findings to baseline format
+    ///
+    /// # Errors
+    /// Returns an error if scan metadata is missing or findings cannot be converted
     fn convert_to_baseline<'a>(
         &self,
         aggregated: &'a AggregatedFindings,
@@ -546,7 +561,7 @@ impl BaselineManager {
                     commit_hash: None, // Could be enhanced to extract from git
                     branch: None,      // Could be enhanced to extract from git
                 },
-                finding_count: baseline_findings.len() as u32,
+                finding_count: u32::try_from(baseline_findings.len()).unwrap_or(u32::MAX),
             },
             findings: baseline_findings,
             summary: BaselineSummary {
@@ -593,6 +608,9 @@ impl BaselineManager {
     }
 
     /// Perform the actual comparison between current and baseline findings
+    ///
+    /// # Errors
+    /// Returns an error if the comparison logic fails or data structures cannot be processed
     fn perform_comparison<'a>(
         &self,
         current: &AggregatedFindings,
@@ -695,30 +713,35 @@ impl BaselineManager {
         new_findings: &[FindingWithSource],
         fixed_findings: &[BaselineFinding<'a>],
     ) -> ComparisonSummary {
-        let new_count = new_findings.len() as u32;
-        let fixed_count = fixed_findings.len() as u32;
-        let net_change = new_count as i32 - fixed_count as i32;
+        let new_count = u32::try_from(new_findings.len()).unwrap_or(u32::MAX);
+        let fixed_count = u32::try_from(fixed_findings.len()).unwrap_or(u32::MAX);
+        let net_change = i32::try_from(new_count)
+            .unwrap_or(i32::MAX)
+            .saturating_sub(i32::try_from(fixed_count).unwrap_or(i32::MAX));
 
         // Count new findings by severity
-        let mut new_by_severity = HashMap::new();
+        let mut new_by_severity: HashMap<String, u32> = HashMap::new();
         for finding in new_findings {
             let severity_name = severity_to_name(finding.finding.severity);
-            *new_by_severity.entry(severity_name.into()).or_insert(0) += 1;
+            let count = new_by_severity.entry(severity_name.into()).or_insert(0);
+            *count = (*count).saturating_add(1);
         }
 
         // Count fixed findings by severity
-        let mut fixed_by_severity = HashMap::new();
+        let mut fixed_by_severity: HashMap<String, u32> = HashMap::new();
         for finding in fixed_findings {
             let severity_name = severity_to_name(finding.severity);
-            *fixed_by_severity.entry(severity_name.into()).or_insert(0) += 1;
+            let count = fixed_by_severity.entry(severity_name.into()).or_insert(0);
+            *count = (*count).saturating_add(1);
         }
 
         // Get new CWE breakdown
         let mut cwe_counts: HashMap<String, u32> = HashMap::new();
         for finding in new_findings {
-            *cwe_counts
+            let count = cwe_counts
                 .entry(finding.finding.cwe_id.clone())
-                .or_insert(0) += 1;
+                .or_insert(0);
+            *count = count.saturating_add(1);
         }
 
         let mut cwe_vec: Vec<(String, u32)> = cwe_counts.into_iter().collect();
@@ -743,6 +766,9 @@ impl BaselineManager {
     // Policy Assessment Methods
 
     /// Load a policy file
+    ///
+    /// # Errors
+    /// Returns an error if the policy file does not exist, cannot be read, or contains invalid JSON
     pub fn load_policy_file(
         &self,
         policy_path: &Path,
@@ -766,6 +792,9 @@ impl BaselineManager {
     }
 
     /// Assess findings against a policy
+    ///
+    /// # Errors
+    /// Returns an error if the policy assessment fails or findings cannot be processed
     pub fn assess_against_policy(
         &self,
         findings: &AggregatedFindings,
@@ -808,9 +837,9 @@ impl BaselineManager {
             }
 
             if rule_result.passed {
-                rules_passed += 1;
+                rules_passed = rules_passed.saturating_add(1);
             } else {
-                rules_failed += 1;
+                rules_failed = rules_failed.saturating_add(1);
             }
 
             // Collect violations from this rule
@@ -852,7 +881,7 @@ impl BaselineManager {
         let mut summary = self.calculate_policy_summary(&all_violations);
 
         // Update summary with correct rule counts and total findings
-        summary.total_findings = findings.findings.len() as u32;
+        summary.total_findings = u32::try_from(findings.findings.len()).unwrap_or(u32::MAX);
         summary.rules_passed = rules_passed;
         summary.rules_failed = rules_failed;
 
@@ -879,7 +908,12 @@ impl BaselineManager {
                 } else {
                     "❌ FAIL"
                 };
-                info!("   {}. {} - {}", index + 1, status, rule_result.rule.name);
+                info!(
+                    "   {}. {} - {}",
+                    index.saturating_add(1),
+                    status,
+                    rule_result.rule.name
+                );
                 info!(
                     "      Found: {} findings (max allowed: {})",
                     rule_result.finding_count, rule_result.rule.max_allowed
@@ -1012,7 +1046,7 @@ impl BaselineManager {
             }
         }
 
-        let finding_count = matching_findings.len() as u32;
+        let finding_count = u32::try_from(matching_findings.len()).unwrap_or(u32::MAX);
         let passed = finding_count <= rule.max_allowed;
 
         let violating_findings = if passed {
@@ -1046,7 +1080,7 @@ impl BaselineManager {
 
         // Check max total findings - use iterator to avoid copying
         if let Some(max_total) = criteria.max_total_findings
-            && findings.len() as u32 > max_total
+            && u32::try_from(findings.len()).unwrap_or(u32::MAX) > max_total
         {
             violations.extend(findings.iter().cloned());
             return violations;
@@ -1084,10 +1118,13 @@ impl BaselineManager {
                 _ => continue,
             };
 
-            let count = findings
-                .iter()
-                .filter(|f| f.finding.severity == severity_level)
-                .count() as u32;
+            let count = u32::try_from(
+                findings
+                    .iter()
+                    .filter(|f| f.finding.severity == severity_level)
+                    .count(),
+            )
+            .unwrap_or(u32::MAX);
 
             if count > *max_allowed {
                 violations.extend(
@@ -1107,17 +1144,19 @@ impl BaselineManager {
         &self,
         violations: &[FindingWithSource],
     ) -> PolicyAssessmentSummary {
-        let mut violations_by_severity = HashMap::new();
+        let mut violations_by_severity: HashMap<String, u32> = HashMap::new();
         let mut cwe_counts: HashMap<String, u32> = HashMap::new();
 
         for violation in violations {
             let severity_name = severity_to_name(violation.finding.severity);
-            *violations_by_severity
+            let sev_count = violations_by_severity
                 .entry(severity_name.into())
-                .or_insert(0) += 1;
-            *cwe_counts
+                .or_insert(0);
+            *sev_count = (*sev_count).saturating_add(1);
+            let cwe_count = cwe_counts
                 .entry(violation.finding.cwe_id.clone())
-                .or_insert(0) += 1;
+                .or_insert(0);
+            *cwe_count = (*cwe_count).saturating_add(1);
         }
 
         let mut cwe_vec: Vec<(String, u32)> = cwe_counts.into_iter().collect();
@@ -1130,7 +1169,7 @@ impl BaselineManager {
 
         PolicyAssessmentSummary {
             total_findings: 0, // Will be set by caller
-            total_violations: violations.len() as u32,
+            total_violations: u32::try_from(violations.len()).unwrap_or(u32::MAX),
             rules_passed: 0, // Will be set by caller
             rules_failed: 0, // Will be set by caller
             violations_by_severity,
@@ -1181,13 +1220,16 @@ impl BaselineManager {
                     .take(5)
                     .enumerate()
                 {
-                    info!("   {}. CWE-{}", index + 1, cwe_id);
+                    info!("   {}. CWE-{}", index.saturating_add(1), cwe_id);
                 }
             }
         }
     }
 
     /// Export policy assessment to file
+    ///
+    /// # Errors
+    /// Returns an error if JSON serialization fails or the output file cannot be written
     pub fn export_policy_assessment(
         &self,
         assessment: &PolicyAssessment,
@@ -1222,6 +1264,9 @@ fn severity_to_name(severity: u32) -> &'static str {
 }
 
 /// Execute baseline creation from scan results
+///
+/// # Errors
+/// Returns an error code if baseline creation fails or files cannot be written
 pub fn execute_baseline_create(
     aggregated: &AggregatedFindings,
     output_path: &Path,
@@ -1241,6 +1286,9 @@ pub fn execute_baseline_create(
 }
 
 /// Execute baseline comparison
+///
+/// # Errors
+/// Returns an error code if the baseline file cannot be loaded or comparison fails
 pub fn execute_baseline_compare(
     current: &AggregatedFindings,
     baseline_path: &Path,
@@ -1278,6 +1326,9 @@ pub fn execute_baseline_compare(
 }
 
 /// Execute policy assessment from policy file
+///
+/// # Errors
+/// Returns an error code if the policy file cannot be loaded or assessment fails
 pub fn execute_policy_file_assessment(
     findings: &AggregatedFindings,
     policy_path: &Path,
@@ -1315,6 +1366,9 @@ pub fn execute_policy_file_assessment(
 }
 
 /// Execute policy assessment from policy name (download and assess)
+///
+/// # Errors
+/// Returns an error code if the Veracode client cannot be created, policy cannot be downloaded, or assessment fails
 pub async fn execute_policy_name_assessment(
     findings: &AggregatedFindings,
     policy_name: &str,
@@ -1385,7 +1439,7 @@ pub async fn execute_policy_name_assessment(
     Ok(assessment)
 }
 
-/// Convert Veracode platform policy to our PolicyFile format
+/// Convert Veracode platform policy to our `PolicyFile` format
 fn convert_platform_policy_to_policy_file(
     platform_policy: &veracode_platform::SecurityPolicy,
 ) -> PolicyFile {
@@ -1422,7 +1476,8 @@ fn convert_platform_policy_to_policy_file(
                 // MAX_SEVERITY rule: no findings above this severity allowed
                 if let Ok(max_severity) = finding_rule.value.parse::<u32>() {
                     // Create rule for each severity above the limit
-                    let forbidden_severities: Vec<u32> = ((max_severity + 1)..=5).collect();
+                    let forbidden_severities: Vec<u32> =
+                        (max_severity.saturating_add(1)..=5).collect();
 
                     if !forbidden_severities.is_empty() {
                         let severity_names: Vec<String> = forbidden_severities
