@@ -21,6 +21,155 @@ fn attr_to_string(value: &[u8]) -> String {
     String::from_utf8_lossy(value).into_owned()
 }
 
+/// File upload status as defined in the Veracode filelist.xsd schema
+///
+/// This enum represents all possible states a file can be in during and after upload.
+/// Reference: <https://analysiscenter.veracode.com/resource/2.0/filelist.xsd>
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum FileStatus {
+    /// File is pending upload to the platform
+    #[serde(rename = "Pending Upload")]
+    PendingUpload,
+    /// File is currently being uploaded
+    #[serde(rename = "Uploading")]
+    Uploading,
+    /// File has been purged from the platform
+    #[serde(rename = "Purged")]
+    Purged,
+    /// File was successfully uploaded and is ready for scanning
+    #[serde(rename = "Uploaded")]
+    Uploaded,
+    /// File is missing from the build
+    #[serde(rename = "Missing")]
+    Missing,
+    /// File upload was only partially completed
+    #[serde(rename = "Partial")]
+    Partial,
+    /// File MD5 checksum validation failed
+    #[serde(rename = "Invalid Checksum")]
+    InvalidChecksum,
+    /// File is not a valid archive format
+    #[serde(rename = "Invalid Archive")]
+    InvalidArchive,
+    /// Archive contains nested archives (not allowed)
+    #[serde(rename = "Archive File Within Another Archive")]
+    ArchiveWithinArchive,
+    /// Archive uses unsupported compression algorithm
+    #[serde(rename = "Archive File with Unsupported Compression")]
+    UnsupportedCompression,
+    /// Archive is password protected and cannot be processed
+    #[serde(rename = "Archive File is Password Protected")]
+    PasswordProtected,
+}
+
+impl FileStatus {
+    /// Check if this status indicates a successful upload
+    #[must_use]
+    pub fn is_uploaded(&self) -> bool {
+        matches!(self, FileStatus::Uploaded)
+    }
+
+    /// Check if this status indicates an error state
+    #[must_use]
+    pub fn is_error(&self) -> bool {
+        matches!(
+            self,
+            FileStatus::InvalidChecksum
+                | FileStatus::InvalidArchive
+                | FileStatus::ArchiveWithinArchive
+                | FileStatus::UnsupportedCompression
+                | FileStatus::PasswordProtected
+                | FileStatus::Missing
+                | FileStatus::Purged
+        )
+    }
+
+    /// Check if this status indicates upload is still in progress
+    #[must_use]
+    pub fn is_in_progress(&self) -> bool {
+        matches!(
+            self,
+            FileStatus::PendingUpload | FileStatus::Uploading | FileStatus::Partial
+        )
+    }
+
+    /// Get a human-readable description of the status
+    #[must_use]
+    pub fn description(&self) -> &'static str {
+        match self {
+            FileStatus::PendingUpload => "File is pending upload",
+            FileStatus::Uploading => "File is currently being uploaded",
+            FileStatus::Purged => "File has been purged from the platform",
+            FileStatus::Uploaded => "File successfully uploaded and ready for scanning",
+            FileStatus::Missing => "File is missing from the build",
+            FileStatus::Partial => "File upload was only partially completed",
+            FileStatus::InvalidChecksum => "File MD5 checksum validation failed",
+            FileStatus::InvalidArchive => "File is not a valid archive format",
+            FileStatus::ArchiveWithinArchive => "Archive contains nested archives (not allowed)",
+            FileStatus::UnsupportedCompression => "Archive uses unsupported compression algorithm",
+            FileStatus::PasswordProtected => {
+                "Archive is password protected and cannot be processed"
+            }
+        }
+    }
+}
+
+impl std::str::FromStr for FileStatus {
+    type Err = ScanError;
+
+    /// Parse file status from XML string value
+    ///
+    /// # Arguments
+    ///
+    /// * `s` - The status string from the XML response
+    ///
+    /// # Returns
+    ///
+    /// The corresponding `FileStatus` enum value, or an error if the status is unknown
+    ///
+    /// # Errors
+    ///
+    /// Returns `ScanError::InvalidParameter` if the status string is not recognized
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Pending Upload" => Ok(FileStatus::PendingUpload),
+            "Uploading" => Ok(FileStatus::Uploading),
+            "Purged" => Ok(FileStatus::Purged),
+            "Uploaded" => Ok(FileStatus::Uploaded),
+            "Missing" => Ok(FileStatus::Missing),
+            "Partial" => Ok(FileStatus::Partial),
+            "Invalid Checksum" => Ok(FileStatus::InvalidChecksum),
+            "Invalid Archive" => Ok(FileStatus::InvalidArchive),
+            "Archive File Within Another Archive" => Ok(FileStatus::ArchiveWithinArchive),
+            "Archive File with Unsupported Compression" => Ok(FileStatus::UnsupportedCompression),
+            "Archive File is Password Protected" => Ok(FileStatus::PasswordProtected),
+            _ => Err(ScanError::InvalidParameter(format!(
+                "Unknown file status: {}",
+                s
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for FileStatus {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            FileStatus::PendingUpload => "Pending Upload",
+            FileStatus::Uploading => "Uploading",
+            FileStatus::Purged => "Purged",
+            FileStatus::Uploaded => "Uploaded",
+            FileStatus::Missing => "Missing",
+            FileStatus::Partial => "Partial",
+            FileStatus::InvalidChecksum => "Invalid Checksum",
+            FileStatus::InvalidArchive => "Invalid Archive",
+            FileStatus::ArchiveWithinArchive => "Archive File Within Another Archive",
+            FileStatus::UnsupportedCompression => "Archive File with Unsupported Compression",
+            FileStatus::PasswordProtected => "Archive File is Password Protected",
+        };
+        write!(f, "{}", s)
+    }
+}
+
 /// Represents an uploaded file in a sandbox
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UploadedFile {
@@ -32,8 +181,8 @@ pub struct UploadedFile {
     pub file_size: u64,
     /// Upload timestamp
     pub uploaded: DateTime<Utc>,
-    /// File status
-    pub file_status: String,
+    /// File status (from Veracode filelist.xsd)
+    pub file_status: FileStatus,
     /// MD5 hash of the file
     pub md5: Option<String>,
 }
@@ -235,6 +384,8 @@ pub enum ScanError {
     UploadInProgress,
     /// Scan in progress, cannot upload
     ScanInProgress,
+    /// Upload timeout waiting for file processing
+    UploadTimeout(String),
     /// Build creation failed
     BuildCreationFailed(String),
     /// Chunked upload failed
@@ -247,7 +398,7 @@ impl std::fmt::Display for ScanError {
             ScanError::Api(err) => write!(f, "API error: {err}"),
             ScanError::FileNotFound(path) => write!(f, "File not found: {path}"),
             ScanError::InvalidFileFormat(msg) => write!(f, "Invalid file format: {msg}"),
-            ScanError::UploadFailed(msg) => write!(f, "Upload failed: {msg}"),
+            ScanError::UploadFailed(msg) => write!(f, "{msg}"),
             ScanError::ScanFailed(msg) => write!(f, "Scan failed: {msg}"),
             ScanError::PreScanFailed(msg) => write!(f, "Pre-scan failed: {msg}"),
             ScanError::BuildNotFound => write!(f, "Build not found"),
@@ -259,6 +410,7 @@ impl std::fmt::Display for ScanError {
             ScanError::FileTooLarge(msg) => write!(f, "File too large: {msg}"),
             ScanError::UploadInProgress => write!(f, "Upload or prescan already in progress"),
             ScanError::ScanInProgress => write!(f, "Scan in progress, cannot upload"),
+            ScanError::UploadTimeout(msg) => write!(f, "Upload timeout: {msg}"),
             ScanError::BuildCreationFailed(msg) => write!(f, "Build creation failed: {msg}"),
             ScanError::ChunkedUploadFailed(msg) => write!(f, "Chunked upload failed: {msg}"),
         }
@@ -447,7 +599,7 @@ impl ScanApi {
             )));
         }
 
-        let endpoint = "uploadlargefile.do"; // No version prefix for large file upload
+        let endpoint = "/api/5.0/uploadlargefile.do";
 
         // Build query parameters
         let mut query_params = Vec::new();
@@ -461,26 +613,48 @@ impl ScanApi {
             query_params.push(("filename", filename.as_str()));
         }
 
-        // Read file data
-        let file_data = tokio::fs::read(&request.file_path).await.map_err(|e| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ScanError::FileNotFound(request.file_path.clone())
-            } else {
-                ScanError::from(e)
-            }
-        })?;
-
+        // Use streaming upload for memory efficiency (avoids loading entire file into RAM)
         let response = self
             .client
-            .upload_file_binary(endpoint, &query_params, file_data, "binary/octet-stream")
+            .upload_file_streaming(
+                endpoint,
+                &query_params,
+                &request.file_path,
+                file_size,
+                "binary/octet-stream",
+            )
             .await?;
 
         let status = response.status().as_u16();
         match status {
             200 => {
+                // uploadlargefile.do returns 200 with XML containing the file list
+                info!("File upload completed (HTTP 200), parsing response...");
+
                 let response_text = response.text().await?;
-                self.parse_upload_response(&response_text, &request.file_path)
-                    .await
+
+                // Parse the file list from the response
+                let files = self.parse_file_list(&response_text)?;
+
+                // Determine the filename that was uploaded
+                let filename = request.filename.as_ref().cloned().unwrap_or_else(|| {
+                    Path::new(&request.file_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("file")
+                        .to_string()
+                });
+
+                // Find the uploaded file in the response
+                files
+                    .into_iter()
+                    .find(|f| f.file_name == filename)
+                    .ok_or_else(|| {
+                        ScanError::UploadFailed(format!(
+                            "File '{}' not found in upload response",
+                            filename
+                        ))
+                    })
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -572,7 +746,7 @@ impl ScanApi {
             )));
         }
 
-        let endpoint = "uploadlargefile.do";
+        let endpoint = "/api/5.0/uploadlargefile.do";
 
         // Build query parameters
         let mut query_params = Vec::new();
@@ -600,9 +774,33 @@ impl ScanApi {
         let status = response.status().as_u16();
         match status {
             200 => {
+                // uploadlargefile.do returns 200 with XML containing the file list
+                info!("File upload completed (HTTP 200), parsing response...");
+
                 let response_text = response.text().await?;
-                self.parse_upload_response(&response_text, &request.file_path)
-                    .await
+
+                // Parse the file list from the response
+                let files = self.parse_file_list(&response_text)?;
+
+                // Determine the filename that was uploaded
+                let filename = request.filename.as_ref().cloned().unwrap_or_else(|| {
+                    Path::new(&request.file_path)
+                        .file_name()
+                        .and_then(|f| f.to_str())
+                        .unwrap_or("file")
+                        .to_string()
+                });
+
+                // Find the uploaded file in the response
+                files
+                    .into_iter()
+                    .find(|f| f.file_name == filename)
+                    .ok_or_else(|| {
+                        ScanError::UploadFailed(format!(
+                            "File '{}' not found in upload response",
+                            filename
+                        ))
+                    })
             }
             400 => {
                 let error_text = response.text().await.unwrap_or_default();
@@ -1182,28 +1380,45 @@ impl ScanApi {
 
         let mut buf = Vec::new();
         let mut file_id = None;
-        let mut file_status = "Unknown".to_string();
+        let mut file_status = FileStatus::PendingUpload;
         let mut _md5: Option<String> = None;
+        let mut current_error: Option<String> = None;
+        let mut in_error_tag = false;
 
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     if e.name().as_ref() == b"file" {
-                        // Extract file_id from attributes
+                        // Extract file_id and file_status from attributes
                         for attr in e.attributes().flatten() {
-                            if attr.key.as_ref() == b"file_id" {
-                                file_id = Some(attr_to_string(&attr.value));
+                            match attr.key.as_ref() {
+                                b"file_id" => file_id = Some(attr_to_string(&attr.value)),
+                                b"file_status" => {
+                                    let status_str = attr_to_string(&attr.value);
+                                    file_status =
+                                        status_str.parse().unwrap_or(FileStatus::PendingUpload);
+                                }
+                                _ => {}
                             }
                         }
+                    } else if e.name().as_ref() == b"error" {
+                        in_error_tag = true;
                     }
                 }
                 Ok(Event::Text(e)) => {
-                    let text = std::str::from_utf8(&e).unwrap_or_default();
-                    // Check for success/error messages
-                    if text.contains("successfully uploaded") {
-                        file_status = "Uploaded".to_string();
-                    } else if text.contains("error") || text.contains("failed") {
-                        file_status = "Failed".to_string();
+                    if in_error_tag {
+                        current_error = Some(String::from_utf8_lossy(&e).to_string());
+                    } else {
+                        let text = std::str::from_utf8(&e).unwrap_or_default();
+                        // Check for success/error messages in text content
+                        if text.contains("successfully uploaded") {
+                            file_status = FileStatus::Uploaded;
+                        }
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"error" {
+                        in_error_tag = false;
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -1214,6 +1429,11 @@ impl ScanApi {
                 _ => {}
             }
             buf.clear();
+        }
+
+        // If an error was found in the XML, return it
+        if let Some(error_msg) = current_error {
+            return Err(ScanError::UploadFailed(error_msg));
         }
 
         let filename = Path::new(file_path)
@@ -1445,7 +1665,7 @@ impl ScanApi {
             file_name: String::new(),
             file_size: 0,
             uploaded: Utc::now(),
-            file_status: "Unknown".to_string(),
+            file_status: FileStatus::PendingUpload, // Default to PendingUpload for unknown status
             md5: None,
         };
 
@@ -1458,8 +1678,17 @@ impl ScanApi {
                         file.file_size = size_str.parse().unwrap_or(0);
                     }
                 }
-                b"file_status" => file.file_status = attr_to_string(&attr.value),
-                b"md5" => file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string()),
+                b"file_status" => {
+                    let status_str = attr_to_string(&attr.value);
+                    // Parse status, fallback to PendingUpload if unknown
+                    file.file_status = status_str.parse().unwrap_or_else(|e| {
+                        error!("Unknown file status '{}': {}", status_str, e);
+                        FileStatus::PendingUpload
+                    });
+                }
+                b"md5" | b"file_md5" => {
+                    file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string())
+                }
                 _ => {}
             }
         }
@@ -1473,6 +1702,8 @@ impl ScanApi {
 
         let mut buf = Vec::new();
         let mut files = Vec::new();
+        let mut current_error: Option<String> = None;
+        let mut in_error_tag = false;
 
         loop {
             match reader.read_event_into(&mut buf) {
@@ -1480,6 +1711,8 @@ impl ScanApi {
                     if e.name().as_ref() == b"file" {
                         let file = self.parse_file_from_attributes(e.attributes());
                         files.push(file);
+                    } else if e.name().as_ref() == b"error" {
+                        in_error_tag = true;
                     }
                 }
                 Ok(Event::Empty(ref e)) => {
@@ -1487,6 +1720,16 @@ impl ScanApi {
                     if e.name().as_ref() == b"file" {
                         let file = self.parse_file_from_attributes(e.attributes());
                         files.push(file);
+                    }
+                }
+                Ok(Event::Text(ref e)) => {
+                    if in_error_tag {
+                        current_error = Some(String::from_utf8_lossy(e).to_string());
+                    }
+                }
+                Ok(Event::End(ref e)) => {
+                    if e.name().as_ref() == b"error" {
+                        in_error_tag = false;
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -1497,6 +1740,11 @@ impl ScanApi {
                 _ => {}
             }
             buf.clear();
+        }
+
+        // If an error was found in the XML, return it
+        if let Some(error_msg) = current_error {
+            return Err(ScanError::UploadFailed(error_msg));
         }
 
         Ok(files)

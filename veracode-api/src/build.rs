@@ -5,7 +5,6 @@
 //! These operations use the XML API endpoints (analysiscenter.veracode.com).
 
 use chrono::{DateTime, NaiveDate, Utc};
-use log::debug;
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
@@ -585,7 +584,6 @@ impl BuildApi {
         match status {
             200 => {
                 let response_text = response.text().await?;
-                debug!("🌐 Raw XML response from getbuildinfo.do:\n{response_text}");
                 self.parse_build_info(&response_text)
             }
             400 => {
