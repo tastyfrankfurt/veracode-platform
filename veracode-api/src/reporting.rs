@@ -1010,7 +1010,7 @@ mod tests {
         );
 
         // Verify conversion produces valid UTC timestamp
-        let utc = result.unwrap();
+        let utc = result.expect("result should be Some as asserted above");
         assert!(utc.len() >= 19, "UTC timestamp should be well-formed");
         assert!(utc.starts_with("2028-11-05"), "Date should be preserved");
     }
