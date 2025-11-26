@@ -41,7 +41,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             println!(
                 "✅ {}: {}...",
                 var,
-                value.get(..std::cmp::min(10, value.len())).unwrap_or(&value)
+                value
+                    .get(..std::cmp::min(10, value.len()))
+                    .unwrap_or(&value)
             );
             break;
         }

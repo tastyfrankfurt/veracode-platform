@@ -828,4 +828,86 @@ mod tests {
                 .contains("alphanumeric")
         );
     }
+
+    // Property-based security tests using proptest
+    // These tests use constrained input spaces for optimal performance
+    #[cfg(test)]
+    mod proptest_security_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 10 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Security Property 1: Validator never panics on any input
+            /// Tests with constrained ASCII strings (0-256 chars) that match real credential patterns
+            #[test]
+            fn validate_never_panics_on_any_input(s in "[\\x00-\\x7F]{0,256}") {
+                // Should always return Ok or Err, never panic
+                let _ = validate_api_credential(&s, "test");
+            }
+
+            /// Security Property 2: Pure alphanumeric strings always pass validation
+            /// Real Veracode credentials are typically 20-128 alphanumeric characters
+            #[test]
+            fn alphanumeric_strings_always_valid(s in "[a-zA-Z0-9]{1,128}") {
+                let result = validate_api_credential(&s, "test");
+                prop_assert!(
+                    result.is_ok(),
+                    "Alphanumeric string should be valid: {:?}",
+                    s
+                );
+            }
+
+            /// Security Property 3: Strings containing non-alphanumeric always fail
+            /// This prevents injection attacks, control character exploits, etc.
+            #[test]
+            fn non_alphanumeric_always_fails(
+                prefix in "[a-zA-Z0-9]{0,32}",
+                bad_char in "[^a-zA-Z0-9\\x00]",  // Exclude null to avoid string termination issues
+                suffix in "[a-zA-Z0-9]{0,32}"
+            ) {
+                let s = format!("{prefix}{bad_char}{suffix}");
+                let result = validate_api_credential(&s, "test");
+                prop_assert!(
+                    result.is_err(),
+                    "String with non-alphanumeric char should be invalid: {:?}",
+                    s
+                );
+            }
+
+            /// Security Property 4: Both validators agree on ASCII inputs
+            /// Ensures validate_api_credential and validate_api_credential_ascii have identical behavior
+            #[test]
+            fn validators_agree_on_ascii_inputs(s in "[\\x00-\\x7F]{0,128}") {
+                let result1 = validate_api_credential(&s, "test");
+                let result2 = validate_api_credential_ascii(&s, "test");
+                prop_assert_eq!(
+                    result1.is_ok(),
+                    result2.is_ok(),
+                    "Both validators must agree on ASCII input: {:?}",
+                    s
+                );
+            }
+
+            /// Security Property 5: Empty strings always rejected
+            /// Verifies that validator correctly handles the empty string edge case
+            #[test]
+            fn empty_string_always_rejected(field_name in ".*") {
+                let result = validate_api_credential("", &field_name);
+                prop_assert!(
+                    result.is_err(),
+                    "Empty string should always be rejected"
+                );
+                prop_assert!(
+                    result.unwrap_err().contains("cannot be empty"),
+                    "Error message should mention 'cannot be empty'"
+                );
+            }
+        }
+    }
 }

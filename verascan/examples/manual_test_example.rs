@@ -84,7 +84,10 @@ fn check_environment_variables() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "Missing required environment variable: CI_PROJECT_ID")?;
 
     println!("✅ Environment variables found:");
-    println!("   Token: {}...", token.get(..std::cmp::min(8, token.len())).unwrap_or(&token));
+    println!(
+        "   Token: {}...",
+        token.get(..std::cmp::min(8, token.len())).unwrap_or(&token)
+    );
     println!("   Project ID: {project_id}");
 
     // Optional variables
