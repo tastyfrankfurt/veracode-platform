@@ -72,6 +72,9 @@ use log::error;
 use veracode_platform::VeracodeConfig;
 
 /// Execute findings export workflow from completed scans using existing credentials
+///
+/// # Errors
+/// Returns an error code if the export workflow fails or required parameters are missing
 pub async fn execute_findings_export(
     veracode_config: &VeracodeConfig,
     args: &Args,

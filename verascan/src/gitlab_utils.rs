@@ -39,9 +39,9 @@ impl GitLabUrlConfig {
 /// Generate a GitLab pipeline URL using the correct web URL format
 ///
 /// This function implements a 3-tier fallback strategy:
-/// 1. Use project_web_url if available (most reliable)
-/// 2. Use project_path_with_namespace + host extraction
-/// 3. Fallback to project_id based URLs
+/// 1. Use `project_web_url` if available (most reliable)
+/// 2. Use `project_path_with_namespace` + host extraction
+/// 3. Fallback to `project_id` based URLs
 #[must_use]
 pub fn create_pipeline_url(config: &GitLabUrlConfig, pipeline_id: &str) -> String {
     // First try using CI_PROJECT_URL if available (most reliable)
@@ -88,9 +88,9 @@ pub fn extract_gitlab_host(api_url: &str) -> Option<String> {
 
     // Fallback: extract host from URL string manually
     if let Some(start) = api_url.find("://") {
-        let after_protocol = &api_url[start + 3..];
+        let after_protocol = api_url.get(start.saturating_add(3)..)?;
         if let Some(end) = after_protocol.find('/') {
-            return Some(after_protocol[..end].to_string());
+            return after_protocol.get(..end).map(String::from);
         }
     }
 

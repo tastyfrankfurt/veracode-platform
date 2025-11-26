@@ -131,12 +131,18 @@ impl RetryableRequest {
                         sleep(delay).await;
 
                         // Calculate next delay with exponential backoff
+                        // Precision loss acceptable: converting duration to f64 for backoff calculation
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            clippy::cast_precision_loss
+                        )]
+                        let next_delay_ms = (current_delay.as_millis() as f64
+                            * self.retry_config.backoff_multiplier)
+                            .max(0.0)
+                            .round() as u64;
                         current_delay = std::cmp::min(
-                            Duration::from_millis(
-                                (current_delay.as_millis() as f64
-                                    * self.retry_config.backoff_multiplier)
-                                    as u64,
-                            ),
+                            Duration::from_millis(next_delay_ms),
                             self.retry_config.max_delay,
                         );
                     }
@@ -145,7 +151,7 @@ impl RetryableRequest {
         }
 
         Err(GitLabError::RetryExhausted {
-            attempts: self.retry_config.max_retries + 1,
+            attempts: self.retry_config.max_retries.saturating_add(1),
             last_error: last_error.unwrap_or_else(|| "Unknown error".to_string()),
         })
     }
@@ -187,10 +193,20 @@ impl RetryableRequest {
             .as_nanos()
             .hash(&mut hasher);
 
+        // Precision loss acceptable: converting hash and duration to f64 for jitter calculation
+        #[allow(clippy::cast_precision_loss)]
         let jitter_factor = (hasher.finish() % 50) as f64 / 100.0; // 0-50% jitter
         let jitter_multiplier = 1.0 + jitter_factor;
 
-        Duration::from_millis((delay.as_millis() as f64 * jitter_multiplier) as u64)
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let jittered_ms = (delay.as_millis() as f64 * jitter_multiplier)
+            .max(0.0)
+            .round() as u64;
+        Duration::from_millis(jittered_ms)
     }
 }
 
@@ -203,6 +219,9 @@ pub struct GitLabIssuesClient {
 
 impl GitLabIssuesClient {
     /// Validate GitLab requirements and connectivity
+    ///
+    /// # Errors
+    /// Returns an error if environment variables are missing, API token format is invalid, or GitLab API connection fails
     pub async fn validate_gitlab_connection() -> Result<(), GitLabError> {
         debug!("🔍 Validating GitLab integration requirements...");
 
@@ -255,9 +274,13 @@ impl GitLabIssuesClient {
 
         if status.is_success() {
             let project_info: serde_json::Value = response.json().await?;
-            let project_name = project_info["name"].as_str().unwrap_or("Unknown");
-            let project_path = project_info["path_with_namespace"]
-                .as_str()
+            let project_name = project_info
+                .get("name")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown");
+            let project_path = project_info
+                .get("path_with_namespace")
+                .and_then(|v| v.as_str())
                 .unwrap_or("unknown/project");
 
             info!("✅ GitLab connectivity validated successfully!");
@@ -290,6 +313,9 @@ impl GitLabIssuesClient {
     }
 
     /// Create a new GitLab Issues client from environment variables
+    ///
+    /// # Errors
+    /// Returns an error if required environment variables are missing, API token format is invalid, or HTTP client creation fails
     pub fn from_env() -> Result<Self, GitLabError> {
         let config = GitLabConfig::from_env()?;
 
@@ -350,6 +376,9 @@ impl GitLabIssuesClient {
     }
 
     /// Create GitLab issues from aggregated findings
+    ///
+    /// # Errors
+    /// Returns an error if GitLab issue creation fails or API requests fail
     pub async fn create_issues_from_findings(
         &mut self,
         aggregated: &AggregatedFindings,
@@ -363,15 +392,15 @@ impl GitLabIssuesClient {
         self.fetch_project_info().await?;
 
         let mut created_issues = Vec::new();
-        let mut skipped_count = 0;
-        let mut duplicate_count = 0;
+        let mut skipped_count: u32 = 0;
+        let mut duplicate_count: u32 = 0;
 
         for (index, finding_with_source) in aggregated.findings.iter().enumerate() {
             let finding = &finding_with_source.finding;
 
             // Skip informational findings to reduce noise
             if finding.severity == 0 {
-                skipped_count += 1;
+                skipped_count = skipped_count.saturating_add(1);
                 continue;
             }
 
@@ -382,11 +411,11 @@ impl GitLabIssuesClient {
                 Ok(true) => {
                     debug!(
                         "⏭️  Skipping duplicate issue {}/{}: {}",
-                        index + 1,
+                        index.saturating_add(1),
                         aggregated.findings.len(),
                         issue_payload.title
                     );
-                    duplicate_count += 1;
+                    duplicate_count = duplicate_count.saturating_add(1);
                     continue;
                 }
                 Ok(false) => {
@@ -403,7 +432,7 @@ impl GitLabIssuesClient {
 
             debug!(
                 "📋 Creating issue {}/{}: {}",
-                index + 1,
+                index.saturating_add(1),
                 aggregated.findings.len(),
                 issue_payload.title
             );
@@ -709,7 +738,7 @@ impl GitLabIssuesClient {
         hasher.update(function_name.as_bytes());
 
         let payload_hash = format!("{:x}", hasher.finalize());
-        let short_hash = &payload_hash[..8]; // Use first 8 characters
+        let short_hash = payload_hash.get(..8).unwrap_or(&payload_hash); // Use first 8 characters
 
         // Create final title with hash
         let title = format!("{base_title} ({short_hash})");
@@ -981,6 +1010,9 @@ impl GitLabIssuesClient {
     }
 
     /// Fetch and cache project information for URL construction
+    ///
+    /// # Errors
+    /// Returns an error if the GitLab API request fails or project information cannot be retrieved
     pub async fn fetch_project_info(&mut self) -> Result<(), GitLabError> {
         if self.config.project_path_with_namespace.is_some() {
             return Ok(()); // Already cached
@@ -995,10 +1027,13 @@ impl GitLabIssuesClient {
 
         if response.status().is_success() {
             let project_info: serde_json::Value = response.json().await?;
-            if let Some(path_with_namespace) = project_info["path_with_namespace"].as_str() {
+            if let Some(path_with_namespace) = project_info
+                .get("path_with_namespace")
+                .and_then(|v| v.as_str())
+            {
                 self.config.project_path_with_namespace = Some(path_with_namespace.to_string());
             }
-            if let Some(project_name) = project_info["name"].as_str() {
+            if let Some(project_name) = project_info.get("name").and_then(|v| v.as_str()) {
                 self.config.project_name = Some(project_name.to_string());
             }
         }
@@ -1009,6 +1044,9 @@ impl GitLabIssuesClient {
 
 impl GitLabConfig {
     /// Create GitLab configuration from environment variables
+    ///
+    /// # Errors
+    /// Returns an error if required environment variables (API token or project ID) are missing
     pub fn from_env() -> Result<Self, GitLabError> {
         // Required environment variables
         let api_token = env::var("PRIVATE_TOKEN")
@@ -1109,6 +1147,7 @@ impl GitLabConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1253,16 +1292,18 @@ mod tests {
         };
 
         // Hash payload 1
-        let payload1_json = serde_json::to_string(&payload1).unwrap();
+        let payload1_json = serde_json::to_string(&payload1).expect("should serialize payload1");
         let mut hasher1 = Sha256::new();
         hasher1.update(payload1_json.as_bytes());
-        let hash1 = format!("{:x}", hasher1.finalize())[..8].to_string();
+        let hash1_full = format!("{:x}", hasher1.finalize());
+        let hash1 = hash1_full.get(..8).unwrap_or(&hash1_full).to_string();
 
         // Hash payload 2
-        let payload2_json = serde_json::to_string(&payload2).unwrap();
+        let payload2_json = serde_json::to_string(&payload2).expect("should serialize payload2");
         let mut hasher2 = Sha256::new();
         hasher2.update(payload2_json.as_bytes());
-        let hash2 = format!("{:x}", hasher2.finalize())[..8].to_string();
+        let hash2_full = format!("{:x}", hasher2.finalize());
+        let hash2 = hash2_full.get(..8).unwrap_or(&hash2_full).to_string();
 
         // Test that hash is 8 characters
         assert_eq!(hash1.len(), 8);
@@ -1347,7 +1388,7 @@ mod tests {
             Err(GitLabError::MissingEnvVar(var)) => {
                 assert!(var.contains("PRIVATE_TOKEN") || var.contains("CI_TOKEN"));
             }
-            _ => panic!("Expected MissingEnvVar error"),
+            _ => unreachable!("Expected MissingEnvVar error"),
         }
     }
 
@@ -1374,7 +1415,7 @@ mod tests {
         let result = GitLabConfig::from_env();
         assert!(result.is_ok());
 
-        let config = result.unwrap();
+        let config = result.expect("should create config from env");
         assert_eq!(
             config.gitlab_url,
             "https://gitlab.example.com/api/v4/projects/"
@@ -1390,7 +1431,7 @@ mod tests {
         let result = GitLabConfig::from_env();
         assert!(result.is_ok());
 
-        let config = result.unwrap();
+        let config = result.expect("should create config from env with trailing slash");
         assert_eq!(
             config.gitlab_url,
             "https://gitlab.example.com/api/v4/projects/"

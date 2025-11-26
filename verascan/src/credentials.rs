@@ -42,7 +42,7 @@ pub enum CredentialError {
 }
 
 /// Secure wrapper for API credentials using the new ARC-based system
-/// Integrates with veracode-platform's VeracodeCredentials for consistency
+/// Integrates with veracode-platform's `VeracodeCredentials` for consistency
 #[derive(Clone)]
 pub struct SecureApiCredentials {
     /// ARC-based credentials from veracode-platform
@@ -93,7 +93,7 @@ impl SecureApiCredentials {
         }
     }
 
-    /// Create from existing VeracodeCredentials
+    /// Create from existing `VeracodeCredentials`
     #[must_use]
     pub fn from_veracode_credentials(
         credentials: VeracodeCredentials,
@@ -106,6 +106,9 @@ impl SecureApiCredentials {
     }
 
     /// Extract credentials as owned strings (for API client construction)
+    ///
+    /// # Errors
+    /// Returns an error if credentials are not present or cannot be extracted
     pub fn extract_credentials(&self) -> Result<(String, String), Box<dyn std::error::Error>> {
         match &self.credentials {
             Some(creds) => Ok((
@@ -122,6 +125,9 @@ impl SecureApiCredentials {
     }
 
     /// Extract credentials as string references (for validation/comparison)
+    ///
+    /// # Errors
+    /// Returns an error if credentials are not present or cannot be extracted
     pub fn extract_credentials_ref(&self) -> Result<(&str, &str), Box<dyn std::error::Error>> {
         if let Some(creds) = &self.credentials {
             Ok((creds.expose_api_id(), creds.expose_api_key()))
@@ -147,7 +153,7 @@ impl SecureApiCredentials {
             .map(VeracodeCredentials::api_key_ptr)
     }
 
-    /// Get the underlying VeracodeCredentials for direct use with veracode-platform
+    /// Get the underlying `VeracodeCredentials` for direct use with veracode-platform
     #[must_use]
     pub fn get_veracode_credentials(&self) -> Option<&VeracodeCredentials> {
         self.credentials.as_ref()
@@ -155,6 +161,9 @@ impl SecureApiCredentials {
 }
 
 /// Validate API credential with optimized character checking
+///
+/// # Errors
+/// Returns an error if the credential is empty or contains non-alphanumeric characters
 pub fn validate_api_credential(value: &str, field_name: &str) -> Result<(), String> {
     if value.is_empty() {
         return Err(format!("{field_name} cannot be empty"));
@@ -171,6 +180,9 @@ pub fn validate_api_credential(value: &str, field_name: &str) -> Result<(), Stri
 }
 
 /// Fast validation for credentials that are known to be ASCII
+///
+/// # Errors
+/// Returns an error if the credential is empty or contains non-alphanumeric characters
 #[inline]
 pub fn validate_api_credential_ascii(value: &str, field_name: &str) -> Result<(), String> {
     if value.is_empty() {
@@ -189,6 +201,10 @@ pub fn validate_api_credential_ascii(value: &str, field_name: &str) -> Result<()
     Ok(())
 }
 
+/// Load API credentials from environment variables into Args
+///
+/// # Errors
+/// Returns an error code if credentials are invalid or validation fails
 pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     args.api_id = match std::env::var("VERACODE_API_ID") {
         Ok(id) => {
@@ -215,7 +231,10 @@ pub fn load_api_credentials(args: &mut Args) -> Result<(), i32> {
     Ok(())
 }
 
-/// Load API credentials directly into VeracodeCredentials from Args
+/// Load API credentials directly into `VeracodeCredentials` from Args
+///
+/// # Errors
+/// Returns an error code if API credentials are missing from Args
 pub fn load_veracode_credentials_from_args(
     args: &crate::cli::Args,
 ) -> Result<VeracodeCredentials, i32> {
@@ -234,6 +253,9 @@ pub fn load_veracode_credentials_from_args(
 }
 
 /// Extract credentials from Args (for owned strings - API client construction)
+///
+/// # Errors
+/// Returns an error if API credentials are missing from Args
 pub fn check_pipeline_credentials(
     args: &Args,
 ) -> Result<(String, String), Box<dyn std::error::Error>> {
@@ -248,7 +270,10 @@ pub fn check_pipeline_credentials(
     }
 }
 
-/// Load credentials directly into VeracodeCredentials from environment variables
+/// Load credentials directly into `VeracodeCredentials` from environment variables
+///
+/// # Errors
+/// Returns an error if required environment variables are missing or credentials are invalid
 pub fn load_veracode_credentials_from_env() -> Result<VeracodeCredentials, CredentialError> {
     debug!("Loading credentials directly into VeracodeCredentials from environment variables");
 
@@ -282,9 +307,12 @@ pub fn load_veracode_credentials_from_env() -> Result<VeracodeCredentials, Crede
     Ok(VeracodeCredentials::new(api_id, api_key))
 }
 
-/// Create VeracodeConfig directly from VeracodeCredentials
+/// Create `VeracodeConfig` directly from `VeracodeCredentials`
 ///
-/// This function creates a VeracodeConfig using ARC-based credentials for optimal memory sharing.
+/// This function creates a `VeracodeConfig` using ARC-based credentials for optimal memory sharing.
+///
+/// # Errors
+/// Returns an error code if region parsing fails
 pub fn create_veracode_config_from_credentials(
     credentials: VeracodeCredentials,
     region_str: &str,
@@ -301,10 +329,13 @@ pub fn create_veracode_config_from_credentials(
     Ok(crate::scan::configure_veracode_with_env_vars(base_config))
 }
 
-/// Create VeracodeConfig with Vault proxy credentials
+/// Create `VeracodeConfig` with Vault proxy credentials
 ///
-/// This function creates a VeracodeConfig and applies optional proxy credentials from Vault.
+/// This function creates a `VeracodeConfig` and applies optional proxy credentials from Vault.
 /// Vault proxy configuration takes precedence over environment variables.
+///
+/// # Errors
+/// Returns an error code if region parsing fails
 pub fn create_veracode_config_with_proxy(
     credentials: VeracodeCredentials,
     region_str: &str,
@@ -340,17 +371,20 @@ pub fn create_veracode_config_with_proxy(
     ))
 }
 
-/// Centralized function to create a configured VeracodeConfig from Args
+/// Centralized function to create a configured `VeracodeConfig` from Args
 ///
-/// This function loads credentials directly into VeracodeCredentials and creates
-/// a VeracodeConfig using ARC-based credentials for optimal memory sharing.
+/// This function loads credentials directly into `VeracodeCredentials` and creates
+/// a `VeracodeConfig` using ARC-based credentials for optimal memory sharing.
+///
+/// # Errors
+/// Returns an error code if credential loading or config creation fails
 pub fn create_veracode_config_from_args(args: &Args) -> Result<VeracodeConfig, i32> {
     // Load credentials directly into VeracodeCredentials - no intermediate copying!
     let credentials = load_veracode_credentials_from_args(args)?;
     create_veracode_config_from_credentials(credentials, &args.region)
 }
 
-/// Parse region string to VeracodeRegion enum
+/// Parse region string to `VeracodeRegion` enum
 fn parse_region_from_str(region_str: &str) -> Result<VeracodeRegion, i32> {
     let region = match region_str {
         s if s.eq_ignore_ascii_case("commercial") => VeracodeRegion::Commercial,
@@ -362,6 +396,7 @@ fn parse_region_from_str(region_str: &str) -> Result<VeracodeRegion, i32> {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use secrecy::ExposeSecret;
@@ -409,8 +444,8 @@ mod tests {
         );
 
         // Test ARC pointer sharing
-        let api_id_arc = creds.api_id_arc().unwrap();
-        let api_key_arc = creds.api_key_arc().unwrap();
+        let api_id_arc = creds.api_id_arc().expect("Expected API ID");
+        let api_key_arc = creds.api_key_arc().expect("Expected API key");
 
         // Should be able to access through ARC
         assert_eq!(api_id_arc.expose_secret(), "test_api_id_123");
@@ -427,7 +462,7 @@ mod tests {
         let result = creds.extract_credentials();
         assert!(result.is_ok());
 
-        let (id, key) = result.unwrap();
+        let (id, key) = result.expect("Expected valid credentials");
         assert_eq!(id, "test_api_id_123");
         assert_eq!(key, "test_api_key_456");
     }
@@ -466,8 +501,12 @@ mod tests {
         let cloned_creds = creds.clone();
 
         // Both should extract the same credentials
-        let original_result = creds.extract_credentials().unwrap();
-        let cloned_result = cloned_creds.extract_credentials().unwrap();
+        let original_result = creds
+            .extract_credentials()
+            .expect("Expected valid credentials");
+        let cloned_result = cloned_creds
+            .extract_credentials()
+            .expect("Expected valid credentials");
 
         assert_eq!(original_result, cloned_result);
     }
@@ -488,7 +527,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let config = result.unwrap();
+        let config = result.expect("Expected valid config");
 
         // Verify region is set
         assert_eq!(config.region, VeracodeRegion::Commercial);
@@ -496,7 +535,7 @@ mod tests {
         // Verify proxy URL is set
         assert!(config.proxy_url.is_some());
         assert_eq!(
-            config.proxy_url.as_ref().unwrap(),
+            config.proxy_url.as_ref().expect("Expected proxy URL"),
             "http://proxy.example.com:8080"
         );
 
@@ -521,7 +560,7 @@ mod tests {
         );
 
         assert!(result.is_ok());
-        let config = result.unwrap();
+        let config = result.expect("Expected valid config");
 
         // Verify region is set
         assert_eq!(config.region, VeracodeRegion::European);
@@ -529,7 +568,7 @@ mod tests {
         // Verify proxy URL is set
         assert!(config.proxy_url.is_some());
         assert_eq!(
-            config.proxy_url.as_ref().unwrap(),
+            config.proxy_url.as_ref().expect("Expected proxy URL"),
             "http://proxy.example.com:8080"
         );
 
@@ -548,7 +587,7 @@ mod tests {
         let result = create_veracode_config_with_proxy(credentials, "federal", None, None, None);
 
         assert!(result.is_ok());
-        let config = result.unwrap();
+        let config = result.expect("Expected valid config");
 
         // Verify region is set
         assert_eq!(config.region, VeracodeRegion::Federal);
@@ -569,7 +608,7 @@ mod tests {
         let result = create_veracode_config_from_credentials(credentials, "commercial");
 
         assert!(result.is_ok());
-        let config = result.unwrap();
+        let config = result.expect("Expected valid config");
 
         // Verify region is set
         assert_eq!(config.region, VeracodeRegion::Commercial);
@@ -582,20 +621,20 @@ mod tests {
 
     #[test]
     fn test_parse_region_from_str() {
-        let commercial = parse_region_from_str("commercial").unwrap();
+        let commercial = parse_region_from_str("commercial").expect("Expected valid region");
         assert_eq!(commercial, VeracodeRegion::Commercial);
 
-        let commercial_upper = parse_region_from_str("COMMERCIAL").unwrap();
+        let commercial_upper = parse_region_from_str("COMMERCIAL").expect("Expected valid region");
         assert_eq!(commercial_upper, VeracodeRegion::Commercial);
 
-        let european = parse_region_from_str("european").unwrap();
+        let european = parse_region_from_str("european").expect("Expected valid region");
         assert_eq!(european, VeracodeRegion::European);
 
-        let federal = parse_region_from_str("federal").unwrap();
+        let federal = parse_region_from_str("federal").expect("Expected valid region");
         assert_eq!(federal, VeracodeRegion::Federal);
 
         // Invalid region defaults to commercial
-        let invalid = parse_region_from_str("invalid").unwrap();
+        let invalid = parse_region_from_str("invalid").expect("Expected valid region");
         assert_eq!(invalid, VeracodeRegion::Commercial);
     }
 
@@ -614,7 +653,11 @@ mod tests {
     fn test_validate_api_credential_rejects_empty() {
         let result = validate_api_credential("", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be empty"));
+        assert!(
+            result
+                .expect_err("Expected validation error")
+                .contains("cannot be empty")
+        );
     }
 
     #[test]
@@ -622,22 +665,38 @@ mod tests {
         // Reject dash
         let result = validate_api_credential("abc-123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for dash")
+                .contains("alphanumeric")
+        );
 
         // Reject underscore
         let result = validate_api_credential("abc_123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for underscore")
+                .contains("alphanumeric")
+        );
 
         // Reject dot
         let result = validate_api_credential("abc.123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for dot")
+                .contains("alphanumeric")
+        );
 
         // Reject space
         let result = validate_api_credential("abc 123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for space")
+                .contains("alphanumeric")
+        );
     }
 
     #[test]
@@ -645,17 +704,29 @@ mod tests {
         // Reject unicode non-breaking space (U+00A0)
         let result = validate_api_credential("abc\u{00A0}123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for non-breaking space")
+                .contains("alphanumeric")
+        );
 
         // Reject unicode zero-width space (U+200B)
         let result = validate_api_credential("abc\u{200B}123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for zero-width space")
+                .contains("alphanumeric")
+        );
 
         // Reject unicode ideographic space (U+3000)
         let result = validate_api_credential("abc\u{3000}123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for ideographic space")
+                .contains("alphanumeric")
+        );
     }
 
     #[test]
@@ -663,22 +734,38 @@ mod tests {
         // Reject newline
         let result = validate_api_credential("abc\n123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for newline")
+                .contains("alphanumeric")
+        );
 
         // Reject carriage return
         let result = validate_api_credential("abc\r123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for carriage return")
+                .contains("alphanumeric")
+        );
 
         // Reject null byte
         let result = validate_api_credential("abc\x00123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for null byte")
+                .contains("alphanumeric")
+        );
 
         // Reject tab
         let result = validate_api_credential("abc\t123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for tab")
+                .contains("alphanumeric")
+        );
     }
 
     #[test]
@@ -693,7 +780,11 @@ mod tests {
     fn test_validate_api_credential_ascii_rejects_empty() {
         let result = validate_api_credential_ascii("", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("cannot be empty"));
+        assert!(
+            result
+                .expect_err("Expected validation error")
+                .contains("cannot be empty")
+        );
     }
 
     #[test]
@@ -701,12 +792,20 @@ mod tests {
         // Reject dash
         let result = validate_api_credential_ascii("abc-123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for dash")
+                .contains("alphanumeric")
+        );
 
         // Reject underscore
         let result = validate_api_credential_ascii("abc_123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for underscore")
+                .contains("alphanumeric")
+        );
     }
 
     #[test]
@@ -714,11 +813,101 @@ mod tests {
         // Reject newline
         let result = validate_api_credential_ascii("abc\n123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for newline")
+                .contains("alphanumeric")
+        );
 
         // Reject null byte
         let result = validate_api_credential_ascii("abc\x00123", "api_id");
         assert!(result.is_err());
-        assert!(result.unwrap_err().contains("alphanumeric"));
+        assert!(
+            result
+                .expect_err("Expected validation error for null byte")
+                .contains("alphanumeric")
+        );
+    }
+
+    // Property-based security tests using proptest
+    // These tests use constrained input spaces for optimal performance
+    #[cfg(test)]
+    mod proptest_security_tests {
+        use super::*;
+        use proptest::prelude::*;
+
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 10 } else { 1000 },
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            /// Security Property 1: Validator never panics on any input
+            /// Tests with constrained ASCII strings (0-256 chars) that match real credential patterns
+            #[test]
+            fn validate_never_panics_on_any_input(s in "[\\x00-\\x7F]{0,256}") {
+                // Should always return Ok or Err, never panic
+                let _ = validate_api_credential(&s, "test");
+            }
+
+            /// Security Property 2: Pure alphanumeric strings always pass validation
+            /// Real Veracode credentials are typically 20-128 alphanumeric characters
+            #[test]
+            fn alphanumeric_strings_always_valid(s in "[a-zA-Z0-9]{1,128}") {
+                let result = validate_api_credential(&s, "test");
+                prop_assert!(
+                    result.is_ok(),
+                    "Alphanumeric string should be valid: {:?}",
+                    s
+                );
+            }
+
+            /// Security Property 3: Strings containing non-alphanumeric always fail
+            /// This prevents injection attacks, control character exploits, etc.
+            #[test]
+            fn non_alphanumeric_always_fails(
+                prefix in "[a-zA-Z0-9]{0,32}",
+                bad_char in "[^a-zA-Z0-9\\x00]",  // Exclude null to avoid string termination issues
+                suffix in "[a-zA-Z0-9]{0,32}"
+            ) {
+                let s = format!("{prefix}{bad_char}{suffix}");
+                let result = validate_api_credential(&s, "test");
+                prop_assert!(
+                    result.is_err(),
+                    "String with non-alphanumeric char should be invalid: {:?}",
+                    s
+                );
+            }
+
+            /// Security Property 4: Both validators agree on ASCII inputs
+            /// Ensures validate_api_credential and validate_api_credential_ascii have identical behavior
+            #[test]
+            fn validators_agree_on_ascii_inputs(s in "[\\x00-\\x7F]{0,128}") {
+                let result1 = validate_api_credential(&s, "test");
+                let result2 = validate_api_credential_ascii(&s, "test");
+                prop_assert_eq!(
+                    result1.is_ok(),
+                    result2.is_ok(),
+                    "Both validators must agree on ASCII input: {:?}",
+                    s
+                );
+            }
+
+            /// Security Property 5: Empty strings always rejected
+            /// Verifies that validator correctly handles the empty string edge case
+            #[test]
+            fn empty_string_always_rejected(field_name in ".*") {
+                let result = validate_api_credential("", &field_name);
+                prop_assert!(
+                    result.is_err(),
+                    "Empty string should always be rejected"
+                );
+                prop_assert!(
+                    result.unwrap_err().contains("cannot be empty"),
+                    "Error message should mention 'cannot be empty'"
+                );
+            }
+        }
     }
 }

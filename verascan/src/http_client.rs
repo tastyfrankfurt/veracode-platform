@@ -27,6 +27,9 @@ pub enum AuthStrategy {
 
 impl AuthStrategy {
     /// Apply authentication to headers
+    ///
+    /// # Errors
+    /// Returns an error if header names or values are invalid or cannot be parsed
     pub fn apply_to_headers(&self, headers: &mut HeaderMap) -> Result<(), HttpClientError> {
         match self {
             AuthStrategy::Bearer(token) => {
@@ -252,6 +255,9 @@ pub struct RobustHttpClient {
 
 impl RobustHttpClient {
     /// Create a new robust HTTP client
+    ///
+    /// # Errors
+    /// Returns an error if proxy configuration is invalid or HTTP client creation fails
     pub fn new(config: HttpClientConfig) -> Result<Self, HttpClientError> {
         let mut client_builder = Client::builder()
             .default_headers(config.default_headers.clone())
@@ -307,6 +313,9 @@ impl RobustHttpClient {
     }
 
     /// Execute a GET request with retry logic
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails after retries or the response cannot be deserialized
     pub async fn get<T>(&self, endpoint: &str) -> Result<T, HttpClientError>
     where
         T: serde::de::DeserializeOwned,
@@ -323,6 +332,9 @@ impl RobustHttpClient {
     }
 
     /// Execute a POST request with retry logic
+    ///
+    /// # Errors
+    /// Returns an error if payload serialization fails, the HTTP request fails after retries, or the response cannot be deserialized
     pub async fn post<T, R>(&self, endpoint: &str, payload: &T) -> Result<R, HttpClientError>
     where
         T: Serialize,
@@ -344,6 +356,9 @@ impl RobustHttpClient {
     }
 
     /// Execute a PUT request with retry logic
+    ///
+    /// # Errors
+    /// Returns an error if payload serialization fails, the HTTP request fails after retries, or the response cannot be deserialized
     pub async fn put<T, R>(&self, endpoint: &str, payload: &T) -> Result<R, HttpClientError>
     where
         T: Serialize,
@@ -362,6 +377,9 @@ impl RobustHttpClient {
     }
 
     /// Execute a DELETE request with retry logic
+    ///
+    /// # Errors
+    /// Returns an error if the HTTP request fails after retries or the response cannot be deserialized
     pub async fn delete<T>(&self, endpoint: &str) -> Result<T, HttpClientError>
     where
         T: serde::de::DeserializeOwned,
@@ -378,6 +396,9 @@ impl RobustHttpClient {
     }
 
     /// Upload a file with retry logic - critical for large files
+    ///
+    /// # Errors
+    /// Returns an error if the file upload fails after retries or multipart form creation fails
     pub async fn upload_file<T>(
         &self,
         endpoint: &str,
@@ -473,12 +494,18 @@ impl RobustHttpClient {
                         sleep(delay).await;
 
                         // Calculate next delay with exponential backoff
+                        // Precision loss acceptable: converting duration to f64 for backoff calculation
+                        #[allow(
+                            clippy::cast_possible_truncation,
+                            clippy::cast_sign_loss,
+                            clippy::cast_precision_loss
+                        )]
+                        let next_delay_ms = (current_delay.as_millis() as f64
+                            * self.config.retry_config.backoff_multiplier)
+                            .max(0.0)
+                            .round() as u64;
                         current_delay = std::cmp::min(
-                            Duration::from_millis(
-                                (current_delay.as_millis() as f64
-                                    * self.config.retry_config.backoff_multiplier)
-                                    as u64,
-                            ),
+                            Duration::from_millis(next_delay_ms),
                             self.config.retry_config.max_delay,
                         );
                     }
@@ -487,7 +514,7 @@ impl RobustHttpClient {
         }
 
         Err(HttpClientError::RetryExhausted {
-            attempts: self.config.retry_config.max_retries + 1,
+            attempts: self.config.retry_config.max_retries.saturating_add(1),
             last_error: last_error.unwrap_or_else(|| "Unknown error".to_string()),
         })
     }
@@ -529,10 +556,20 @@ impl RobustHttpClient {
             .as_nanos()
             .hash(&mut hasher);
 
+        // Precision loss acceptable: converting hash and duration to f64 for jitter calculation
+        #[allow(clippy::cast_precision_loss)]
         let jitter_factor = (hasher.finish() % 50) as f64 / 100.0; // 0-50% jitter
         let jitter_multiplier = 1.0 + jitter_factor;
 
-        Duration::from_millis((delay.as_millis() as f64 * jitter_multiplier) as u64)
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            clippy::cast_precision_loss
+        )]
+        let jittered_ms = (delay.as_millis() as f64 * jitter_multiplier)
+            .max(0.0)
+            .round() as u64;
+        Duration::from_millis(jittered_ms)
     }
 
     /// Handle HTTP response and convert to typed result
@@ -562,6 +599,9 @@ impl RobustHttpClient {
     }
 
     /// Test connectivity to the configured endpoint
+    ///
+    /// # Errors
+    /// Returns an error if the connectivity test request fails or the endpoint is unreachable
     pub async fn test_connectivity(&self, endpoint: &str) -> Result<(), HttpClientError> {
         let url = format!("{}{}", self.config.base_url, endpoint);
 
@@ -689,7 +729,7 @@ impl HttpClientConfigBuilder {
 
     /// Load proxy configuration from environment variables
     ///
-    /// Checks for standard HTTP_PROXY/HTTPS_PROXY variables first,
+    /// Checks for standard `HTTP_PROXY/HTTPS_PROXY` variables first,
     /// then falls back to prefixed variables if provided.
     /// Also loads proxy authentication credentials if available.
     #[must_use]
@@ -753,6 +793,9 @@ impl HttpClientConfigBuilder {
     }
 
     /// Apply authentication strategy to the configuration
+    ///
+    /// # Errors
+    /// Returns an error if the authentication strategy cannot be applied to headers
     pub fn with_auth_strategy(mut self, auth: AuthStrategy) -> Result<Self, HttpClientError> {
         auth.apply_to_headers(&mut self.config.default_headers)?;
         Ok(self)
@@ -784,6 +827,7 @@ impl HttpClientConfigBuilder {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use reqwest::header::{AUTHORIZATION, CONTENT_TYPE, HeaderValue};
@@ -871,7 +915,7 @@ mod tests {
         let client = RobustHttpClient::new(config);
         assert!(client.is_ok());
 
-        let client = client.unwrap();
+        let client = client.expect("test value");
         assert_eq!(client.base_url(), "https://api.example.com");
     }
 
@@ -879,7 +923,7 @@ mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_jitter_calculation() {
         let config = HttpClientConfig::new("https://api.example.com".to_string());
-        let client = RobustHttpClient::new(config).unwrap();
+        let client = RobustHttpClient::new(config).expect("test value");
 
         let original_delay = Duration::from_millis(1000);
         let jittered_delay = client.add_jitter(original_delay);

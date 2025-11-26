@@ -5,6 +5,87 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2025-11-26
+
+### Security
+- **Comprehensive Defensive Programming**: Production-grade security hardening across entire codebase
+  - **Clippy Security Lints**: 15+ defensive programming and security lints enforced at package level
+    - `deny(unwrap_used, panic, indexing_slicing, fallible_impl_from, wildcard_enum_match_arm, mem_forget)`
+    - `warn(arithmetic_side_effects, cast_possible_truncation, cast_sign_loss, cast_possible_wrap, cast_precision_loss)`
+    - `warn(string_slice, expect_used, must_use_candidate, fn_params_excessive_bools)`
+    - `warn(missing_errors_doc, missing_panics_doc, missing_safety_doc, doc_markdown)`
+  - **Integer Safety**: All arithmetic operations protected against overflow/underflow
+    - Replaced all `+`, `-`, `*` operations with `saturating_add()`, `saturating_sub()`, `saturating_mul()`
+    - Protected timeout calculations: `timeout_minutes.saturating_mul(60) / poll_interval`
+    - Protected index operations: `index.saturating_add(1)`, `len().saturating_sub(1)`
+    - Protected progress tracking and byte size formatting
+  - **Array/String Safety**: Eliminated all panic-prone indexing and slicing
+    - Replaced `arr[i]` with `arr.get(i)` and proper error handling
+    - Replaced `str[..n]` with `str.get(..n).unwrap_or(&str)`
+    - Protected UTF-8 string boundaries and file path operations
+  - **Error Handling**: Eliminated all unwrap/expect calls in production code
+    - Replaced with `?` operator and proper error propagation
+    - Added fallbacks for optional values: `unwrap_or_else()`, `map_or_else()`
+    - Safe handling of `None` cases throughout
+  - **Precision Loss Handling**: Documented all intentional float conversions
+    - Annotated with `#[allow(clippy::cast_precision_loss)]` where bytes→MB/GB conversion is acceptable
+    - Added comments explaining why precision loss is safe for human-readable display
+  - **Modified Files**: `Cargo.toml`, `src/assessment.rs`, `src/baseline.rs`, `src/cli.rs`, `src/credentials.rs`,
+    `src/export.rs`, `src/filefinder.rs`, `src/filevalidator.rs`, `src/findings.rs`, `src/gitlab_*.rs`,
+    `src/graphql_client.rs`, `src/http_client.rs`, `src/main.rs`, `src/path_resolver.rs`, `src/pipeline.rs`,
+    `src/scan.rs`, `src/test_utils.rs`, `src/vault_client.rs`, `examples/*.rs`, `tests/proxy_integration_test.rs`
+
+### Testing
+- **36,900+ Property-Based Security Test Cases**: Comprehensive fuzzing with proptest across 45 security properties
+  - **Baseline Module** (`src/baseline.rs`): 12 property tests × 1,000 cases = 12,000 test cases
+    - Severity level bounds checking (all u32 values, 0-5 range validation)
+    - Finding count overflow handling (usize → u32 conversion safety)
+    - Net change calculation (i32 underflow/overflow prevention)
+    - CWE ID validation (SQL injection, XSS patterns)
+    - Hash collision resistance (SHA-256 uniqueness across extreme inputs)
+    - String comparison safety (Unicode, control characters, empty strings)
+    - JSON serialization safety (nested structures, special chars)
+    - Collection operations (extreme sizes, boundary conditions)
+  - **CLI Module** (`src/cli.rs`): 9 property tests × 1,000 cases = 9,000 test cases
+    - Thread count bounds (2-10 range, overflow prevention, u32::MAX handling)
+    - Timeout validation (0-u32::MAX, wraparound prevention)
+    - File filter patterns (injection, path traversal, malicious globs)
+    - Project name/URL validation (XSS, injection, control characters)
+    - CMEK alias validation (Unicode, special chars, length bounds)
+    - Severity filter validation (0-5 range, out-of-bounds rejection)
+  - **Credentials Module** (`src/credentials.rs`): 5 property tests × 1,000 cases = 5,000 test cases
+    - Validator panic prevention (all ASCII inputs 0-256 chars)
+    - Alphanumeric string validation (1-128 chars always valid)
+    - Non-alphanumeric rejection (injection prevention, control chars)
+    - Validator consistency (ASCII vs UTF-8 validators agree)
+    - Unicode whitespace rejection (U+00A0, U+3000, zero-width chars)
+  - **Export Module** (`src/export.rs`): 9 property tests × 100 cases = 900 test cases
+    - File path sanitization (traversal prevention, null bytes, Unicode)
+    - Export format validation (JSON/CSV/GitLab SAST enum safety)
+    - Severity bounds checking (0-5 validation, out-of-range rejection)
+    - Filename generation safety (special chars, path separators)
+    - Configuration validation (format/severity combinations)
+  - **File Finder Module** (`src/filefinder.rs`): 10 property tests × 1,000 cases = 10,000 test cases
+    - Path canonicalization safety (traversal, symlinks, absolute paths)
+    - Max depth enforcement (0-10 range, overflow prevention)
+    - Large file set handling (1-10,000 files without panic)
+    - Glob pattern injection prevention (malicious patterns, wildcards)
+    - UTF-8 path handling (Unicode normalization, invalid sequences)
+    - Symlink attack prevention (circular links, escape attempts)
+  - **100% Success Rate**: All 276 unit tests + 36,900 property-based test cases passing
+  - **Miri-Compatible**: Tests run cleanly under Rust's undefined behavior detector (reduced to 10 cases/test for Miri)
+
+### Changed
+- **Code Quality**: Improved error documentation throughout
+  - Added `/// # Errors` documentation to all fallible public functions
+  - Enhanced panic documentation with `/// # Panics` sections
+  - Improved inline comments explaining security-critical decisions
+- **Test Infrastructure**: Added proptest development dependency for property-based testing
+
+### Dependencies
+- Updated `veracode-platform` dependency to 0.7.5 (benefits from upstream security hardening)
+- Added `proptest = "1.5"` as dev dependency for property-based testing
+
 ## [0.6.4] - 2025-11-21
 
 ### Changed

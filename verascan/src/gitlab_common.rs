@@ -167,6 +167,7 @@ pub fn resolve_file_path<'a>(
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -288,12 +289,13 @@ mod tests {
         };
 
         // Test that it can be serialized
-        let json = serde_json::to_string(&payload).unwrap();
+        let json = serde_json::to_string(&payload).expect("should serialize payload");
         assert!(json.contains("Test Issue"));
         assert!(json.contains("bug,security"));
 
         // Test deserialization
-        let deserialized: GitLabIssuePayload = serde_json::from_str(&json).unwrap();
+        let deserialized: GitLabIssuePayload =
+            serde_json::from_str(&json).expect("should deserialize payload");
         assert_eq!(deserialized.title, "Test Issue");
         assert_eq!(deserialized.labels, Some("bug,security".to_string()));
     }
@@ -311,7 +313,8 @@ mod tests {
             "updated_at": "2023-01-01T00:00:00Z"
         }"#;
 
-        let response: GitLabIssueResponse = serde_json::from_str(json).unwrap();
+        let response: GitLabIssueResponse =
+            serde_json::from_str(json).expect("should deserialize response");
         assert_eq!(response.id, 123);
         assert_eq!(response.iid, 1);
         assert_eq!(response.title, "Test Issue");

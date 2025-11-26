@@ -6,6 +6,8 @@
 //! - Vault proxy configuration takes precedence over environment variables
 //! - Error handling for proxy failures is robust
 
+#![allow(clippy::unwrap_used, clippy::expect_used)]
+
 #[cfg(test)]
 mod basic_proxy_routing {
 
@@ -17,13 +19,15 @@ mod basic_proxy_routing {
         let proxy_url = "http://localhost:8080";
 
         // Create HTTP client with proxy configuration
-        let client = reqwest::Client::builder()
-            .proxy(reqwest::Proxy::all(proxy_url).unwrap())
-            .build();
+        let proxy_result = reqwest::Proxy::all(proxy_url);
+        assert!(proxy_result.is_ok(), "Failed to create proxy");
+        let proxy = proxy_result.unwrap();
+
+        let client_result = reqwest::Client::builder().proxy(proxy).build();
 
         // Verify client was created successfully
         assert!(
-            client.is_ok(),
+            client_result.is_ok(),
             "Client with proxy should be created successfully"
         );
     }
@@ -76,17 +80,17 @@ mod proxy_authentication {
         let password = "testpass";
 
         // Create HTTP client with authenticated proxy
-        let client = reqwest::Client::builder()
-            .proxy(
-                reqwest::Proxy::all(proxy_url)
-                    .unwrap()
-                    .basic_auth(username, password),
-            )
+        let proxy_result = reqwest::Proxy::all(proxy_url);
+        assert!(proxy_result.is_ok(), "Failed to create proxy");
+        let proxy = proxy_result.unwrap();
+
+        let client_result = reqwest::Client::builder()
+            .proxy(proxy.basic_auth(username, password))
             .build();
 
         // Verify client was created successfully with authentication
         assert!(
-            client.is_ok(),
+            client_result.is_ok(),
             "Authenticated proxy client should be created successfully"
         );
     }
@@ -95,9 +99,10 @@ mod proxy_authentication {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_proxy_basic_auth_header_format() {
         // Test that basic auth creates proper Authorization header
-        let proxy = reqwest::Proxy::all("http://proxy.example.com:8080")
-            .unwrap()
-            .basic_auth("user", "pass");
+        let proxy_result = reqwest::Proxy::all("http://proxy.example.com:8080");
+        assert!(proxy_result.is_ok(), "Failed to create proxy");
+
+        let proxy = proxy_result.unwrap().basic_auth("user", "pass");
 
         // Verify proxy was created successfully
         // Note: We can't directly inspect headers, but we verify construction succeeds
@@ -202,11 +207,16 @@ mod error_handling {
         // Use a proxy URL that will fail to connect
         let proxy_url = "http://127.0.0.1:9999"; // Unlikely to have a proxy here
 
-        let client = reqwest::Client::builder()
-            .proxy(reqwest::Proxy::all(proxy_url).unwrap())
+        let proxy_result = reqwest::Proxy::all(proxy_url);
+        assert!(proxy_result.is_ok(), "Failed to create proxy");
+        let proxy = proxy_result.unwrap();
+
+        let client_result = reqwest::Client::builder()
+            .proxy(proxy)
             .timeout(std::time::Duration::from_secs(2))
-            .build()
-            .unwrap();
+            .build();
+        assert!(client_result.is_ok(), "Failed to build client");
+        let client = client_result.unwrap();
 
         // Try to make a request (should fail due to proxy being unreachable)
         let response = client.get("http://example.com").send().await;
@@ -237,22 +247,22 @@ mod error_handling {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     async fn test_proxy_timeout_handling() {
         // Create client with very short timeout
-        let client = reqwest::Client::builder()
+        let client_result = reqwest::Client::builder()
             .timeout(std::time::Duration::from_millis(1))
-            .build()
-            .unwrap();
+            .build();
+        assert!(client_result.is_ok(), "Failed to build client");
+        let client = client_result.unwrap();
 
         // Try to make a request that will timeout
         let response = client.get("http://example.com").send().await;
 
         // Should timeout
-        if let Err(e) = response {
-            assert!(
-                e.is_timeout() || e.is_connect(),
-                "Should be timeout or connection error, got: {:?}",
-                e
-            );
-        }
+        let e = response.expect_err("Should have failed with timeout or connection error");
+        assert!(
+            e.is_timeout() || e.is_connect(),
+            "Should be timeout or connection error, got: {:?}",
+            e
+        );
     }
 }
 
@@ -263,9 +273,9 @@ mod vault_proxy_precedence {
     /// Test that demonstrates Vault proxy config precedence over environment variables
     ///
     /// This test validates the logic flow in:
-    /// - vault_client.rs: load_credentials_and_proxy_from_vault()
-    /// - credentials.rs: create_veracode_config_with_proxy()
-    /// - scan.rs: configure_veracode_with_env_vars_conditional()
+    /// - `vault_client.rs`: `load_credentials_and_proxy_from_vault()`
+    /// - credentials.rs: `create_veracode_config_with_proxy()`
+    /// - scan.rs: `configure_veracode_with_env_vars_conditional()`
     #[tokio::test]
     async fn test_vault_proxy_precedence_logic() {
         // Simulate scenario: Vault has proxy config, env vars also set

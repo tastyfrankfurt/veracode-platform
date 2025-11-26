@@ -12,6 +12,10 @@ fn create_policy_filename(policy_name: &str) -> String {
     }
 }
 
+/// Execute policy download workflow
+///
+/// # Errors
+/// Returns an error code if async runtime creation fails or policy download fails
 pub fn execute_policy_download(
     veracode_config: VeracodeConfig,
     policy_name: &str,

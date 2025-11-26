@@ -89,6 +89,9 @@ pub struct PipelineSubmitter {
 
 impl PipelineSubmitter {
     /// Create a new pipeline submitter
+    ///
+    /// # Errors
+    /// Returns an error if the Veracode client cannot be created
     pub fn new(
         veracode_config: VeracodeConfig,
         pipeline_config: PipelineScanConfig,
@@ -102,25 +105,26 @@ impl PipelineSubmitter {
     }
 
     /// Submit files for pipeline scanning (processes first file only)
+    ///
+    /// # Errors
+    /// Returns an error if no files are provided, file validation fails, or the Veracode API request fails
     pub async fn submit_files(&self, files: &[PathBuf]) -> Result<String, PipelineError> {
-        if files.is_empty() {
-            return Err(PipelineError::NoValidFiles);
-        }
-
         // Take the first file for pipeline scan (pipeline API works with single binaries)
-        let file = &files[0];
+        let file = files.first().ok_or(PipelineError::NoValidFiles)?;
 
         debug!("🚀 Starting pipeline scan submission");
         debug!("📁 File to scan: {}", file.display());
         if files.len() > 1 {
             debug!("⚠️  Note: Pipeline API processes single files. Using first file only.");
-            debug!("   Other files found: {}", files.len() - 1);
+            debug!("   Other files found: {}", files.len().saturating_sub(1));
         }
 
         // Validate file size (200MB limit for pipeline scans)
         let validator = FileValidator::new();
         let file_size = validator.validate_pipeline_file_size(file).await?;
 
+        // Precision loss acceptable: converting bytes to MB for human-readable display
+        #[allow(clippy::cast_precision_loss)]
         let size_mb = file_size as f64 / (1024.0 * 1024.0);
         debug!("✅ File size validation passed: {size_mb:.2} MB (within 200 MB limit)");
 
@@ -219,7 +223,9 @@ impl PipelineSubmitter {
                     debug!("📤 Uploading file...");
 
                     // Get expected segments and filename
-                    let expected_segments = scan_result.expected_segments.unwrap_or(1) as i32;
+                    let expected_segments =
+                        i32::try_from(scan_result.expected_segments.unwrap_or(1))
+                            .unwrap_or(i32::MAX);
                     let file_name = file
                         .file_name()
                         .and_then(|name| name.to_str())
@@ -280,11 +286,17 @@ impl PipelineSubmitter {
     }
 
     /// Submit a single file for pipeline scanning
+    ///
+    /// # Errors
+    /// Returns an error if file validation fails or the Veracode API request fails
     pub async fn submit_single_file(&self, file: &Path) -> Result<String, PipelineError> {
         self.submit_files(&[file.to_path_buf()]).await
     }
 
     /// Submit files and wait for results
+    ///
+    /// # Errors
+    /// Returns an error if file submission fails or scan times out
     pub async fn submit_and_wait(
         &self,
         files: &[PathBuf],
@@ -293,7 +305,7 @@ impl PipelineSubmitter {
 
         // Poll for results with timeout (convert minutes to seconds)
         let timeout_minutes = self.config.timeout.unwrap_or(60);
-        let timeout_seconds = timeout_minutes * 60;
+        let timeout_seconds = timeout_minutes.saturating_mul(60);
 
         debug!("⏳ Waiting for scan to complete (timeout: {timeout_minutes} minutes)...");
         debug!("🔍 Polling scan status for ID: {scan_id}");
@@ -349,6 +361,9 @@ impl PipelineSubmitter {
     }
 
     /// Get scan results for a given scan ID
+    ///
+    /// # Errors
+    /// Returns an error if results retrieval fails from the Veracode API
     pub async fn get_results(
         &self,
         scan_id: &str,
@@ -397,6 +412,9 @@ impl PipelineSubmitter {
     }
 
     /// Submit multiple files concurrently for pipeline scanning
+    ///
+    /// # Errors
+    /// Returns an error if no files are provided or concurrent submissions fail
     pub async fn submit_files_concurrent(
         &self,
         files: &[PathBuf],
@@ -423,11 +441,25 @@ impl PipelineSubmitter {
             let submitter_ref = Arc::clone(&submitter_arc);
 
             join_set.spawn(async move {
-                let _permit = semaphore_ref.acquire().await.unwrap();
+                let _permit = match semaphore_ref.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        error!(
+                            "Failed to acquire semaphore permit for {}",
+                            file_path.display()
+                        );
+                        return Err((
+                            index,
+                            PipelineError::ScanError(
+                                "Failed to acquire semaphore permit".to_string(),
+                            ),
+                        ));
+                    }
+                };
 
                 debug!(
                     "📤 Thread {}: Starting scan for {}",
-                    index + 1,
+                    index.saturating_add(1),
                     file_path.display()
                 );
 
@@ -471,7 +503,7 @@ impl PipelineSubmitter {
         if !errors.is_empty() {
             error!("❌ {} scan submissions failed", errors.len());
             for (index, error) in errors {
-                error!("   File {}: {}", index + 1, error);
+                error!("   File {}: {}", index.saturating_add(1), error);
             }
         }
 
@@ -488,6 +520,9 @@ impl PipelineSubmitter {
     }
 
     /// Submit multiple files concurrently and wait for all results
+    ///
+    /// # Errors
+    /// Returns an error if concurrent submissions fail or results retrieval fails
     pub async fn submit_files_concurrent_and_wait(
         &self,
         files: &[PathBuf],
@@ -519,9 +554,27 @@ impl PipelineSubmitter {
             let submitter_ref = Arc::clone(&submitter_arc);
 
             join_set.spawn(async move {
-                let _permit = semaphore_ref.acquire().await.unwrap();
+                let _permit = match semaphore_ref.acquire().await {
+                    Ok(permit) => permit,
+                    Err(_) => {
+                        error!(
+                            "Failed to acquire semaphore permit for scan {}",
+                            scan_id_ref
+                        );
+                        return Err((
+                            index,
+                            PipelineError::ScanError(
+                                "Failed to acquire semaphore permit".to_string(),
+                            ),
+                        ));
+                    }
+                };
 
-                debug!("⏳ Thread {}: Waiting for scan {}", index + 1, scan_id_ref);
+                debug!(
+                    "⏳ Thread {}: Waiting for scan {}",
+                    index.saturating_add(1),
+                    scan_id_ref
+                );
 
                 match submitter_ref.wait_for_scan_completion(&scan_id_ref).await {
                     Ok(results) => {
@@ -558,7 +611,7 @@ impl PipelineSubmitter {
         if !errors.is_empty() {
             error!("❌ {} scans failed or timed out", errors.len());
             for (index, error) in errors {
-                error!("   Scan {}: {}", index + 1, error);
+                error!("   Scan {}: {}", index.saturating_add(1), error);
             }
         }
 
@@ -579,7 +632,7 @@ impl PipelineSubmitter {
         scan_id: &str,
     ) -> Result<veracode_platform::pipeline::ScanResults, PipelineError> {
         let timeout_minutes = self.config.timeout.unwrap_or(60);
-        let timeout_seconds = timeout_minutes * 60;
+        let timeout_seconds = timeout_minutes.saturating_mul(60);
         let poll_interval = 30; // Poll every 30 seconds
         let max_polls = timeout_seconds / poll_interval;
 
@@ -640,6 +693,7 @@ impl Clone for PipelineSubmitter {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

@@ -1,7 +1,7 @@
 //! GitLab API client using centralized HTTP client
 //!
 //! This module provides GitLab-specific API functionality built on top of the
-//! centralized RobustHttpClient, maintaining all robust networking features.
+//! centralized `RobustHttpClient`, maintaining all robust networking features.
 
 use crate::findings::AggregatedFindings;
 use crate::gitlab_common::{
@@ -63,6 +63,9 @@ pub struct GitLabClient {
 
 impl GitLabClient {
     /// Create a new GitLab client from environment variables
+    ///
+    /// # Errors
+    /// Returns an error if required environment variables are missing or HTTP client creation fails
     pub fn from_env() -> Result<Self, GitLabClientError> {
         let gitlab_config = GitLabClientConfig::from_env()?;
 
@@ -88,6 +91,9 @@ impl GitLabClient {
     }
 
     /// Validate GitLab requirements and connectivity
+    ///
+    /// # Errors
+    /// Returns an error if environment validation fails or GitLab API connectivity test fails
     pub async fn validate_connection() -> Result<(), GitLabClientError> {
         HttpClientError::print_validation("GitLab");
 
@@ -105,9 +111,13 @@ impl GitLabClient {
 
         let project_info: serde_json::Value =
             client.http_client.get(&client.config.project_id).await?;
-        let project_name = project_info["name"].as_str().unwrap_or("Unknown");
-        let project_path = project_info["path_with_namespace"]
-            .as_str()
+        let project_name = project_info
+            .get("name")
+            .and_then(|v| v.as_str())
+            .unwrap_or("Unknown");
+        let project_path = project_info
+            .get("path_with_namespace")
+            .and_then(|v| v.as_str())
             .unwrap_or("unknown/project");
 
         HttpClientError::print_validation_success("GitLab");
@@ -136,6 +146,9 @@ impl GitLabClient {
     }
 
     /// Create GitLab issues from aggregated findings
+    ///
+    /// # Errors
+    /// Returns an error if GitLab issue creation fails or API requests fail
     pub async fn create_issues_from_findings(
         &mut self,
         aggregated: &AggregatedFindings,
@@ -149,15 +162,15 @@ impl GitLabClient {
         self.fetch_project_info().await?;
 
         let mut created_issues = Vec::new();
-        let mut skipped_count = 0;
-        let mut duplicate_count = 0;
+        let mut skipped_count: u32 = 0;
+        let mut duplicate_count: u32 = 0;
 
         for (index, finding_with_source) in aggregated.findings.iter().enumerate() {
             let finding = &finding_with_source.finding;
 
             // Skip informational findings to reduce noise
             if finding.severity == 0 {
-                skipped_count += 1;
+                skipped_count = skipped_count.saturating_add(1);
                 continue;
             }
 
@@ -168,11 +181,11 @@ impl GitLabClient {
                 Ok(true) => {
                     debug!(
                         "⏭️  Skipping duplicate issue {}/{}: {}",
-                        index + 1,
+                        index.saturating_add(1),
                         aggregated.findings.len(),
                         issue_payload.title
                     );
-                    duplicate_count += 1;
+                    duplicate_count = duplicate_count.saturating_add(1);
                     continue;
                 }
                 Ok(false) => {
@@ -188,7 +201,7 @@ impl GitLabClient {
 
             debug!(
                 "📋 Creating issue {}/{}: {}",
-                index + 1,
+                index.saturating_add(1),
                 aggregated.findings.len(),
                 issue_payload.title
             );
@@ -284,10 +297,13 @@ impl GitLabClient {
 
         let project_info: serde_json::Value = self.http_client.get(&self.config.project_id).await?;
 
-        if let Some(path_with_namespace) = project_info["path_with_namespace"].as_str() {
+        if let Some(path_with_namespace) = project_info
+            .get("path_with_namespace")
+            .and_then(|v| v.as_str())
+        {
             self.config.project_path_with_namespace = Some(path_with_namespace.to_string());
         }
-        if let Some(project_name) = project_info["name"].as_str() {
+        if let Some(project_name) = project_info.get("name").and_then(|v| v.as_str()) {
             self.config.project_name = Some(project_name.to_string());
         }
 
@@ -401,7 +417,7 @@ impl GitLabClient {
         hasher.update(function_name.as_bytes());
 
         let payload_hash = format!("{:x}", hasher.finalize());
-        let short_hash = &payload_hash[..8];
+        let short_hash = payload_hash.get(..8).unwrap_or(&payload_hash);
 
         // Create final title with hash
         let title = format!("{base_title} ({short_hash})");
@@ -621,6 +637,9 @@ impl GitLabClient {
 
 impl GitLabClientConfig {
     /// Create GitLab configuration from environment variables
+    ///
+    /// # Errors
+    /// Returns an error if required environment variables (API token or project ID) are missing
     pub fn from_env() -> Result<Self, GitLabClientError> {
         let api_token = env::var("PRIVATE_TOKEN")
             .or_else(|_| env::var("CI_TOKEN"))
@@ -653,6 +672,7 @@ impl GitLabClientConfig {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 

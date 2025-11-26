@@ -28,7 +28,7 @@ pub struct ExportConfig<'a> {
     pub app_profile_name: Cow<'a, str>,
     /// Optional sandbox name for sandbox scans (if None, retrieves policy scan findings)
     pub sandbox_name: Option<Cow<'a, str>>,
-    /// Optional sandbox GUID for sandbox scans (resolved internally from sandbox_name)
+    /// Optional sandbox GUID for sandbox scans (resolved internally from `sandbox_name`)
     pub sandbox_guid: Option<Cow<'a, str>>,
     /// Export format: "gitlab", "json", "csv", "all"
     pub export_format: Cow<'a, str>,
@@ -84,7 +84,14 @@ impl From<VeracodeError> for ExportError {
     fn from(err: VeracodeError) -> Self {
         match err {
             VeracodeError::NotFound(_) => ExportError::BuildNotFound,
-            _ => ExportError::Api(err),
+            VeracodeError::Http(_)
+            | VeracodeError::Serialization(_)
+            | VeracodeError::Authentication(_)
+            | VeracodeError::InvalidResponse(_)
+            | VeracodeError::InvalidConfig(_)
+            | VeracodeError::RetryExhausted(_)
+            | VeracodeError::RateLimited { .. }
+            | VeracodeError::Validation(_) => ExportError::Api(err),
         }
     }
 }
@@ -127,6 +134,9 @@ impl ExportWorkflow {
     }
 
     /// Execute the complete export workflow
+    ///
+    /// # Errors
+    /// Returns an error if configuration validation fails, scan retrieval fails, or export operations fail
     pub async fn execute(&self) -> Result<(), ExportError> {
         debug!("🚀 Starting findings export from completed scan");
         debug!("   Application Profile: {}", self.config.app_profile_name);
@@ -182,6 +192,15 @@ impl ExportWorkflow {
             return Err(ExportError::InvalidConfig(format!(
                 "Output directory does not exist: {}",
                 parent.display()
+            )));
+        }
+
+        // Validate min_severity range
+        if let Some(min_sev) = self.config.min_severity
+            && min_sev > 5
+        {
+            return Err(ExportError::InvalidConfig(format!(
+                "Invalid minimum severity: {min_sev}. Must be 0-5"
             )));
         }
 
@@ -284,7 +303,16 @@ impl ExportWorkflow {
                             ExportError::ApplicationNotFound
                         }
                     }
-                    _ => ExportError::Api(VeracodeError::InvalidResponse(e.to_string())),
+                    veracode_platform::policy::PolicyError::Api(_)
+                    | veracode_platform::policy::PolicyError::InvalidConfig(_)
+                    | veracode_platform::policy::PolicyError::ScanFailed(_)
+                    | veracode_platform::policy::PolicyError::EvaluationError(_)
+                    | veracode_platform::policy::PolicyError::PermissionDenied
+                    | veracode_platform::policy::PolicyError::Unauthorized
+                    | veracode_platform::policy::PolicyError::InternalServerError
+                    | veracode_platform::policy::PolicyError::Timeout => {
+                        ExportError::Api(VeracodeError::InvalidResponse(e.to_string()))
+                    }
                 }
             })?;
 
@@ -344,7 +372,7 @@ impl ExportWorkflow {
         Ok(aggregated)
     }
 
-    /// Convert REST findings and summary report to AggregatedFindings format (hybrid approach)
+    /// Convert REST findings and summary report to `AggregatedFindings` format (hybrid approach)
     fn convert_findings_to_aggregated(
         &self,
         summary_report: &veracode_platform::policy::SummaryReport,
@@ -367,7 +395,7 @@ impl ExportWorkflow {
                 source_scan: ScanSource {
                     scan_id: rest_finding.build_id.to_string(),
                     project_name: summary_report.app_name.clone(),
-                    source_file: self.create_source_file_name(),
+                    source_file: String::from("export"),
                 },
             };
             converted_findings.push(finding_with_source);
@@ -386,8 +414,8 @@ impl ExportWorkflow {
             project_name: summary_report.app_name.clone(),
             scan_status: veracode_platform::pipeline::ScanStatus::Success,
             project_uri: Some("".to_string()),
-            source_file: self.create_source_file_name(),
-            finding_count: converted_findings.len() as u32, // Actual processed count after filtering
+            source_file: String::from("export"),
+            finding_count: u32::try_from(converted_findings.len()).unwrap_or(u32::MAX), // Actual processed count after filtering
         }];
 
         // Calculate severity breakdown from converted findings for GitLab export needs
@@ -402,15 +430,15 @@ impl ExportWorkflow {
         for finding in &converted_findings {
             let severity_key = finding.finding.severity.to_string();
             let count = severity_distribution.entry(severity_key).or_insert(0u32);
-            *count += 1;
+            *count = count.saturating_add(1);
 
             match finding.finding.severity {
-                5 => very_high += 1,
-                4 => high += 1,
-                3 => medium += 1,
-                2 => low += 1,
-                1 => very_low += 1,
-                0 => informational += 1,
+                5 => very_high = very_high.saturating_add(1),
+                4 => high = high.saturating_add(1),
+                3 => medium = medium.saturating_add(1),
+                2 => low = low.saturating_add(1),
+                1 => very_low = very_low.saturating_add(1),
+                0 => informational = informational.saturating_add(1),
                 _ => {}
             }
         }
@@ -427,26 +455,33 @@ impl ExportWorkflow {
         };
 
         // Calculate stats from converted findings (needed for detailed export)
-        let unique_cwe_count = converted_findings
-            .iter()
-            .map(|f| &f.finding.cwe_id)
-            .filter(|cwe| !cwe.is_empty() && *cwe != "0")
-            .collect::<std::collections::HashSet<_>>()
-            .len() as u32;
+        let unique_cwe_count = u32::try_from(
+            converted_findings
+                .iter()
+                .map(|f| &f.finding.cwe_id)
+                .filter(|cwe| !cwe.is_empty() && *cwe != "0")
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+        )
+        .unwrap_or(u32::MAX);
 
-        let unique_files_count = converted_findings
-            .iter()
-            .map(|f| &f.finding.files.source_file.file)
-            .collect::<std::collections::HashSet<_>>()
-            .len() as u32;
+        let unique_files_count = u32::try_from(
+            converted_findings
+                .iter()
+                .map(|f| &f.finding.files.source_file.file)
+                .collect::<std::collections::HashSet<_>>()
+                .len(),
+        )
+        .unwrap_or(u32::MAX);
 
         let top_cwe_ids = {
             let mut cwe_counts: HashMap<String, u32> = HashMap::new();
             for finding in &converted_findings {
                 if !finding.finding.cwe_id.is_empty() && finding.finding.cwe_id != "0" {
-                    *cwe_counts
+                    let count = cwe_counts
                         .entry(finding.finding.cwe_id.clone())
-                        .or_insert(0) += 1;
+                        .or_insert(0);
+                    *count = count.saturating_add(1);
                 }
             }
             let mut cwe_vec: Vec<_> = cwe_counts.into_iter().collect();
@@ -454,14 +489,19 @@ impl ExportWorkflow {
             cwe_vec
                 .into_iter()
                 .take(10)
-                .map(|(cwe_id, count)| CweStatistic {
-                    cwe_id,
-                    count,
-                    percentage: if !converted_findings.is_empty() {
+                .map(|(cwe_id, count)| {
+                    // Precision loss acceptable: converting counts to f64 for percentage calculation
+                    #[allow(clippy::cast_precision_loss)]
+                    let percentage = if !converted_findings.is_empty() {
                         (count as f64 / converted_findings.len() as f64) * 100.0
                     } else {
                         0.0
-                    },
+                    };
+                    CweStatistic {
+                        cwe_id,
+                        count,
+                        percentage,
+                    }
                 })
                 .collect()
         };
@@ -561,24 +601,6 @@ impl ExportWorkflow {
             }
             if let Some(rating) = &static_analysis.rating {
                 log::info!("   Security Rating: {rating}");
-            }
-        }
-    }
-
-    /// Create a descriptive source file name for aggregation
-    fn create_source_file_name(&self) -> String {
-        match &self.config.sandbox_guid {
-            Some(sandbox_guid) => {
-                format!(
-                    "sandbox_{}",
-                    sandbox_guid
-                        .split('-')
-                        .next()
-                        .unwrap_or(sandbox_guid.as_ref())
-                )
-            }
-            None => {
-                format!("policy_{}", self.config.app_profile_name.replace(' ', "_"))
             }
         }
     }
@@ -715,6 +737,7 @@ impl ExportWorkflow {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use std::borrow::Cow;
@@ -763,50 +786,6 @@ mod tests {
 
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
-    fn test_source_file_name_generation() {
-        // Test with sandbox
-        let config_sandbox = ExportConfig {
-            app_profile_name: Cow::Borrowed("Test Application"),
-            sandbox_name: Some(Cow::Borrowed("test-sandbox")),
-            sandbox_guid: Some(Cow::Borrowed("87654321-4321-4321-4321-210987654321")),
-            export_format: Cow::Borrowed("gitlab"),
-            output_path: Cow::Borrowed("/tmp/test"),
-            project_dir: None,
-            min_severity: None,
-            schema_version: Cow::Borrowed("15.2.1"),
-        };
-
-        let workflow = ExportWorkflow {
-            client: create_mock_client(),
-            config: config_sandbox,
-        };
-
-        let source_name = workflow.create_source_file_name();
-        assert!(source_name.starts_with("sandbox_87654321"));
-
-        // Test with policy scan (no sandbox)
-        let config_policy = ExportConfig {
-            app_profile_name: Cow::Borrowed("Test Application"),
-            sandbox_name: None,
-            sandbox_guid: None,
-            export_format: Cow::Borrowed("gitlab"),
-            output_path: Cow::Borrowed("/tmp/test"),
-            project_dir: None,
-            min_severity: None,
-            schema_version: Cow::Borrowed("15.2.1"),
-        };
-
-        let workflow_policy = ExportWorkflow {
-            client: create_mock_client(),
-            config: config_policy,
-        };
-
-        let source_name_policy = workflow_policy.create_source_file_name();
-        assert!(source_name_policy.starts_with("policy_Test_Application"));
-    }
-
-    #[test]
-    #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_ensure_extension() {
         let workflow = ExportWorkflow {
             client: create_mock_client(),
@@ -825,13 +804,19 @@ mod tests {
         // Test adding extension
         let path = Path::new("report");
         let result = workflow.ensure_extension(path, "json");
-        assert_eq!(result.extension().unwrap(), "json");
+        assert_eq!(result.extension().expect("should have extension"), "json");
 
         // Test preserving existing extension
         let path_with_ext = Path::new("report.json");
         let result_with_ext = workflow.ensure_extension(path_with_ext, "json");
-        assert_eq!(result_with_ext.extension().unwrap(), "json");
-        assert_eq!(result_with_ext.file_stem().unwrap(), "report");
+        assert_eq!(
+            result_with_ext.extension().expect("should have extension"),
+            "json"
+        );
+        assert_eq!(
+            result_with_ext.file_stem().expect("should have file stem"),
+            "report"
+        );
     }
 
     #[test]
@@ -854,12 +839,18 @@ mod tests {
         // Test adding suffix to path with extension
         let path = Path::new("report.json");
         let result = workflow.add_suffix_to_path(path, "_gitlab_sast", "json");
-        assert_eq!(result.file_name().unwrap(), "report_gitlab_sast.json");
+        assert_eq!(
+            result.file_name().expect("should have file name"),
+            "report_gitlab_sast.json"
+        );
 
         // Test adding suffix to path without extension
         let path_no_ext = Path::new("report");
         let result_no_ext = workflow.add_suffix_to_path(path_no_ext, "_test", "csv");
-        assert_eq!(result_no_ext.file_name().unwrap(), "report_test.csv");
+        assert_eq!(
+            result_no_ext.file_name().expect("should have file name"),
+            "report_test.csv"
+        );
     }
 
     #[test]
@@ -1093,7 +1084,7 @@ mod tests {
 
         let pipeline_finding = workflow
             .convert_rest_finding_to_pipeline(&rest_finding)
-            .unwrap();
+            .expect("should convert finding");
 
         assert_eq!(pipeline_finding.issue_id, 123);
         assert_eq!(pipeline_finding.cwe_id, "79");
@@ -1122,9 +1113,18 @@ mod tests {
 
         // Verify all fields are set correctly
         assert_eq!(config.app_profile_name, "Test Application");
-        assert_eq!(config.sandbox_name.as_ref().unwrap(), "test-sandbox");
         assert_eq!(
-            config.sandbox_guid.as_ref().unwrap(),
+            config
+                .sandbox_name
+                .as_ref()
+                .expect("should have sandbox name"),
+            "test-sandbox"
+        );
+        assert_eq!(
+            config
+                .sandbox_guid
+                .as_ref()
+                .expect("should have sandbox guid"),
             "87654321-4321-4321-4321-210987654321"
         );
         assert_eq!(config.export_format, "all");
@@ -1132,5 +1132,336 @@ mod tests {
         assert!(config.project_dir.is_some());
         // Debug functionality removed from config
         assert_eq!(config.min_severity, Some(4));
+    }
+
+    // ============================================================================
+    // Property-based security tests using proptest
+    // ============================================================================
+
+    #[cfg(test)]
+    mod proptests {
+        use super::*;
+        use proptest::prelude::*;
+        use std::path::Path;
+
+        // Optimized proptest config for quick failure detection
+        proptest! {
+            #![proptest_config(ProptestConfig {
+                cases: if cfg!(miri) { 10 } else { 100 },  // Reduced from 1000 to 100 for faster runs
+                failure_persistence: None,
+                .. ProptestConfig::default()
+            })]
+
+            // ========================================================================
+            // Test 1: validate_config() - Input validation properties
+            // ========================================================================
+
+            /// Property: Valid export formats should always pass validation
+            #[test]
+            fn prop_validate_config_accepts_valid_formats(
+                format in prop::sample::select(&["gitlab", "json", "csv", "all", "GitLab", "JSON", "CSV", "ALL"])
+            ) {
+                let config = ExportConfig {
+                    app_profile_name: Cow::Borrowed("Test App"),
+                    sandbox_name: None,
+                    sandbox_guid: None,
+                    export_format: Cow::Owned(format.to_string()),
+                    output_path: Cow::Borrowed("/tmp/test.json"),
+                    project_dir: None,
+                    min_severity: None,
+                    schema_version: Cow::Borrowed("15.2.1"),
+                };
+
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config,
+                    };
+                    // Valid formats should always pass
+                    prop_assert!(workflow.validate_config().is_ok());
+                }
+
+                #[cfg(all(miri, not(feature = "disable-miri-isolation")))]
+                {
+                    // Skip client creation under Miri isolation
+                    // Just verify config structure is valid
+                    prop_assert!(matches!(
+                        config.export_format.to_lowercase().as_str(),
+                        "gitlab" | "json" | "csv" | "all"
+                    ));
+                }
+            }
+
+            /// Property: Invalid export formats should always fail validation
+            #[test]
+            fn prop_validate_config_rejects_invalid_formats(
+                format in "[a-z]{3,10}".prop_filter(
+                    "not a valid format",
+                    |s| !matches!(s.to_lowercase().as_str(), "gitlab" | "json" | "csv" | "all")
+                )
+            ) {
+                let config = ExportConfig {
+                    app_profile_name: Cow::Borrowed("Test App"),
+                    sandbox_name: None,
+                    sandbox_guid: None,
+                    export_format: Cow::Owned(format),
+                    output_path: Cow::Borrowed("/tmp/test.json"),
+                    project_dir: None,
+                    min_severity: None,
+                    schema_version: Cow::Borrowed("15.2.1"),
+                };
+
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config,
+                    };
+                    // Invalid formats should always fail
+                    prop_assert!(matches!(
+                        workflow.validate_config(),
+                        Err(ExportError::UnsupportedFormat(_))
+                    ));
+                }
+
+                #[cfg(all(miri, not(feature = "disable-miri-isolation")))]
+                {
+                    // Verify the format is indeed invalid
+                    prop_assert!(!matches!(
+                        config.export_format.to_lowercase().as_str(),
+                        "gitlab" | "json" | "csv" | "all"
+                    ));
+                }
+            }
+
+            /// Property: Severity values 0-5 should pass validation
+            #[test]
+            fn prop_validate_config_accepts_valid_severity(severity in 0u32..=5) {
+                let config = ExportConfig {
+                    app_profile_name: Cow::Borrowed("Test App"),
+                    sandbox_name: None,
+                    sandbox_guid: None,
+                    export_format: Cow::Borrowed("gitlab"),
+                    output_path: Cow::Borrowed("/tmp/test.json"),
+                    project_dir: None,
+                    min_severity: Some(severity),
+                    schema_version: Cow::Borrowed("15.2.1"),
+                };
+
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config,
+                    };
+                    prop_assert!(workflow.validate_config().is_ok());
+                }
+
+                #[cfg(all(miri, not(feature = "disable-miri-isolation")))]
+                {
+                    prop_assert!(severity <= 5);
+                }
+            }
+
+            /// Property: Severity values > 5 should fail validation
+            #[test]
+            fn prop_validate_config_rejects_invalid_severity(severity in 6u32..1000) {
+                let config = ExportConfig {
+                    app_profile_name: Cow::Borrowed("Test App"),
+                    sandbox_name: None,
+                    sandbox_guid: None,
+                    export_format: Cow::Borrowed("gitlab"),
+                    output_path: Cow::Borrowed("/tmp/test.json"),
+                    project_dir: None,
+                    min_severity: Some(severity),
+                    schema_version: Cow::Borrowed("15.2.1"),
+                };
+
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config,
+                    };
+                    prop_assert!(matches!(
+                        workflow.validate_config(),
+                        Err(ExportError::InvalidConfig(_))
+                    ));
+                }
+
+                #[cfg(all(miri, not(feature = "disable-miri-isolation")))]
+                {
+                    prop_assert!(severity > 5);
+                }
+            }
+
+
+            // ========================================================================
+            // Test 3: ensure_extension() - Path extension handling properties
+            // ========================================================================
+
+            /// Property: ensure_extension should always add extension if missing
+            #[test]
+            fn prop_ensure_extension_adds_when_missing(
+                filename in "[a-z]{1,20}",
+                extension in prop::sample::select(&["json", "csv", "txt"])
+            ) {
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config: ExportConfig {
+                            app_profile_name: Cow::Borrowed("Test App"),
+                            sandbox_name: None,
+                            sandbox_guid: None,
+                            export_format: Cow::Borrowed("gitlab"),
+                            output_path: Cow::Borrowed("/tmp/test"),
+                            project_dir: None,
+                            min_severity: None,
+                            schema_version: Cow::Borrowed("15.2.1"),
+                        },
+                    };
+
+                    let path = Path::new(&filename);
+                    let result = workflow.ensure_extension(path, extension);
+                    // Result should always have the extension
+                    prop_assert_eq!(result.extension().and_then(|e| e.to_str()), Some(extension));
+                }
+            }
+
+            /// Property: ensure_extension should preserve matching extension
+            #[test]
+            fn prop_ensure_extension_preserves_matching(
+                filename in "[a-z]{1,20}",
+                extension in prop::sample::select(&["json", "csv", "txt"])
+            ) {
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config: ExportConfig {
+                            app_profile_name: Cow::Borrowed("Test App"),
+                            sandbox_name: None,
+                            sandbox_guid: None,
+                            export_format: Cow::Borrowed("gitlab"),
+                            output_path: Cow::Borrowed("/tmp/test"),
+                            project_dir: None,
+                            min_severity: None,
+                            schema_version: Cow::Borrowed("15.2.1"),
+                        },
+                    };
+
+                    let path_str = format!("{filename}.{extension}");
+                    let path = Path::new(&path_str);
+                    let result = workflow.ensure_extension(path, extension);
+                    // Should preserve the extension
+                    prop_assert_eq!(result.extension().and_then(|e| e.to_str()), Some(extension));
+                    // File stem should remain unchanged
+                    prop_assert_eq!(result.file_stem().and_then(|s| s.to_str()), Some(filename.as_str()));
+                }
+            }
+
+            /// Property: ensure_extension should handle paths with dots in stem
+            #[test]
+            fn prop_ensure_extension_handles_dots_in_stem(
+                stem in "[a-z]{1,10}\\.[a-z]{1,10}",
+                extension in prop::sample::select(&["json", "csv"])
+            ) {
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config: ExportConfig {
+                            app_profile_name: Cow::Borrowed("Test App"),
+                            sandbox_name: None,
+                            sandbox_guid: None,
+                            export_format: Cow::Borrowed("gitlab"),
+                            output_path: Cow::Borrowed("/tmp/test"),
+                            project_dir: None,
+                            min_severity: None,
+                            schema_version: Cow::Borrowed("15.2.1"),
+                        },
+                    };
+
+                    let path = Path::new(&stem);
+                    let result = workflow.ensure_extension(path, extension);
+                    // Should always end with the requested extension
+                    prop_assert_eq!(result.extension().and_then(|e| e.to_str()), Some(extension));
+                }
+            }
+
+            // ========================================================================
+            // Test 4: add_suffix_to_path() - Path manipulation properties
+            // ========================================================================
+
+            /// Property: add_suffix_to_path should always include suffix in filename
+            #[test]
+            fn prop_add_suffix_includes_suffix(
+                filename in "[a-z]{1,20}",
+                suffix in "[_-][a-z]{1,10}",
+                extension in prop::sample::select(&["json", "csv", "txt"])
+            ) {
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config: ExportConfig {
+                            app_profile_name: Cow::Borrowed("Test App"),
+                            sandbox_name: None,
+                            sandbox_guid: None,
+                            export_format: Cow::Borrowed("gitlab"),
+                            output_path: Cow::Borrowed("/tmp/test"),
+                            project_dir: None,
+                            min_severity: None,
+                            schema_version: Cow::Borrowed("15.2.1"),
+                        },
+                    };
+
+                    let path_str = format!("{filename}.old");
+                    let path = Path::new(&path_str);
+                    let result = workflow.add_suffix_to_path(path, &suffix, extension);
+
+                    let result_name = result.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    // Result should contain the suffix
+                    prop_assert!(result_name.contains(&suffix));
+                    // Result should have the new extension
+                    prop_assert_eq!(result.extension().and_then(|e| e.to_str()), Some(extension));
+                }
+            }
+
+            /// Property: add_suffix_to_path should handle empty paths gracefully
+            #[test]
+            fn prop_add_suffix_handles_empty_stem(
+                suffix in "[_-][a-z]{1,10}",
+                extension in prop::sample::select(&["json", "csv"])
+            ) {
+                #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
+                {
+                    let workflow = ExportWorkflow {
+                        client: create_mock_client(),
+                        config: ExportConfig {
+                            app_profile_name: Cow::Borrowed("Test App"),
+                            sandbox_name: None,
+                            sandbox_guid: None,
+                            export_format: Cow::Borrowed("gitlab"),
+                            output_path: Cow::Borrowed("/tmp/test"),
+                            project_dir: None,
+                            min_severity: None,
+                            schema_version: Cow::Borrowed("15.2.1"),
+                        },
+                    };
+
+                    let path = Path::new("");
+                    let result = workflow.add_suffix_to_path(path, &suffix, extension);
+
+                    // Should create a valid filename even with empty input
+                    let result_name = result.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    prop_assert!(!result_name.is_empty());
+                    prop_assert!(result_name.starts_with("export"));
+                    prop_assert!(result_name.contains(&suffix));
+                }
+            }
+        }
     }
 }

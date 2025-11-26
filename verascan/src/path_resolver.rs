@@ -154,9 +154,14 @@ impl PathResolver {
                     if normalized_candidate.ends_with(&normalized_relative) {
                         // Additional check: ensure we're not matching a substring
                         // The character before our match should be a path separator or start of string
-                        let match_start = normalized_candidate.len() - normalized_relative.len();
+                        let match_start = normalized_candidate
+                            .len()
+                            .saturating_sub(normalized_relative.len());
                         if match_start == 0
-                            || normalized_candidate.chars().nth(match_start - 1) == Some('/')
+                            || normalized_candidate
+                                .chars()
+                                .nth(match_start.saturating_sub(1))
+                                == Some('/')
                         {
                             // Return path relative to project root
                             if let Ok(result) =
@@ -268,6 +273,7 @@ impl PathResolver {
 }
 
 #[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     use super::*;
@@ -279,7 +285,7 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_resolve_file_path_basic() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("test value");
         let config = PathResolverConfig::new(temp_dir.path());
         let resolver = PathResolver::new(config);
 
@@ -295,16 +301,16 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_find_file_by_relative_path() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("test value");
         let temp_path = temp_dir.path();
 
         // Create a Java-like directory structure
         let java_dir = temp_path.join("src/main/java/com/example/vulnerable");
-        fs::create_dir_all(&java_dir).unwrap();
+        fs::create_dir_all(&java_dir).expect("test value");
 
         // Create a test file
         let test_file = java_dir.join("CryptoUtils.java");
-        File::create(&test_file).unwrap();
+        File::create(&test_file).expect("test value");
 
         let config = PathResolverConfig::new(temp_path);
         let resolver = PathResolver::new(config);
@@ -320,16 +326,16 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_find_file_in_project() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("test value");
         let temp_path = temp_dir.path();
 
         // Create nested directory structure
         let nested_dir = temp_path.join("src/main/java/com/example");
-        fs::create_dir_all(&nested_dir).unwrap();
+        fs::create_dir_all(&nested_dir).expect("test value");
 
         // Create a test file
         let test_file = nested_dir.join("TestFile.java");
-        File::create(&test_file).unwrap();
+        File::create(&test_file).expect("test value");
 
         let config = PathResolverConfig::new(temp_path);
         let resolver = PathResolver::new(config);
@@ -345,16 +351,16 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_path_matching_precision() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("test value");
         let temp_path = temp_dir.path();
 
         // Create directory structure
         let java_dir = temp_path.join("src/main/java/com/example/vulnerable");
-        fs::create_dir_all(&java_dir).unwrap();
+        fs::create_dir_all(&java_dir).expect("test value");
 
         // Create two similar files
-        File::create(java_dir.join("VulnerableApp.java")).unwrap();
-        File::create(java_dir.join("SimpleVulnerableApp.java")).unwrap();
+        File::create(java_dir.join("VulnerableApp.java")).expect("test value");
+        File::create(java_dir.join("SimpleVulnerableApp.java")).expect("test value");
 
         let config = PathResolverConfig::new(temp_path);
         let resolver = PathResolver::new(config);
@@ -379,7 +385,7 @@ mod tests {
     #[test]
     #[cfg(any(not(miri), feature = "disable-miri-isolation"))]
     fn test_common_source_directories() {
-        let temp_dir = TempDir::new().unwrap();
+        let temp_dir = TempDir::new().expect("test value");
         let temp_path = temp_dir.path();
 
         // Test different source directory patterns
@@ -397,10 +403,10 @@ mod tests {
 
         for (i, source_dir) in test_dirs.iter().enumerate() {
             let full_dir = temp_path.join(source_dir).join("com/example");
-            fs::create_dir_all(&full_dir).unwrap();
+            fs::create_dir_all(&full_dir).expect("test value");
 
             let test_file = full_dir.join(format!("Test{i}.java"));
-            File::create(&test_file).unwrap();
+            File::create(&test_file).expect("test value");
 
             let config = PathResolverConfig::new(temp_path);
             let resolver = PathResolver::new(config);

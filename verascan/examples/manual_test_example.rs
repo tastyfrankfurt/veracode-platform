@@ -6,8 +6,8 @@
 //! by creating a mock finding and sending it to GitLab.
 //!
 //! Usage:
-//! 1. Set environment variables (PRIVATE_TOKEN, CI_PROJECT_ID)
-//! 2. Run: cargo run --example manual_test_example
+//! 1. Set environment variables (`PRIVATE_TOKEN`, `CI_PROJECT_ID`)
+//! 2. Run: cargo run --example `manual_test_example`
 
 use std::collections::HashMap;
 use std::env;
@@ -31,20 +31,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let aggregated = create_mock_aggregated_findings(mock_finding);
 
     println!("📝 Created mock security finding:");
-    println!("   Title: {}", aggregated.findings[0].finding.title);
-    println!(
-        "   Severity: {} ({})",
-        aggregated.findings[0].finding.severity,
-        get_severity_name(aggregated.findings[0].finding.severity)
-    );
-    println!(
-        "   File: {}",
-        aggregated.findings[0].finding.files.source_file.file
-    );
-    println!(
-        "   Line: {}",
-        aggregated.findings[0].finding.files.source_file.line
-    );
+    if let Some(first_finding) = aggregated.findings.first() {
+        println!("   Title: {}", first_finding.finding.title);
+        println!(
+            "   Severity: {} ({})",
+            first_finding.finding.severity,
+            get_severity_name(first_finding.finding.severity)
+        );
+        println!("   File: {}", first_finding.finding.files.source_file.file);
+        println!("   Line: {}", first_finding.finding.files.source_file.line);
+    }
 
     // Initialize GitLab client
     println!("\n🔗 Initializing GitLab client...");
@@ -88,7 +84,10 @@ fn check_environment_variables() -> Result<(), Box<dyn std::error::Error>> {
         .map_err(|_| "Missing required environment variable: CI_PROJECT_ID")?;
 
     println!("✅ Environment variables found:");
-    println!("   Token: {}...", &token[..std::cmp::min(8, token.len())]);
+    println!(
+        "   Token: {}...",
+        token.get(..std::cmp::min(8, token.len())).unwrap_or(&token)
+    );
     println!("   Project ID: {project_id}");
 
     // Optional variables

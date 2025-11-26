@@ -3,22 +3,26 @@ use crate::cli::{Args, Commands};
 use log::{debug, error, info};
 use std::path::PathBuf;
 
+/// Execute file search workflow
+///
+/// # Errors
+/// Returns an error code if file search fails or no valid files are found
 pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
-    let (filepath, filefilter, recursive, validate) = match &args.command {
+    let (filepath, filefilter, recursive, novalidate) = match &args.command {
         Commands::Pipeline {
             filepath,
             filefilter,
             recursive,
-            validate,
+            novalidate,
             ..
-        } => (filepath, filefilter, *recursive, *validate),
+        } => (filepath, filefilter, *recursive, *novalidate),
         Commands::Assessment {
             filepath,
             filefilter,
             recursive,
-            validate,
+            novalidate,
             ..
-        } => (filepath, filefilter, *recursive, *validate),
+        } => (filepath, filefilter, *recursive, *novalidate),
         Commands::Policy { .. } => {
             return Err(1); // Policy command doesn't need file search
         }
@@ -31,6 +35,8 @@ pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
     };
 
     let finder = FileFinder::new();
+    // Invert novalidate: when novalidate=true, validation should be disabled (validate=false)
+    let validate = !novalidate;
     let config =
         FileFinder::parse_config(filepath, filefilter, recursive, validate).map_err(|e| {
             error!("Error: {e}");
@@ -105,7 +111,7 @@ fn display_search_results(
             info!("  {}", file.display());
         }
         info!(
-            "\n💡 Use --validate (-v) to check file types by header signature and filter invalid files"
+            "\n💡 File type validation is disabled. Remove --novalidate to check file types by header signature and filter invalid files"
         );
     }
 
