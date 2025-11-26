@@ -3,10 +3,11 @@
 //! This module contains the foundational client for making authenticated requests
 //! to the Veracode API, including HMAC authentication and HTTP request handling.
 
+use bytes::Bytes;
 use hex;
 use hmac::{Hmac, Mac};
 use log::{info, warn};
-use reqwest::{Client, multipart};
+use reqwest::{Body, Client, multipart};
 use secrecy::ExposeSecret;
 use serde::Serialize;
 use sha2::Sha256;
@@ -16,6 +17,7 @@ use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use tokio::fs::File as TokioFile;
 use url::Url;
 
 use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
@@ -1319,17 +1321,18 @@ impl VeracodeClient {
             )));
         }
 
-        // Read entire file for now (can be optimized to streaming later)
+        // Read entire file into memory for progress tracking and retry support
         file.seek(SeekFrom::Start(0))
             .map_err(|e| VeracodeError::InvalidConfig(format!("Failed to seek file: {e}")))?;
 
         #[allow(clippy::cast_possible_truncation)]
-        let mut file_data = Vec::with_capacity(file_size as usize);
-        file.read_to_end(&mut file_data)
+        let mut file_data_vec = Vec::with_capacity(file_size as usize);
+        file.read_to_end(&mut file_data_vec)
             .map_err(|e| VeracodeError::InvalidConfig(format!("Failed to read file: {e}")))?;
 
-        // Memory optimization: Wrap file data in Arc to avoid cloning during retries
-        let file_data_arc = Arc::new(file_data);
+        // Convert to Bytes for cheap cloning (Arc-backed internally)
+        // This prevents expensive memory copies on each retry attempt
+        let file_data = Bytes::from(file_data_vec);
         let content_type_cow: Cow<str> =
             content_type.map_or(Cow::Borrowed("binary/octet-stream"), |ct| {
                 if ct.len() < 64 {
@@ -1341,8 +1344,8 @@ impl VeracodeClient {
 
         // Create request builder closure for retry logic
         let request_builder = || {
-            // Clone Arc (cheap - just increments reference count)
-            let file_data_clone = Arc::clone(&file_data_arc);
+            // Clone Bytes (cheap - Arc-backed internally, just increments reference count)
+            let body_data = file_data.clone();
 
             // Re-generate auth header for each attempt to avoid signature expiry
             let Ok(auth_header) = self.generate_auth_header("POST", &url) else {
@@ -1355,12 +1358,12 @@ impl VeracodeClient {
                 .header("User-Agent", "Veracode Rust Client")
                 .header("Content-Type", content_type_cow.as_ref())
                 .header("Content-Length", file_size.to_string())
-                .body((*file_data_clone).clone())
+                .body(body_data)
         };
 
-        // Track progress if callback provided (do this before retry loop)
-        if let Some(callback) = progress_callback {
-            callback(file_size, file_size, 100.0);
+        // Track progress if callback provided (before upload starts)
+        if let Some(ref callback) = progress_callback {
+            callback(0, file_size, 0.0);
         }
 
         // Use optimized operation name
@@ -1370,8 +1373,16 @@ impl VeracodeClient {
             Cow::Borrowed("Large File Upload POST [long endpoint]")
         };
 
-        self.execute_with_retry(request_builder, operation_name)
-            .await
+        let response = self
+            .execute_with_retry(request_builder, operation_name)
+            .await?;
+
+        // Track progress if callback provided (after upload completes)
+        if let Some(callback) = progress_callback {
+            callback(file_size, file_size, 100.0);
+        }
+
+        Ok(response)
     }
 
     /// Upload a file with binary data (optimized for uploadlargefile.do)
@@ -1407,9 +1418,10 @@ impl VeracodeClient {
         // Build URL with query parameters using centralized helper
         let url = self.build_url_with_params(endpoint, query_params);
 
-        // Memory optimization: Wrap file data in Arc to avoid cloning during retries
-        let file_data_arc = Arc::new(file_data);
-        let file_size = file_data_arc.len();
+        // Convert to Bytes for cheap cloning (Arc-backed internally)
+        // This prevents expensive memory copies on each retry attempt
+        let file_data = Bytes::from(file_data);
+        let file_size = file_data.len();
 
         // Use Cow for content type to minimize allocations
         let content_type_cow: Cow<str> = if content_type.len() < 64 {
@@ -1420,8 +1432,8 @@ impl VeracodeClient {
 
         // Create request builder closure for retry logic
         let request_builder = || {
-            // Clone Arc (cheap - just increments reference count)
-            let file_data_clone = Arc::clone(&file_data_arc);
+            // Clone Bytes (cheap - Arc-backed internally, just increments reference count)
+            let body_data = file_data.clone();
 
             // Re-generate auth header for each attempt to avoid signature expiry
             let Ok(auth_header) = self.generate_auth_header("POST", &url) else {
@@ -1434,7 +1446,7 @@ impl VeracodeClient {
                 .header("User-Agent", "Veracode Rust Client")
                 .header("Content-Type", content_type_cow.as_ref())
                 .header("Content-Length", file_size.to_string())
-                .body((*file_data_clone).clone())
+                .body(body_data)
         };
 
         // Use optimized operation name based on endpoint length
@@ -1446,6 +1458,67 @@ impl VeracodeClient {
 
         self.execute_with_retry(request_builder, operation_name)
             .await
+    }
+
+    /// Upload a file with streaming (memory-efficient for large files)
+    ///
+    /// This method streams the file directly from disk without loading it entirely into memory.
+    /// This is the recommended approach for large files (>100MB) to avoid high memory usage.
+    ///
+    /// # Arguments
+    ///
+    /// * `endpoint` - The API endpoint to call
+    /// * `query_params` - Query parameters as key-value pairs
+    /// * `file_path` - Path to the file to upload
+    /// * `file_size` - Size of the file in bytes
+    /// * `content_type` - Content type for the file
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing the response or an error.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the API request fails, the resource is not found,
+    /// or authentication/authorization fails.
+    pub async fn upload_file_streaming(
+        &self,
+        endpoint: &str,
+        query_params: &[(&str, &str)],
+        file_path: &str,
+        file_size: u64,
+        content_type: &str,
+    ) -> Result<reqwest::Response, VeracodeError> {
+        // Build URL with query parameters using centralized helper
+        let url = self.build_url_with_params(endpoint, query_params);
+
+        // Open file using tokio for async streaming
+        let file = TokioFile::open(file_path)
+            .await
+            .map_err(|e| VeracodeError::InvalidConfig(format!("Failed to open file: {e}")))?;
+
+        // Create a stream from the file using tokio_util
+        let stream = tokio_util::io::ReaderStream::new(file);
+        let body = Body::wrap_stream(stream);
+
+        // Generate auth header
+        let auth_header = self.generate_auth_header("POST", &url)?;
+
+        // Build and send the request (streaming upload - no retry support)
+        // Note: Streaming bodies cannot be retried because the stream is consumed
+        let response = self
+            .client
+            .post(&url)
+            .header("Authorization", auth_header)
+            .header("User-Agent", "Veracode Rust Client")
+            .header("Content-Type", content_type)
+            .header("Content-Length", file_size.to_string())
+            .body(body)
+            .send()
+            .await
+            .map_err(VeracodeError::Http)?;
+
+        Ok(response)
     }
 }
 

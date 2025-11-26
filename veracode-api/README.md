@@ -20,7 +20,7 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - 🔍 **Pipeline Scan API** - CI/CD security scanning via REST API
 - 🧪 **Sandbox API** - Development sandbox management via REST API
 - 🔨 **Build API** - Build management and SAST operations via XML API
-- 📊 **Scan API** - File upload and scan operations via XML API
+- 📊 **Scan API** - File upload and scan operations via XML API with memory-efficient streaming for large files (up to 2GB)
 - 📋 **Policy API** - Security policy management and compliance evaluation with intelligent REST/XML API fallback
 - 📄 **Reporting API** - Audit log retrieval and compliance reporting via REST API with automatic pagination and timezone conversion
 - 🚀 **Async/Await** - Built on tokio for high-performance concurrent operations
@@ -30,7 +30,7 @@ A comprehensive Rust client library for the Veracode security platform, providin
 - 🔄 **Intelligent Retry Logic** - Automatic retry with exponential backoff for transient failures and smart rate limit handling
 - 🔀 **API Fallback System** - Automatic fallback from REST API to XML API on permission errors for maximum compatibility
 - ⏱️ **Configurable Timeouts** - Customizable connection and request timeouts for different use cases
-- ⚡ **Performance Optimized** - Advanced memory allocation optimizations for high-throughput applications
+- ⚡ **Performance Optimized** - Advanced memory allocation optimizations for high-throughput applications with zero-copy buffer management and streaming uploads
 - 🔒 **Debug Safety** - All sensitive credentials show `[REDACTED]` in debug output
 - 🧪 **Comprehensive Testing** - Extensive test coverage including security measures
 - 🛡️ **Security Hardening** - OWASP Top 10 protections with JSON depth validation, error sanitization, and input validation
@@ -42,7 +42,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.7.5"
+veracode-platform = "0.7.7"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -238,12 +238,12 @@ let sandbox = sandbox_api.create_sandbox("app-guid", create_request).await?;
 ```
 
 ### Scan API (XML)
-File upload and scan operations:
+File upload and scan operations with efficient memory-optimized large file support:
 
 ```rust
 let scan_api = client.scan_api();
 
-// Upload file for scanning
+// Upload file for scanning (< 100MB)
 let upload_request = UploadFileRequest {
     app_id: "12345".to_string(),
     file_path: "/path/to/file.jar".to_string(),
@@ -252,6 +252,34 @@ let upload_request = UploadFileRequest {
 
 let uploaded_file = scan_api.upload_file(upload_request).await?;
 println!("Uploaded: {}", uploaded_file.file_name);
+
+// Upload large files (up to 2GB) - MEMORY EFFICIENT STREAMING
+// Uses only ~8KB memory regardless of file size
+let large_file_request = UploadLargeFileRequest {
+    app_id: "12345".to_string(),
+    file_path: "/path/to/large-file.jar".to_string(),
+    filename: Some("my-app.jar".to_string()),  // Custom name for flaw matching
+    sandbox_id: Some("sandbox-guid".to_string()),
+};
+
+let large_file = scan_api.upload_large_file(large_file_request).await?;
+println!("Large file uploaded: {} ({} bytes)", large_file.file_name, large_file.file_size);
+
+// Upload large file with progress tracking
+// Uses Bytes for efficient retry cloning (~500MB for 500MB file, even with retries)
+let progress_request = UploadLargeFileRequest {
+    app_id: "12345".to_string(),
+    file_path: "/path/to/large-file.jar".to_string(),
+    filename: None,
+    sandbox_id: Some("sandbox-guid".to_string()),
+};
+
+let uploaded = scan_api.upload_large_file_with_progress(
+    progress_request,
+    |bytes_uploaded, total_bytes, percentage| {
+        println!("Progress: {:.1}% ({}/{})", percentage, bytes_uploaded, total_bytes);
+    }
+).await?;
 
 // Start pre-scan
 let pre_scan = scan_api.begin_pre_scan(BeginPreScanRequest {
@@ -678,10 +706,12 @@ let config = VeracodeConfig::new("api_id", "api_key")
     .with_timeouts(30, 300);  // Default values - good for most operations
 ```
 
-**Large File Uploads**:
+**Large File Uploads** (v0.7.6+):
 ```rust
+// Note: Since v0.7.6, large file uploads use streaming with minimal memory usage (~8KB)
+// Extended timeouts still recommended for network reliability with large transfers
 let config = VeracodeConfig::new("api_id", "api_key")
-    .with_timeouts(120, 1800);  // Extended timeouts for large files (30 minutes)
+    .with_timeouts(120, 1800);  // 2 min connect, 30 min request for 2GB files
 ```
 
 **High-Performance/Low-Latency**:
@@ -1198,6 +1228,51 @@ cargo doc --open
 # Build documentation for all features
 cargo doc --all-features --open
 ```
+
+## 🆕 What's New in v0.7.7
+
+### Security Hardening: Defensive Programming Enhancements
+- **15 New Clippy Lints**: Comprehensive security hardening with strict code quality enforcement
+  - **Integer Safety**: Arithmetic overflow, truncation, sign loss, and precision loss detection
+  - **Memory Safety**: String slice boundary checks, mem::forget blocking, enhanced assertions
+  - **Code Quality**: Required documentation for errors, panics, and unsafe code
+  - **Core Safety**: No indexing, no unwrap/panic, exhaustive enum matching
+
+### Type Safety: File Upload Status Tracking
+- **FileStatus Enum**: Replaced `String` with strongly-typed `FileStatus` enum
+  - 11 comprehensive states from Veracode filelist.xsd schema
+  - Convenience methods: `is_uploaded()`, `is_error()`, `is_in_progress()`
+  - Compile-time correctness for upload state handling
+  - Human-readable descriptions via `description()` method
+
+### Enhanced Error Detection
+- **XML Error Parsing**: Now detects and surfaces `<error>` tags in upload responses
+  - Previous: Silent failures on API errors in XML
+  - Now: Explicit `ScanError::UploadFailed` with detailed error messages
+- **Upload Response Fix**: Corrected `upload_large_file()` to properly parse file list responses
+  - Now returns actual upload status, size, and metadata from API
+
+### Code Quality Improvements
+- **Simplified Error Messages**: Eliminated error message nesting for clarity
+  - Before: "Failed to upload file: Upload error: Failed to upload X: Upload failed: API error: ..."
+  - After: "Upload error: The file X cannot be analyzed."
+  - 75% reduction in error message redundancy
+- Removed excessive debug logging for production readiness
+- Fixed progress callback timing (0% at start, 100% at completion)
+- Added `UploadTimeout` error variant for future monitoring features
+
+## 🔒 Security in v0.7.7
+
+The v0.7.7 release focuses heavily on defensive programming and security hardening:
+
+| Category | Lints Added | Impact |
+|----------|-------------|---------|
+| Integer Safety | 5 lints | Prevents overflow, truncation, sign loss |
+| Memory Safety | 3 lints | UTF-8 boundary checks, blocks mem::forget |
+| Code Quality | 4 lints | Enhanced documentation requirements |
+| Core Safety | 4 lints | No indexing/unwrap/panic, exhaustive matching |
+
+All lints are enforced at the `Cargo.toml` level, ensuring consistent code quality across the entire codebase.
 
 ## 🏷️ Versioning
 

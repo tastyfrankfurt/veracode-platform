@@ -398,7 +398,7 @@ async fn demonstrate_mock_scenarios(
     println!("      ✅ upload_large_file_to_sandbox_with_progress() - Available");
 
     println!("\n   📋 Key Differences from uploadfile.do:");
-    println!("      • No version prefix (uploadlargefile.do vs api/5.0/uploadfile.do)");
+    println!("      • Both use /api/5.0/ prefix (uploadlargefile.do and uploadfile.do)");
     println!("      • Binary content-type instead of multipart/form-data");
     println!("      • 2GB file size limit vs smaller limits");
     println!("      • Automatic build creation capability");
