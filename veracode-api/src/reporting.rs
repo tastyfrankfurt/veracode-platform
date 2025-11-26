@@ -1002,11 +1002,12 @@ mod tests {
         // November 5, 2028 at 1:00 AM is ambiguous in America/New_York
         // (occurs twice when clocks fall back from 2:00 AM to 1:00 AM)
         // The function should use earliest() to resolve ambiguity
-        let result = convert_regional_timestamp_to_utc(
-            "2028-11-05 01:00:00",
-            &VeracodeRegion::Commercial,
+        let result =
+            convert_regional_timestamp_to_utc("2028-11-05 01:00:00", &VeracodeRegion::Commercial);
+        assert!(
+            result.is_some(),
+            "Should handle DST fall-back ambiguous time"
         );
-        assert!(result.is_some(), "Should handle DST fall-back ambiguous time");
 
         // Verify conversion produces valid UTC timestamp
         let utc = result.unwrap();
