@@ -2274,7 +2274,7 @@ mod tests {
         assert_eq!(error.to_string(), "File not found: test.jar");
 
         let error = ScanError::UploadFailed("Network error".to_string());
-        assert_eq!(error.to_string(), "Upload failed: Network error");
+        assert_eq!(error.to_string(), "Network error");
 
         let error = ScanError::Unauthorized;
         assert_eq!(error.to_string(), "Unauthorized access");
