@@ -287,12 +287,14 @@ fn convert_regional_timestamp_to_utc(
     let utc_time = match region {
         VeracodeRegion::European => {
             // European region uses Europe/Berlin timezone (CET/CEST)
-            let regional_time: DateTime<_> = Berlin.from_local_datetime(&naive_dt).single()?;
+            // Use earliest() to handle ambiguous times during DST fall-back
+            let regional_time: DateTime<_> = Berlin.from_local_datetime(&naive_dt).earliest()?;
             regional_time.with_timezone(&Utc)
         }
         VeracodeRegion::Commercial | VeracodeRegion::Federal => {
             // Commercial and Federal regions use America/New_York timezone (EST/EDT)
-            let regional_time: DateTime<_> = New_York.from_local_datetime(&naive_dt).single()?;
+            // Use earliest() to handle ambiguous times during DST fall-back
+            let regional_time: DateTime<_> = New_York.from_local_datetime(&naive_dt).earliest()?;
             regional_time.with_timezone(&Utc)
         }
     };
@@ -992,6 +994,24 @@ mod tests {
         let result =
             convert_regional_timestamp_to_utc("2025-13-45 25:99:99", &VeracodeRegion::Commercial);
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_convert_timezone_dst_fallback_ambiguous() {
+        // Regression test for DST fall-back ambiguous time
+        // November 5, 2028 at 1:00 AM is ambiguous in America/New_York
+        // (occurs twice when clocks fall back from 2:00 AM to 1:00 AM)
+        // The function should use earliest() to resolve ambiguity
+        let result = convert_regional_timestamp_to_utc(
+            "2028-11-05 01:00:00",
+            &VeracodeRegion::Commercial,
+        );
+        assert!(result.is_some(), "Should handle DST fall-back ambiguous time");
+
+        // Verify conversion produces valid UTC timestamp
+        let utc = result.unwrap();
+        assert!(utc.len() >= 19, "UTC timestamp should be well-formed");
+        assert!(utc.starts_with("2028-11-05"), "Date should be preserved");
     }
 
     // ============================================================================
