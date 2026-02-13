@@ -5,6 +5,23 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-02-13
+
+### Changed
+- **CMEK Update Logic Disabled**: Commented out CMEK update logic for existing applications due to API limitations
+  - **Issue**: Veracode API does not return `custom_kms_alias` field in application profile responses
+  - **Impact**: Unable to reliably determine if CMEK is already configured or needs updating
+  - **Resolution**:
+    - CMEK configuration still fully supported for **new application creation**
+    - CMEK update attempts for existing applications temporarily disabled to prevent unnecessary API calls
+    - All logic preserved with clear comments for future restoration when API supports CMEK status retrieval
+  - **Behavior**:
+    - ✅ New applications: CMEK alias configured via `create_application_if_not_exists()` parameter
+    - ⚠️  Existing applications: CMEK parameter ignored (no updates attempted)
+  - **Restoration Path**: Search for "CMEK update logic commented out" in `src/app.rs` and uncomment four marked sections
+  - **Modified Files**: `src/app.rs` (lines ~1086, ~1113-1145, ~1166-1170)
+  - **Related**: Affects `verascan` CLI tool's `--cmek` parameter behavior with existing profiles
+
 ## [0.7.7] - 2025-11-26
 
 ### Security

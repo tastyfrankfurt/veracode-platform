@@ -1083,7 +1083,9 @@ impl VeracodeClient {
             let mut needs_update = false;
             let mut update_repo_url = false;
             let mut update_description = false;
-            let mut update_custom_kms_alias = false;
+            // CMEK update logic commented out - API limitation prevents reading CMEK status
+            // Uncomment when API supports returning custom_kms_alias in profile responses
+            // let mut update_custom_kms_alias = false;
 
             if let Some(ref profile) = existing_app.profile {
                 // Check repo_url: update if we have one AND existing is None/empty
@@ -1110,17 +1112,21 @@ impl VeracodeClient {
                     needs_update = true;
                 }
 
-                // Check custom_kms_alias: update if we have one AND existing is None/empty
-                if custom_kms_alias.is_some()
-                    && (profile.custom_kms_alias.is_none()
-                        || profile
-                            .custom_kms_alias
-                            .as_ref()
-                            .is_some_and(|k| k.trim().is_empty()))
-                {
-                    update_custom_kms_alias = true;
-                    needs_update = true;
-                }
+                // CMEK update logic commented out - API limitation prevents reading CMEK status
+                // The Veracode API does not return custom_kms_alias in profile responses,
+                // so we cannot determine if CMEK is already configured or needs updating.
+                // To restore: uncomment this block and the related sections below
+                // // Check custom_kms_alias: update if we have one AND existing is None/empty
+                // if custom_kms_alias.is_some()
+                //     && (profile.custom_kms_alias.is_none()
+                //         || profile
+                //             .custom_kms_alias
+                //             .as_ref()
+                //             .is_some_and(|k| k.trim().is_empty()))
+                // {
+                //     update_custom_kms_alias = true;
+                //     needs_update = true;
+                // }
             }
 
             if needs_update {
@@ -1137,12 +1143,13 @@ impl VeracodeClient {
                         description.as_deref().unwrap_or("None")
                     );
                 }
-                if update_custom_kms_alias {
-                    log::debug!(
-                        "   Setting custom_kms_alias: {}",
-                        custom_kms_alias.as_deref().unwrap_or("None")
-                    );
-                }
+                // CMEK logging commented out - restore when API supports CMEK status retrieval
+                // if update_custom_kms_alias {
+                //     log::debug!(
+                //         "   Setting custom_kms_alias: {}",
+                //         custom_kms_alias.as_deref().unwrap_or("None")
+                //     );
+                // }
 
                 // Build update request preserving all existing values
                 let profile = existing_app.profile.as_ref().ok_or_else(|| {
@@ -1163,11 +1170,14 @@ impl VeracodeClient {
                         teams: profile.teams.clone(), // Keep existing
                         tags: profile.tags.clone(),
                         custom_fields: profile.custom_fields.clone(),
-                        custom_kms_alias: if update_custom_kms_alias {
-                            custom_kms_alias
-                        } else {
-                            profile.custom_kms_alias.clone()
-                        },
+                        // CMEK update commented out - API limitation prevents reliable updates
+                        // To restore: uncomment this block and the related sections above
+                        // custom_kms_alias: if update_custom_kms_alias {
+                        //     custom_kms_alias
+                        // } else {
+                        //     profile.custom_kms_alias.clone()
+                        // },
+                        custom_kms_alias: profile.custom_kms_alias.clone(), // Always preserve existing (or None)
                         repo_url: if update_repo_url {
                             repo_url
                         } else {
