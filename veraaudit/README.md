@@ -13,6 +13,7 @@ CLI tool for retrieving and archiving Veracode audit logs using the Reporting RE
 - 🌍 **Multi-Regional Support** - Commercial, European, and Federal regions
 - 🔍 **Flexible Filtering** - Filter by audit actions and action types
 - 🔄 **Robust Error Handling** - Automatic retries with exponential backoff
+- 🔑 **Automatic Credential Refresh** - Smart recovery from credential expiration via Vault
 - ⚡ **Optimized Deduplication** - Fast hash-based deduplication scanning only the most recent file
 - 🔁 **Chunked Retrieval** - Automatic chunking to handle backend refresh cycles (respects 2-hour data refresh window)
 - 🎯 **Smart File Management** - Skips writing empty files after deduplication
@@ -234,6 +235,66 @@ If Vault is not configured, credentials are read from environment variables:
 export VERACODE_API_ID="your-api-id"
 export VERACODE_API_KEY="your-api-key"
 ```
+
+### Automatic Credential Refresh
+
+**NEW in v0.5.14**: veraaudit now automatically refreshes credentials from Vault when authentication failures are detected.
+
+#### How It Works
+
+When an audit log retrieval encounters a **401 Unauthorized** or **403 Forbidden** error:
+
+1. **Smart Detection**: Checks the actual HTTP status code (not string matching)
+2. **Automatic Refresh**: Re-authenticates with Vault using your JWT token
+3. **Fresh Credentials**: Retrieves new API credentials from Vault
+4. **Single Retry**: Attempts the operation once with refreshed credentials
+5. **Client Update**: In service mode, the refreshed client is used for all future cycles
+
+#### Benefits
+
+- ✅ **Long-Running Services**: Service mode can now run indefinitely without manual credential rotation
+- ✅ **Zero Downtime**: Automatic recovery from credential expiration
+- ✅ **Secure**: Vault tokens are revoked after each credential refresh
+- ✅ **No Infinite Loops**: Single retry attempt prevents excessive Vault calls
+- ✅ **Graceful Fallback**: If Vault is unavailable, returns the original error
+
+#### Requirements
+
+- Vault must be configured (see Vault configuration above)
+- Vault JWT token must be valid and have permission to retrieve credentials
+- Service account credentials in Vault must be valid
+
+#### Example Scenario
+
+```bash
+# Start service with Vault credentials
+veraaudit service --interval 30m --cleanup-count 100
+
+# Service runs for days...
+# API credentials expire in Vault
+# Next API call returns 401 Unauthorized
+# ✅ Automatic refresh from Vault
+# ✅ Service continues without interruption
+```
+
+#### Logging
+
+Watch for these log messages to track credential refresh:
+
+```
+WARN  Authentication error detected (401/403), attempting credential refresh from Vault
+INFO  Successfully refreshed credentials from Vault, recreating client
+INFO  Retrying operation with refreshed credentials
+INFO  Operation succeeded after credential refresh
+INFO  Client updated with refreshed credentials for future cycles
+```
+
+#### Security Notes
+
+- Credentials are handled with `Arc<SecretString>` throughout
+- No credentials are logged or exposed in error messages
+- Vault tokens are revoked immediately after credential retrieval
+- Only refreshes on authentication failures (not on normal operations)
 
 ## Output Format
 
@@ -501,6 +562,8 @@ If the service is running but not creating files:
 
 - **Credentials**: All credentials are stored using `secrecy::SecretString` for secure memory handling
 - **Vault Tokens**: Automatically revoked after successful credential retrieval
+- **Credential Refresh**: Automatic refresh on auth failures with single retry to prevent abuse
+- **Error Detection**: Uses actual HTTP status codes (not string matching) for security-critical decisions
 - **Proxy Authentication**: Properly redacted in debug logs
 - **File Permissions**: Consider setting restrictive permissions on output directory
 - **Network Security**: HTTPS/TLS enabled by default with certificate validation
@@ -560,4 +623,4 @@ MIT OR Apache-2.0
 
 ## Version
 
-v0.5.13
+v0.5.14

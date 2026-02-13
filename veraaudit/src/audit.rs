@@ -1,14 +1,15 @@
 //! Audit log retrieval logic
-use crate::error::Result;
+use crate::error::{is_auth_error, Result};
 use log::{debug, info, warn};
 use std::sync::Arc;
 use veracode_platform::{AuditReportRequest, VeracodeClient};
 
-/// Retrieve audit logs for a specific datetime range
+/// Retrieve audit logs for a specific datetime range with automatic credential refresh
 ///
 /// # Arguments
 ///
 /// * `client` - Veracode API client
+/// * `region_str` - Region string (for recreating client on credential refresh)
 /// * `start_datetime` - Start datetime (format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
 /// * `end_datetime` - Optional end datetime (same formats as `start_datetime`)
 /// * `audit_actions` - Optional list of audit actions to filter
@@ -16,12 +17,93 @@ use veracode_platform::{AuditReportRequest, VeracodeClient};
 ///
 /// # Returns
 ///
-/// JSON data containing the audit logs
+/// Tuple of (JSON data containing the audit logs, Option<`new client if refreshed`>)
 ///
 /// # Errors
 ///
 /// Returns error if API request fails
 pub async fn retrieve_audit_logs(
+    client: &VeracodeClient,
+    region_str: &str,
+    start_datetime: &str,
+    end_datetime: &str,
+    audit_actions: Option<Arc<[String]>>,
+    action_types: Option<Arc<[String]>>,
+) -> Result<(serde_json::Value, Option<VeracodeClient>)> {
+    // Try the operation with the current client
+    match retrieve_audit_logs_impl(
+        client,
+        start_datetime,
+        end_datetime,
+        audit_actions.clone(),
+        action_types.clone(),
+    )
+    .await
+    {
+        Ok(result) => Ok((result, None)),
+        Err(e) if is_auth_error(&e) => {
+            warn!("Authentication error detected (401/403), attempting credential refresh from Vault");
+
+            // Try to refresh credentials from Vault
+            match crate::vault_client::refresh_credentials_from_vault().await {
+                Ok((fresh_credentials, proxy_url, proxy_username, proxy_password)) => {
+                    info!("Successfully refreshed credentials from Vault, recreating client");
+
+                    // Create new client with fresh credentials
+                    let fresh_config = crate::credentials::create_veracode_config_with_proxy(
+                        fresh_credentials,
+                        region_str,
+                        proxy_url,
+                        proxy_username,
+                        proxy_password,
+                    )
+                    .map_err(|_| {
+                        crate::error::AuditError::InvalidConfig(
+                            "Failed to create Veracode config with refreshed credentials".to_string()
+                        )
+                    })?;
+
+                    let fresh_client = VeracodeClient::new(fresh_config)?;
+
+                    info!("Retrying operation with refreshed credentials");
+
+                    // Retry the operation with the new client
+                    match retrieve_audit_logs_impl(
+                        &fresh_client,
+                        start_datetime,
+                        end_datetime,
+                        audit_actions,
+                        action_types,
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            info!("Operation succeeded after credential refresh");
+                            Ok((result, Some(fresh_client)))
+                        }
+                        Err(retry_error) => {
+                            warn!("Operation failed even after credential refresh");
+                            Err(retry_error)
+                        }
+                    }
+                }
+                Err(vault_error) => {
+                    // Vault refresh failed, return original auth error
+                    warn!("Failed to refresh credentials from Vault: {}", vault_error);
+                    info!("Returning original authentication error");
+                    Err(e)
+                }
+            }
+        }
+        Err(e) => {
+            // Non-auth error, return as-is
+            Err(e)
+        }
+    }
+}
+
+/// Internal implementation of audit log retrieval (without credential refresh)
+async fn retrieve_audit_logs_impl(
     client: &VeracodeClient,
     start_datetime: &str,
     end_datetime: &str,
@@ -59,7 +141,7 @@ pub async fn retrieve_audit_logs(
     Ok(audit_logs)
 }
 
-/// Retrieve audit logs in chunks to handle backend refresh cycles
+/// Retrieve audit logs in chunks to handle backend refresh cycles with automatic credential refresh
 ///
 /// Queries the API in smaller interval-sized chunks from start to end (or now, whichever is earlier).
 /// Only stops early if a chunk returns no logs AND is within the backend refresh window from now.
@@ -67,6 +149,7 @@ pub async fn retrieve_audit_logs(
 /// # Arguments
 ///
 /// * `client` - Veracode API client
+/// * `region_str` - Region string (for recreating client on credential refresh)
 /// * `start_datetime` - Start datetime (format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
 /// * `end_datetime` - End datetime (format: YYYY-MM-DD or YYYY-MM-DD HH:MM:SS)
 /// * `interval_str` - Interval/chunk size (format: Nm, Nh, Nd or just N for minutes)
@@ -76,12 +159,100 @@ pub async fn retrieve_audit_logs(
 ///
 /// # Returns
 ///
-/// JSON array containing aggregated audit logs from all chunks
+/// Tuple of (JSON array containing aggregated audit logs from all chunks, Option<`new client if refreshed`>)
 ///
 /// # Errors
 ///
 /// Returns error if API request fails or datetime parsing fails
+#[allow(clippy::too_many_arguments)]
 pub async fn retrieve_audit_logs_chunked(
+    client: &VeracodeClient,
+    region_str: &str,
+    start_datetime: &str,
+    end_datetime: &str,
+    interval_str: &str,
+    backend_window_str: &str,
+    audit_actions: Option<Arc<[String]>>,
+    action_types: Option<Arc<[String]>>,
+) -> Result<(serde_json::Value, Option<VeracodeClient>)> {
+    // Try the operation with the current client
+    match retrieve_audit_logs_chunked_impl(
+        client,
+        start_datetime,
+        end_datetime,
+        interval_str,
+        backend_window_str,
+        audit_actions.clone(),
+        action_types.clone(),
+    )
+    .await
+    {
+        Ok(result) => Ok((result, None)),
+        Err(e) if is_auth_error(&e) => {
+            warn!("Authentication error detected (401/403), attempting credential refresh from Vault");
+
+            // Try to refresh credentials from Vault
+            match crate::vault_client::refresh_credentials_from_vault().await {
+                Ok((fresh_credentials, proxy_url, proxy_username, proxy_password)) => {
+                    info!("Successfully refreshed credentials from Vault, recreating client");
+
+                    // Create new client with fresh credentials
+                    let fresh_config = crate::credentials::create_veracode_config_with_proxy(
+                        fresh_credentials,
+                        region_str,
+                        proxy_url,
+                        proxy_username,
+                        proxy_password,
+                    )
+                    .map_err(|_| {
+                        crate::error::AuditError::InvalidConfig(
+                            "Failed to create Veracode config with refreshed credentials".to_string()
+                        )
+                    })?;
+
+                    let fresh_client = VeracodeClient::new(fresh_config)?;
+
+                    info!("Retrying operation with refreshed credentials");
+
+                    // Retry the operation with the new client
+                    match retrieve_audit_logs_chunked_impl(
+                        &fresh_client,
+                        start_datetime,
+                        end_datetime,
+                        interval_str,
+                        backend_window_str,
+                        audit_actions,
+                        action_types,
+                    )
+                    .await
+                    {
+                        Ok(result) => {
+                            info!("Operation succeeded after credential refresh");
+                            Ok((result, Some(fresh_client)))
+                        }
+                        Err(retry_error) => {
+                            warn!("Operation failed even after credential refresh");
+                            Err(retry_error)
+                        }
+                    }
+                }
+                Err(vault_error) => {
+                    // Vault refresh failed, return original auth error
+                    warn!("Failed to refresh credentials from Vault: {}", vault_error);
+                    info!("Returning original authentication error");
+                    Err(e)
+                }
+            }
+        }
+        Err(e) => {
+            // Non-auth error, return as-is
+            Err(e)
+        }
+    }
+}
+
+/// Internal implementation of chunked audit log retrieval (without credential refresh)
+async fn retrieve_audit_logs_chunked_impl(
     client: &VeracodeClient,
     start_datetime: &str,
     end_datetime: &str,
@@ -148,8 +319,8 @@ pub async fn retrieve_audit_logs_chunked(
             chunk_count, chunk_start_str, chunk_end_str
         );
 
-        // Retrieve logs for this chunk
-        let chunk_data = retrieve_audit_logs(
+        // Retrieve logs for this chunk (use _impl to avoid nested credential refresh)
+        let chunk_data = retrieve_audit_logs_impl(
             client,
             &chunk_start_str,
             &chunk_end_str,
@@ -201,3 +372,4 @@ pub async fn retrieve_audit_logs_chunked(
     // Return aggregated logs as JSON array
     Ok(serde_json::Value::Array(all_logs))
 }
+

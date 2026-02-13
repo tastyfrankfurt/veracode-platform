@@ -5,6 +5,48 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.14] - 2026-02-13
+
+### Added
+- **Automatic Credential Refresh from Vault**: Production-grade credential refresh on authentication failures
+  - **Smart Error Detection**: Detects HTTP 401/403 errors using actual status codes (not string matching)
+  - **On-Demand Refresh**: Automatically refreshes credentials from Vault when authentication fails
+  - **Service Mode Support**: Long-running services can now recover from credential expiration automatically
+  - **Single Retry Logic**: Attempts credential refresh once per operation to prevent infinite loops
+  - **Secure Implementation**:
+    - Credentials handled with `Arc<SecretString>` throughout
+    - Vault tokens revoked after credential retrieval
+    - No credential logging or exposure in error messages
+  - **Graceful Fallback**: If Vault is unavailable, returns original authentication error
+  - **Client Propagation**: Refreshed client is returned and reused in service mode for future cycles
+  - **Modified Files**: `src/audit.rs`, `src/error.rs`, `src/vault_client.rs`, `src/main.rs`, `src/service.rs`
+
+### Changed
+- **Error Handling**: Enhanced authentication error detection with structured error types
+  - Added `is_auth_error()` function to check for 401/403 errors by actual status code
+  - Leverages new `HttpStatus` variant from `veracode-platform` v0.7.9
+  - Exhaustive pattern matching for all error variants (no wildcards)
+  - **Modified Files**: `src/error.rs`
+
+### Dependencies
+- Updated `veracode-platform` dependency to 0.7.9 for structured HTTP error types
+
+### Technical Details
+- **How It Works**:
+  1. Audit log retrieval encounters 401/403 error
+  2. `is_auth_error()` detects authentication failure by checking status code
+  3. `refresh_credentials_from_vault()` re-authenticates with Vault using JWT/OIDC
+  4. New credentials retrieved and wrapped in `Arc<SecretString>`
+  5. Fresh `VeracodeClient` created with new credentials
+  6. Operation retried once with refreshed client
+  7. In service mode: Updated client used for all future cycles
+- **Security Notes**:
+  - No credential rotation during normal operation
+  - Credentials only refreshed on-demand when authentication fails
+  - Vault token revoked immediately after credential retrieval
+  - Single retry attempt prevents infinite loops
+  - All credential handling uses secure memory types
+
 ## [0.5.13] - 2025-11-21
 
 ### Changed

@@ -5,9 +5,26 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.8] - 2026-02-13
+## [0.7.9] - 2026-02-13
+
+### Added
+- **Structured HTTP Error Type**: New `HttpStatus` variant for `VeracodeError` enum with actual status codes
+  - **Type-Safe Error Detection**: Exposes HTTP status code as `u16` field instead of embedding in string
+  - **Better Error Handling**: Enables checking actual status codes (401, 403, etc.) without string parsing
+  - **Fields**:
+    - `status_code: u16` - The HTTP status code
+    - `url: String` - The URL that was requested
+    - `message: String` - Error details and response body
+  - **Usage**: `handle_response()` now returns `HttpStatus` for all non-success HTTP responses
+  - **Benefit**: Downstream code can match on actual status codes for precise error handling
+  - **Modified Files**: `src/lib.rs`, `src/client.rs`, `src/findings.rs`
 
 ### Changed
+- **Error Handling**: Updated error response handling to use structured `HttpStatus` type
+  - `handle_response()` now creates `HttpStatus` errors with status code, URL, and message
+  - All pattern matches updated to handle new `HttpStatus` variant
+  - Retryability logic updated to check `status_code` field directly
+  - **Modified Files**: `src/client.rs`, `src/findings.rs`
 - **CMEK Update Logic Disabled**: Commented out CMEK update logic for existing applications due to API limitations
   - **Issue**: Veracode API does not return `custom_kms_alias` field in application profile responses
   - **Impact**: Unable to reliably determine if CMEK is already configured or needs updating

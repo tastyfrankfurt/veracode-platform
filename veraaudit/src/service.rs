@@ -18,6 +18,7 @@ pub struct ServiceConfig {
     pub no_file_timestamp: bool,
     pub no_dedup: bool,
     pub backend_window: String,
+    pub region: String,
 }
 
 /// Run the service in continuous mode
@@ -45,7 +46,9 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
 
     // Wrap config in Arc for sharing across tasks
     let config = Arc::new(config);
-    let client = Arc::new(client);
+
+    // Use mutable client to allow updates when credentials are refreshed
+    let mut current_client = client;
 
     // Parse interval to get duration in minutes, then convert to seconds
     let interval_minutes = crate::datetime::parse_time_offset(&config.interval)?;
@@ -57,9 +60,13 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
     interval_timer.tick().await; // First tick happens immediately
 
     loop {
-        // Run audit log retrieval
-        match run_audit_cycle(&client, &config).await {
-            Ok(_) => {
+        // Run audit log retrieval - update client if credentials were refreshed
+        match run_audit_cycle(&current_client, &config).await {
+            Ok(refreshed_client_opt) => {
+                if let Some(refreshed_client) = refreshed_client_opt {
+                    info!("Client updated with refreshed credentials for future cycles");
+                    current_client = refreshed_client;
+                }
                 info!("Audit cycle completed successfully");
             }
             Err(e) => {
@@ -96,7 +103,12 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
 /// Service mode retrieves audit logs based on configured `start_offset` and interval,
 /// but will use the timestamp from the last log file if it exists, is within 72 hours,
 /// and the `no_file_timestamp` flag is not set
-async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Result<()> {
+///
+/// Returns `Option<VeracodeClient>` - Some(client) if credentials were refreshed, None otherwise
+async fn run_audit_cycle(
+    client: &VeracodeClient,
+    config: &ServiceConfig,
+) -> Result<Option<VeracodeClient>> {
     // Determine start datetime with the following priority:
     // 1. If --no-file-timestamp is not set, check for last log file timestamp (if within 72 hours)
     // 2. If not found, too old, or flag is set, use start_offset
@@ -130,9 +142,10 @@ async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Res
         start_datetime, end_datetime
     );
 
-    // Retrieve audit logs using chunked retrieval
-    let audit_data = audit::retrieve_audit_logs_chunked(
+    // Retrieve audit logs using chunked retrieval with credential refresh support
+    let (audit_data, refreshed_client) = audit::retrieve_audit_logs_chunked(
         client,
+        &config.region,
         &start_datetime,
         &end_datetime,
         &config.interval,
@@ -157,7 +170,8 @@ async fn run_audit_cycle(client: &VeracodeClient, config: &ServiceConfig) -> Res
         }
     }
 
-    Ok(())
+    // Return the refreshed client if credentials were updated
+    Ok(refreshed_client)
 }
 
 /// Run a single cleanup cycle

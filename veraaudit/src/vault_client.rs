@@ -294,6 +294,50 @@ pub async fn load_credentials_and_proxy_from_vault() -> Result<
     Ok((credentials, None, None, None))
 }
 
+/// Refresh credentials from Vault (used when auth errors occur)
+/// Returns (credentials, `proxy_url`, `proxy_username`, `proxy_password`)
+///
+/// # Errors
+///
+/// Returns error if vault configuration loading, authentication, or credential retrieval fails
+pub async fn refresh_credentials_from_vault() -> Result<
+    (
+        veracode_platform::VeracodeCredentials,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    CredentialError,
+> {
+    info!("Attempting to refresh credentials from Vault due to authentication error");
+
+    // Load fresh vault configuration
+    let vault_config = load_vault_config_from_env()?;
+
+    // Create new vault client (with fresh authentication)
+    let vault_client = VaultCredentialClient::new(&vault_config).await?;
+
+    // Load credentials
+    let credentials = vault_client
+        .get_veracode_credentials(&vault_config.secret_path)
+        .await?;
+
+    // Load optional proxy credentials
+    let (proxy_url, proxy_username, proxy_password) = vault_client
+        .get_proxy_credentials(&vault_config.secret_path)
+        .await?;
+
+    // Revoke the token after successful credential retrieval for security
+    if let Err(e) = vault_client.revoke_token().await {
+        warn!("Token revocation failed during credential refresh: {e}");
+    } else {
+        debug!("Vault token revoked successfully after credential refresh");
+    }
+
+    info!("Successfully refreshed credentials from vault");
+    Ok((credentials, proxy_url, proxy_username, proxy_password))
+}
+
 /// Validate vault configuration with comprehensive input sanitization
 fn validate_vault_config(
     addr: &str,

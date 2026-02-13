@@ -5,6 +5,18 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-02-13
+
+### Changed
+- **veracode-platform Dependency Update**: Updated to version 0.7.9 for enhanced error handling
+  - **Structured HTTP Error Types**: Benefits from new `HttpStatus` error variant with actual status codes
+  - **Improved Error Detection**: No more string matching - errors now expose status codes directly
+  - **Better Type Safety**: Updated error handling in `src/export.rs` to handle `HttpStatus` variant
+  - **Modified Files**: `src/export.rs`
+
+### Dependencies
+- Updated `veracode-platform` dependency to 0.7.9
+
 ## [0.7.0] - 2025-11-26
 
 ### Security

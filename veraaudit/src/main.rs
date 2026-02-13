@@ -133,6 +133,7 @@ async fn main() -> Result<()> {
 
             run_cli_mode(
                 &client,
+                args.region.as_str(), // Pass region for credential refresh
                 &validated_start,
                 &validated_end,
                 &output_dir,
@@ -184,6 +185,7 @@ async fn main() -> Result<()> {
                 no_file_timestamp,
                 no_dedup,
                 backend_window,
+                region: args.region.as_str().to_string(),
             };
 
             run_service_mode(client, config).await?;
@@ -201,6 +203,7 @@ async fn main() -> Result<()> {
 #[allow(clippy::too_many_arguments)]
 async fn run_cli_mode(
     client: &veracode_platform::VeracodeClient,
+    region_str: &str,
     start_datetime: &str,
     end_datetime: &str,
     output_dir: &str,
@@ -219,10 +222,12 @@ async fn run_cli_mode(
     }
 
     // Retrieve audit logs - use chunked retrieval if interval is provided
-    let audit_data = if let Some(interval_val) = interval {
+    // The tuple returns (data, Option<refreshed_client>) - we discard the client in CLI mode
+    let (audit_data, _refreshed_client) = if let Some(interval_val) = interval {
         // Use chunked retrieval
         audit::retrieve_audit_logs_chunked(
             client,
+            region_str,
             start_datetime,
             end_datetime,
             &interval_val,
@@ -243,6 +248,7 @@ async fn run_cli_mode(
         // Use single query retrieval
         audit::retrieve_audit_logs(
             client,
+            region_str,
             start_datetime,
             end_datetime,
             if audit_actions.is_empty() {

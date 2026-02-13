@@ -379,6 +379,20 @@ impl RetryConfig {
             | VeracodeError::InvalidConfig(_) => false,
             // InvalidResponse could be temporary (like malformed JSON due to network issues)
             VeracodeError::InvalidResponse(_) => true,
+            // HttpStatus errors - check status code for retryability
+            VeracodeError::HttpStatus { status_code, .. } => match status_code {
+                // 429 Too Many Requests (handled separately by RateLimited)
+                429 => true,
+                // 502 Bad Gateway, 503 Service Unavailable, 504 Gateway Timeout
+                502..=504 => true,
+                // Other server errors (5xx) - retry conservatively
+                500..=599 => true,
+                // Don't retry client errors (4xx) including 401/403 auth errors
+                // Auth errors should be handled by credential refresh logic
+                400..=499 => false,
+                // Other status codes - don't retry
+                _ => false,
+            },
             // NotFound is typically not retryable
             VeracodeError::NotFound(_) => false,
             // New retry-specific error is not retryable (avoid infinite loops)
@@ -404,6 +418,15 @@ pub enum VeracodeError {
     Authentication(String),
     /// API returned an error response
     InvalidResponse(String),
+    /// HTTP error with status code (for better error handling)
+    HttpStatus {
+        /// HTTP status code
+        status_code: u16,
+        /// URL that was requested
+        url: String,
+        /// Error message/response body
+        message: String,
+    },
     /// Configuration is invalid
     InvalidConfig(String),
     /// When an item is not found
@@ -521,6 +544,11 @@ impl fmt::Display for VeracodeError {
             VeracodeError::Serialization(e) => write!(f, "Serialization error: {e}"),
             VeracodeError::Authentication(e) => write!(f, "Authentication error: {e}"),
             VeracodeError::InvalidResponse(e) => write!(f, "Invalid response: {e}"),
+            VeracodeError::HttpStatus {
+                status_code,
+                url,
+                message,
+            } => write!(f, "HTTP {status_code} error at {url}: {message}"),
             VeracodeError::InvalidConfig(e) => write!(f, "Invalid configuration: {e}"),
             VeracodeError::NotFound(e) => write!(f, "Item not found: {e}"),
             VeracodeError::RetryExhausted(e) => write!(f, "Retry attempts exhausted: {e}"),

@@ -423,6 +423,7 @@ impl FindingsApi {
                     | VeracodeError::Serialization(_)
                     | VeracodeError::Authentication(_)
                     | VeracodeError::InvalidResponse(_)
+                    | VeracodeError::HttpStatus { .. }
                     | VeracodeError::InvalidConfig(_)
                     | VeracodeError::RetryExhausted(_)
                     | VeracodeError::RateLimited { .. }
