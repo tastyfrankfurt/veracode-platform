@@ -385,14 +385,11 @@ async fn demonstrate_list_builds(
 
             // Show sandbox-specific builds
             for (i, build) in build_list.builds.iter().take(3).enumerate() {
-                if build.sandbox_id.is_some() {
+                if let Some(sandbox_id) = &build.sandbox_id {
                     let i: usize = i;
                     println!("      Sandbox Build {}:", i.saturating_add(1));
                     println!("        - Build ID: {}", build.build_id);
-                    println!(
-                        "        - Sandbox ID: {}",
-                        build.sandbox_id.as_ref().expect("should have sandbox_id")
-                    );
+                    println!("        - Sandbox ID: {}", sandbox_id);
                     if let Some(version) = &build.version {
                         println!("        - Version: {version}");
                     }
