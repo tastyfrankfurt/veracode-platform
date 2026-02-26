@@ -5,6 +5,22 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-02-19
+
+### Changed
+- **reqwest Upgraded from 0.12 to 0.13**: Updated HTTP client for GitLab API integration
+  - TLS feature renamed from `rustls-tls-native-roots` to `rustls` (reqwest 0.13 API change)
+  - Improved compatibility with the veracode-platform library which also uses reqwest 0.13
+
+### Dependencies
+- Updated `veracode-platform` dependency from 0.7.5 to 0.7.9
+  - **reqwest 0.13 Upgrade**: Upstream library now uses reqwest 0.13 with updated TLS features (`rustls`, added `form` feature)
+  - **rand 0.10 Upgrade**: API change from `rand::Rng` to `rand::RngExt` in retry jitter logic
+  - **quick-xml 0.39 Upgrade**: Latest XML parsing library for legacy Veracode API responses
+  - **Streaming Audit Log API**: New `get_audit_logs_stream()` method on `ReportingApi` for memory-efficient progressive audit log retrieval - streams page-by-page batches based on a configurable flush threshold
+  - **New Dependencies**: `async-stream` and `futures-core` added to support the streaming API
+- Updated `jsonschema` dev-dependency from 0.37.1 to 0.42
+
 ## [0.7.0] - 2025-11-26
 
 ### Security

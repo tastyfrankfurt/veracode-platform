@@ -5,6 +5,30 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.13] - 2026-02-19
+
+### Added
+- **Kani Formal Verification**: Added `#[cfg(kani)]` module with two formal verification harnesses
+  - `verify_bulk_counter_no_wraparound`: Proves `saturating_add` never decreases a counter and never exceeds `usize::MAX` for all possible input values
+  - `verify_bulk_counter_exact_increment`: Proves `saturating_add` produces an exact `count + 1` result for all non-saturating inputs
+  - Covers the `processed`, `skipped`, and `failed` counters used throughout `bulk_enable_encryption` and `process_from_file`
+  - Zero impact on normal builds or tests — only compiled when running `cargo kani`
+  - **Modified Files**: `src/main.rs`
+
+### Changed
+- **Dependency Update**: Updated veracode-platform dependency from 0.7.5 to 0.7.9
+  - **Security Hardening**: Benefits from all security improvements shipped between veracode-platform 0.7.5 and 0.7.9
+  - **Backward Compatible**: No functional changes required in veracmek
+  - **Modified Files**: `Cargo.toml`
+- **Lint Configuration**: Added `[lints.rust]` section to suppress `unexpected_cfgs` warning for the new `cfg(kani)` gate
+  - Prevents spurious compiler warnings on every build for code gated behind `#[cfg(kani)]`
+  - **Modified Files**: `Cargo.toml`
+
+### Security
+- **Formal Verification Coverage**: Counter arithmetic in bulk operations is now formally verified with Kani
+  - Provides mathematical proof that integer overflow is impossible in all bulk operation counters
+  - Complements existing proptest and miri testing for defence-in-depth verification
+
 ## [0.5.12] - 2025-11-21
 
 ### Changed

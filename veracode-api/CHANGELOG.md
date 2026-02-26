@@ -5,9 +5,46 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.7.8] - 2026-02-13
+## [0.7.9] - 2026-02-26
+
+### Added
+- **Structured HTTP Error Type**: New `HttpStatus` variant for `VeracodeError` enum with actual status codes
+  - **Type-Safe Error Detection**: Exposes HTTP status code as `u16` field instead of embedding in string
+  - **Better Error Handling**: Enables checking actual status codes (401, 403, etc.) without string parsing
+  - **Fields**:
+    - `status_code: u16` - The HTTP status code
+    - `url: String` - The URL that was requested
+    - `message: String` - Error details and response body
+  - **Usage**: `handle_response()` now returns `HttpStatus` for all non-success HTTP responses
+  - **Benefit**: Downstream code can match on actual status codes for precise error handling
+  - **Modified Files**: `src/lib.rs`, `src/client.rs`, `src/findings.rs`
+
+- **Streaming Audit Log Retrieval**: New `get_audit_logs_stream()` method on `ReportingApi` for memory-efficient progressive retrieval
+  - **Page-by-Page Streaming**: Uses `async-stream` and `futures-core` to yield batches as pages are fetched rather than collecting everything in memory
+  - **Configurable Flush Threshold**: Caller specifies a byte threshold; when the in-memory buffer exceeds it a sorted batch is yielded and the buffer is cleared
+  - **Automatic Timestamp Sorting**: Each flushed batch is sorted oldest-first by `timestamp_utc` before yielding, enabling correct ordering for incremental file writes
+  - **Full Pipeline Integration**: Handles report generation, status polling, page-count discovery, and pagination automatically inside the stream
+  - **Signature**: `fn get_audit_logs_stream(&self, request: AuditReportRequest, flush_threshold_bytes: usize) -> impl Stream<Item = Result<Vec<serde_json::Value>, VeracodeError>>`
+  - **Use Case**: Write audit log archives progressively without holding the entire dataset in RAM
+  - **Modified Files**: `src/reporting.rs`
+
+- **Audit Log Timestamp Sort Helper**: New internal `sort_log_values_by_timestamp()` function
+  - Sorts a `&mut [serde_json::Value]` slice by `timestamp_utc` string field, oldest first
+  - Handles missing timestamps gracefully (entries without a timestamp sort last)
+  - Used by `get_audit_logs_stream()` before each batch yield
+  - **Modified Files**: `src/reporting.rs`
+
+- **New Dependencies**:
+  - `async-stream = "0.3"` — macro-based async generator support for `get_audit_logs_stream()`
+  - `futures-core = "0.3"` — `Stream` trait used in the streaming return type
 
 ### Changed
+- **Error Handling**: Updated error response handling to use structured `HttpStatus` type
+  - `handle_response()` now creates `HttpStatus` errors with status code, URL, and message
+  - All pattern matches updated to handle new `HttpStatus` variant
+  - Retryability logic updated to check `status_code` field directly
+  - **Modified Files**: `src/client.rs`, `src/findings.rs`
+
 - **CMEK Update Logic Disabled**: Commented out CMEK update logic for existing applications due to API limitations
   - **Issue**: Veracode API does not return `custom_kms_alias` field in application profile responses
   - **Impact**: Unable to reliably determine if CMEK is already configured or needs updating
@@ -21,6 +58,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Restoration Path**: Search for "CMEK update logic commented out" in `src/app.rs` and uncomment four marked sections
   - **Modified Files**: `src/app.rs` (lines ~1086, ~1113-1145, ~1166-1170)
   - **Related**: Affects `verascan` CLI tool's `--cmek` parameter behavior with existing profiles
+
+- **Dependency Upgrades**:
+  - `reqwest` `0.12` → `0.13`: Updated TLS feature flag from `rustls-tls-native-roots` to `rustls`; added `form` feature for form-encoded request bodies
+  - `rand` `0.9` → `0.10`: Updated jitter calculation to use renamed trait `rand::RngExt` (previously `rand::Rng`)
+  - `quick-xml` `0.38` → `0.39`: Minor XML parser version update
+
+- **Formal Verification - Kani Unwind Fix**: Corrected `#[kani::unwind]` bound in `verify_file_count_no_overflow` proof harness
+  - Changed from `#[kani::unwind(10)]` to `#[kani::unwind(11)]` to correctly account for 10 loop iterations plus the loop exit check
+  - **Modified Files**: `src/workflow.rs`
 
 ## [0.7.7] - 2025-11-26
 

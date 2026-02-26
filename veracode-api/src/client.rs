@@ -301,6 +301,7 @@ impl VeracodeClient {
                     | VeracodeError::Serialization(_)
                     | VeracodeError::Authentication(_)
                     | VeracodeError::InvalidResponse(_)
+                    | VeracodeError::HttpStatus { .. }
                     | VeracodeError::InvalidConfig(_)
                     | VeracodeError::NotFound(_)
                     | VeracodeError::RateLimited { .. }
@@ -682,11 +683,16 @@ impl VeracodeClient {
     ) -> Result<reqwest::Response, VeracodeError> {
         if !response.status().is_success() {
             let status = response.status();
-            let url = response.url().clone();
+            let status_code = status.as_u16();
+            let url = response.url().to_string();
             let error_text = response.text().await?;
-            return Err(VeracodeError::InvalidResponse(format!(
-                "Failed to {context}\n  URL: {url}\n  HTTP {status}: {error_text}"
-            )));
+
+            // Use structured HttpStatus error for better error handling
+            return Err(VeracodeError::HttpStatus {
+                status_code,
+                url,
+                message: format!("Failed to {context}: {error_text}"),
+            });
         }
         Ok(response)
     }

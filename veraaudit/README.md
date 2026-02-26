@@ -1,5 +1,9 @@
 # veraaudit
 
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Crate Version](https://img.shields.io/badge/version-0.5.14-blue.svg)](Cargo.toml)
+
 CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API.
 
 ## Features
@@ -13,9 +17,11 @@ CLI tool for retrieving and archiving Veracode audit logs using the Reporting RE
 - 🌍 **Multi-Regional Support** - Commercial, European, and Federal regions
 - 🔍 **Flexible Filtering** - Filter by audit actions and action types
 - 🔄 **Robust Error Handling** - Automatic retries with exponential backoff
+- 🔑 **Automatic Credential Refresh** - Smart recovery from credential expiration via Vault
 - ⚡ **Optimized Deduplication** - Fast hash-based deduplication scanning only the most recent file
 - 🔁 **Chunked Retrieval** - Automatic chunking to handle backend refresh cycles (respects 2-hour data refresh window)
 - 🎯 **Smart File Management** - Skips writing empty files after deduplication
+- 🌊 **Streaming Progressive Writes** - Service mode writes batches to disk as they stream from the API, bounding peak memory to ~50MB regardless of total log volume
 
 ## Installation
 
@@ -115,6 +121,9 @@ veraaudit service \
 - Respects backend refresh cycles by stopping if data not yet available
 - Automatic deduplication prevents duplicate log entries
 - Skips writing files when no new logs are found
+- **Streaming writes**: logs are streamed page-by-page from the API and flushed to disk in ~50MB batches — a single cycle may produce more than one output file for high-volume tenants, but peak memory is always bounded by the flush threshold
+- Each batch is sorted by `timestamp_utc` before writing, so each file contains chronologically ordered entries
+- Authentication failures mid-stream trigger per-chunk Vault credential refresh and automatic retry
 
 #### Service Mode Options
 
@@ -235,6 +244,66 @@ export VERACODE_API_ID="your-api-id"
 export VERACODE_API_KEY="your-api-key"
 ```
 
+### Automatic Credential Refresh
+
+**NEW in v0.5.14**: veraaudit now automatically refreshes credentials from Vault when authentication failures are detected.
+
+#### How It Works
+
+When an audit log retrieval encounters a **401 Unauthorized** or **403 Forbidden** error:
+
+1. **Smart Detection**: Checks the actual HTTP status code (not string matching)
+2. **Automatic Refresh**: Re-authenticates with Vault using your JWT token
+3. **Fresh Credentials**: Retrieves new API credentials from Vault
+4. **Single Retry**: Attempts the operation once with refreshed credentials
+5. **Client Update**: In service mode, the refreshed client is used for all future cycles
+
+#### Benefits
+
+- ✅ **Long-Running Services**: Service mode can now run indefinitely without manual credential rotation
+- ✅ **Zero Downtime**: Automatic recovery from credential expiration
+- ✅ **Secure**: Vault tokens are revoked after each credential refresh
+- ✅ **No Infinite Loops**: Single retry attempt prevents excessive Vault calls
+- ✅ **Graceful Fallback**: If Vault is unavailable, returns the original error
+
+#### Requirements
+
+- Vault must be configured (see Vault configuration above)
+- Vault JWT token must be valid and have permission to retrieve credentials
+- Service account credentials in Vault must be valid
+
+#### Example Scenario
+
+```bash
+# Start service with Vault credentials
+veraaudit service --interval 30m --cleanup-count 100
+
+# Service runs for days...
+# API credentials expire in Vault
+# Next API call returns 401 Unauthorized
+# ✅ Automatic refresh from Vault
+# ✅ Service continues without interruption
+```
+
+#### Logging
+
+Watch for these log messages to track credential refresh:
+
+```
+WARN  Authentication error detected (401/403), attempting credential refresh from Vault
+INFO  Successfully refreshed credentials from Vault, recreating client
+INFO  Retrying operation with refreshed credentials
+INFO  Operation succeeded after credential refresh
+INFO  Client updated with refreshed credentials for future cycles
+```
+
+#### Security Notes
+
+- Credentials are handled with `Arc<SecretString>` throughout
+- No credentials are logged or exposed in error messages
+- Vault tokens are revoked immediately after credential retrieval
+- Only refreshes on authentication failures (not on normal operations)
+
 ## Output Format
 
 Audit logs are saved as timestamped JSON files:
@@ -248,7 +317,9 @@ audit_logs/
 
 File naming format: `audit_log_YYYYMMDD_HHMMSS_UTC.json`
 
-**Note**: Files are only created when new logs are found. After deduplication, if no new logs remain, no file is written (avoids empty files).
+**Notes**:
+- Files are only created when new logs are found. After deduplication, if no new logs remain, no file is written (avoids empty files).
+- In **service mode**, a single cycle may produce more than one file when total log volume exceeds the 50MB streaming flush threshold. Each file contains a chronologically sorted batch of entries.
 
 ## File Cleanup
 
@@ -501,6 +572,8 @@ If the service is running but not creating files:
 
 - **Credentials**: All credentials are stored using `secrecy::SecretString` for secure memory handling
 - **Vault Tokens**: Automatically revoked after successful credential retrieval
+- **Credential Refresh**: Automatic refresh on auth failures with single retry to prevent abuse
+- **Error Detection**: Uses actual HTTP status codes (not string matching) for security-critical decisions
 - **Proxy Authentication**: Properly redacted in debug logs
 - **File Permissions**: Consider setting restrictive permissions on output directory
 - **Network Security**: HTTPS/TLS enabled by default with certificate validation
@@ -532,6 +605,26 @@ cargo fmt --package veraaudit
 cargo clippy --package veraaudit
 ```
 
+### Formal Verification (Kani)
+
+Kani harnesses are compiled under `#[cfg(kani)]` and never included in normal builds. To run the proofs (requires [Kani](https://model-checking.github.io/kani/)):
+
+```bash
+cargo kani --package veraaudit
+```
+
+Harnesses cover:
+- `datetime`: hours-to-minutes and days-to-minutes overflow safety (`checked_mul` chains)
+- `validation`: zero-rejection and identity guarantees for `validate_cleanup_count` / `validate_cleanup_hours`
+
+### Memory Safety (Miri)
+
+The test utilities are Miri-compatible. To run the test suite under Miri:
+
+```bash
+cargo miri test --package veraaudit
+```
+
 ## Contributing
 
 This tool is part of the veracode-workspace monorepo. Follow the existing patterns for:
@@ -552,12 +645,13 @@ MIT OR Apache-2.0
 - **Memory Efficient**: Loads hashes from single file instead of multiple files
 - **Automatic Overlap**: Creates 1-second overlap between queries to catch sub-second logs
 
-### Chunked Retrieval
+### Chunked Retrieval & Streaming
 - **Backend-Aware**: Respects Veracode's 2-hour backend refresh cycle
-- **Early Stopping**: Stops querying if chunk returns 0 logs (data not ready)
+- **Early Stopping**: Stops querying if chunk returns 0 logs and the chunk is within the backend refresh window
 - **Configurable**: Chunk size (5-60 minutes) balances API calls vs reliability
-- **Single Output**: Aggregates all chunks into one deduplicated file
+- **Streaming Output**: Service mode writes each ~50MB batch to disk immediately; peak memory is bounded by the flush threshold rather than total dataset size
+- **Sorted Batches**: Each flushed batch is sorted by `timestamp_utc` so output files are chronologically ordered
 
 ## Version
 
-v0.5.13
+v0.5.14 — see [CHANGELOG.md](CHANGELOG.md) for full release notes.

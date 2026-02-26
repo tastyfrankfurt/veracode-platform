@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.7.0-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](Cargo.toml)
 
 A comprehensive Rust CLI application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting.
 

@@ -1,5 +1,9 @@
 # Veracmek - Customer Managed Encryption Key (CMEK) CLI Tool
 
+[![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
+[![Crate Version](https://img.shields.io/badge/version-0.5.13-blue.svg)](Cargo.toml)
+
 A command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles. This tool enables users to encrypt application data using their own AWS KMS keys, providing enhanced security and compliance for Veracode applications.
 
 ## Overview
@@ -302,6 +306,7 @@ veracmek enable --app "MyApp" --kms-alias "alias/my-key"
 
 ## Security Considerations
 
+- **Formal Verification**: Counter arithmetic in bulk operations is formally verified using [Kani](https://model-checking.github.io/kani/), providing mathematical proof that integer overflow is impossible in all bulk operation counters. Run `cargo kani` to execute the verification harnesses.
 - **Credential Storage**: Use Vault integration for production environments
 - **Proxy Security**: Proxy credentials can be stored securely in Vault or environment variables
   - Vault proxy configuration takes precedence over environment variables
@@ -339,7 +344,7 @@ veracmek status
 - **clap**: Command-line argument parsing
 - **tokio**: Async runtime
 - **serde/serde_json**: JSON serialization
-- **veracode-platform** (v0.7.5): Veracode API client library with comprehensive security hardening
+- **veracode-platform** (v0.7.9): Veracode API client library with comprehensive security hardening
 - **vaultrs**: HashiCorp Vault client
 - **backon**: Retry logic with exponential backoff
 - **secrecy**: Secure handling of sensitive data
