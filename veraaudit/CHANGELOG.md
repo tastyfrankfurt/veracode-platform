@@ -5,7 +5,7 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [0.5.14] - 2026-02-13
+## [0.5.14] - 2026-02-19
 
 ### Added
 - **Automatic Credential Refresh from Vault**: Production-grade credential refresh on authentication failures
@@ -21,6 +21,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Client Propagation**: Refreshed client is returned and reused in service mode for future cycles
   - **Modified Files**: `src/audit.rs`, `src/error.rs`, `src/vault_client.rs`, `src/main.rs`, `src/service.rs`
 
+- **Streaming Progressive Writes in Service Mode**: Memory-efficient batch processing replaces full in-memory aggregation
+  - **Stream-Based Retrieval**: Service mode now uses `get_audit_logs_stream()` to receive log batches as they are paged from the API
+  - **Progressive Disk Writes**: Each batch is written to a timestamped file immediately upon arrival rather than after all chunks are collected
+  - **50MB Flush Threshold**: Batches are flushed to disk when accumulated entries reach ~50MB, controlling peak memory usage
+  - **Per-Batch File Output**: Each flushed batch that survives deduplication produces its own timestamped output file (one cycle may produce multiple files for high-volume tenants)
+  - **Timestamp-Sorted Batches**: Each batch is sorted by `timestamp_utc` before writing, ensuring files contain chronologically ordered entries
+  - **Inline Auth Refresh per Chunk**: Authentication failures during streaming now trigger per-chunk credential refresh and retry within the same cycle
+  - **Cycle Summary Logging**: End-of-cycle log line reports chunks processed and files written
+  - **Modified Files**: `src/service.rs`, `src/main.rs`
+
+- **Kani Formal Verification Harnesses**: Mathematical proofs for critical arithmetic and validation invariants
+  - **`src/datetime.rs` proofs** (`kani_proofs` module):
+    - `verify_hours_to_minutes_overflow_safe()` — proves `checked_mul(60)` never panics for any `i64` hour value, and successful results are always positive and divisible by 60
+    - `verify_days_to_minutes_overflow_safe()` — proves `checked_mul(24).and_then(|h| h.checked_mul(60))` never panics for any `i64` day value, and successful results are always divisible by 1440
+  - **`src/validation.rs` proofs** (`kani_proofs` module):
+    - `verify_cleanup_count_zero_always_rejected()` — proves `validate_cleanup_count(0)` always returns `Err` on all execution paths
+    - `verify_cleanup_count_nonzero_is_identity()` — proves `validate_cleanup_count(n)` returns `Ok(n)` unchanged for all positive inputs (no capping, saturation, or off-by-one)
+    - `verify_cleanup_hours_zero_always_rejected()` — proves `validate_cleanup_hours(0)` always returns `Err` on all execution paths
+    - `verify_cleanup_hours_nonzero_is_identity()` — proves `validate_cleanup_hours(n)` returns `Ok(n)` unchanged for all positive inputs
+  - **Modified Files**: `src/datetime.rs`, `src/validation.rs`
+
+- **Miri Compatibility for Test Utilities**: Test infrastructure now runs cleanly under Miri memory-safety analysis
+  - `generate_unique_name()` in `test_utils.rs` uses conditional compilation (`#[cfg(miri)]` / `#[cfg(not(miri))]`) to skip `clock_gettime` and `getpid` syscalls that Miri blocks under default isolation
+  - Miri path uses only the atomic counter for uniqueness — sufficient for intra-process test isolation
+  - Enables `cargo miri test` for the full veraaudit test suite without isolation violations
+  - **Modified Files**: `src/test_utils.rs`
+
 ### Changed
 - **Error Handling**: Enhanced authentication error detection with structured error types
   - Added `is_auth_error()` function to check for 401/403 errors by actual status code
@@ -28,11 +55,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Exhaustive pattern matching for all error variants (no wildcards)
   - **Modified Files**: `src/error.rs`
 
+- **Service Mode Architecture**: Refactored from batch aggregation to streaming retrieval
+  - **Before**: `audit::retrieve_audit_logs_chunked()` collected all pages for all chunks into a single in-memory `Value::Array`, then wrote one output file per cycle
+  - **After**: `get_audit_logs_stream()` pages through results incrementally; each ~50MB batch is written to disk immediately, so peak memory is bounded by the flush threshold regardless of total log volume
+  - The chunk iteration loop is now driven directly inside `run_audit_cycle()` rather than delegated to the `audit` module
+  - Deduplication continues to apply per-batch (most-recent-file hash comparison)
+  - **Modified Files**: `src/service.rs`
+
 ### Dependencies
-- Updated `veracode-platform` dependency to 0.7.9 for structured HTTP error types
+- Updated `veracode-platform` dependency to 0.7.9 for structured HTTP error types and streaming API (`get_audit_logs_stream`)
+- Added `futures = "0.3"` for async stream utilities (`StreamExt` trait used in service mode)
+- Upgraded `criterion` from 0.7 to 0.8 for benchmark harness compatibility
+- Added `[lints.rust] unexpected_cfgs` configuration to suppress Kani `cfg(kani)` warnings during normal builds
 
 ### Technical Details
-- **How It Works**:
+- **Credential Refresh Flow**:
   1. Audit log retrieval encounters 401/403 error
   2. `is_auth_error()` detects authentication failure by checking status code
   3. `refresh_credentials_from_vault()` re-authenticates with Vault using JWT/OIDC
@@ -40,6 +77,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   5. Fresh `VeracodeClient` created with new credentials
   6. Operation retried once with refreshed client
   7. In service mode: Updated client used for all future cycles
+
+- **Streaming Cycle Flow** (service mode):
+  1. Compute `start_datetime` (last-file timestamp or start-offset) and `end_datetime` (now minus backend window)
+  2. Iterate time chunks of size `interval`
+  3. For each chunk, call `reporting_api.get_audit_logs_stream(request, flush_threshold_bytes)`
+  4. Consume stream: write each yielded batch to a new timestamped file
+  5. On auth error mid-stream: drop stream, refresh credentials, retry chunk with fresh client
+  6. Empty chunks within the backend refresh window trigger early stop
+  7. Log cycle summary: total chunks and files written
+
 - **Security Notes**:
   - No credential rotation during normal operation
   - Credentials only refreshed on-demand when authentication fails

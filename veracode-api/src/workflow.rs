@@ -1695,7 +1695,7 @@ mod kani_proofs {
 
     /// Verify that file count accumulation cannot overflow
     #[kani::proof]
-    #[kani::unwind(10)]
+    #[kani::unwind(11)] // 10 loop iterations + 1 for the exit check
     fn verify_file_count_no_overflow() {
         let initial_count: usize = kani::any();
         kani::assume(initial_count < 1000);

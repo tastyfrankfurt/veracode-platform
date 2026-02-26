@@ -57,7 +57,8 @@ pub fn is_auth_error(error: &AuditError) -> bool {
         AuditError::VeracodeApi(veracode_platform::VeracodeError::Authentication(_)) => true,
         // Check for VeracodeApi errors - HttpStatus with 401/403
         AuditError::VeracodeApi(veracode_platform::VeracodeError::HttpStatus {
-            status_code, ..
+            status_code,
+            ..
         }) => matches!(status_code, 401 | 403),
         // Check for Reporting errors that wrap VeracodeApi Authentication errors
         AuditError::Reporting(veracode_platform::ReportingError::VeracodeApi(

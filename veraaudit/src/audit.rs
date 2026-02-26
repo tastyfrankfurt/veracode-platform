@@ -1,5 +1,5 @@
 //! Audit log retrieval logic
-use crate::error::{is_auth_error, Result};
+use crate::error::{Result, is_auth_error};
 use log::{debug, info, warn};
 use std::sync::Arc;
 use veracode_platform::{AuditReportRequest, VeracodeClient};
@@ -42,7 +42,9 @@ pub async fn retrieve_audit_logs(
     {
         Ok(result) => Ok((result, None)),
         Err(e) if is_auth_error(&e) => {
-            warn!("Authentication error detected (401/403), attempting credential refresh from Vault");
+            warn!(
+                "Authentication error detected (401/403), attempting credential refresh from Vault"
+            );
 
             // Try to refresh credentials from Vault
             match crate::vault_client::refresh_credentials_from_vault().await {
@@ -59,7 +61,8 @@ pub async fn retrieve_audit_logs(
                     )
                     .map_err(|_| {
                         crate::error::AuditError::InvalidConfig(
-                            "Failed to create Veracode config with refreshed credentials".to_string()
+                            "Failed to create Veracode config with refreshed credentials"
+                                .to_string(),
                         )
                     })?;
 
@@ -189,7 +192,9 @@ pub async fn retrieve_audit_logs_chunked(
     {
         Ok(result) => Ok((result, None)),
         Err(e) if is_auth_error(&e) => {
-            warn!("Authentication error detected (401/403), attempting credential refresh from Vault");
+            warn!(
+                "Authentication error detected (401/403), attempting credential refresh from Vault"
+            );
 
             // Try to refresh credentials from Vault
             match crate::vault_client::refresh_credentials_from_vault().await {
@@ -206,7 +211,8 @@ pub async fn retrieve_audit_logs_chunked(
                     )
                     .map_err(|_| {
                         crate::error::AuditError::InvalidConfig(
-                            "Failed to create Veracode config with refreshed credentials".to_string()
+                            "Failed to create Veracode config with refreshed credentials"
+                                .to_string(),
                         )
                     })?;
 
@@ -372,4 +378,3 @@ async fn retrieve_audit_logs_chunked_impl(
     // Return aggregated logs as JSON array
     Ok(serde_json::Value::Array(all_logs))
 }
-

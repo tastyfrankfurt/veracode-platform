@@ -300,7 +300,7 @@ impl RetryConfig {
 
         // Apply jitter if enabled (±25% randomization)
         if self.jitter_enabled {
-            use rand::Rng;
+            use rand::RngExt;
             #[allow(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,

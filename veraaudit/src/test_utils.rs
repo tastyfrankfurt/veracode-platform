@@ -84,16 +84,26 @@ impl TempDir {
     /// Generate a unique directory name
     ///
     /// Uses process ID, nanosecond timestamp, and atomic counter
-    /// to minimize collision probability
+    /// to minimize collision probability.
+    /// Under Miri, `clock_gettime` is unavailable so only the counter is used.
     fn generate_unique_name(prefix: &str) -> String {
         let counter = TEMP_DIR_COUNTER.fetch_add(1, Ordering::SeqCst);
-        let nanos = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.as_nanos())
-            .unwrap_or(0);
-        let pid = std::process::id();
 
-        format!("{}_{}_{:016x}_{}", prefix, pid, nanos, counter)
+        #[cfg(not(miri))]
+        {
+            let nanos = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let pid = std::process::id();
+            format!("{}_{}_{:016x}_{}", prefix, pid, nanos, counter)
+        }
+
+        #[cfg(miri)]
+        {
+            // clock_gettime is blocked under Miri isolation; counter alone is sufficient
+            format!("{}_{}", prefix, counter)
+        }
     }
 
     /// Create directory with secure permissions

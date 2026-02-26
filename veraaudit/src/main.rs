@@ -186,6 +186,7 @@ async fn main() -> Result<()> {
                 no_dedup,
                 backend_window,
                 region: args.region.as_str().to_string(),
+                flush_threshold_bytes: 52_428_800, // 50MB default
             };
 
             run_service_mode(client, config).await?;

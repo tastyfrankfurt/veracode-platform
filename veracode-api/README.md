@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![Crates.io](https://img.shields.io/crates/v/veracode-platform.svg)](https://crates.io/crates/veracode-platform)
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](#license)
+[![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 [![Documentation](https://docs.rs/veracode-platform/badge.svg)](https://docs.rs/veracode-platform)
 
 A comprehensive Rust client library for the Veracode security platform, providing type-safe and ergonomic access to Applications, Identity, Pipeline Scan, Sandbox, Policy, and Build APIs.
@@ -42,7 +42,7 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-veracode-platform = "0.7.7"
+veracode-platform = "0.7.9"
 tokio = { version = "1.0", features = ["full"] }
 ```
 
@@ -386,6 +386,39 @@ for entry in all_logs {
     );
 }
 ```
+
+#### Streaming Audit Logs (memory-efficient, new in 0.7.9)
+
+For large date ranges or compliance archival workflows, stream logs in batches without loading the full dataset into memory:
+
+```rust
+use futures_core::stream::Stream;
+use tokio_stream::StreamExt; // or futures::StreamExt
+
+let reporting = client.reporting_api();
+
+let request = AuditReportRequest::new("2025-01-01", Some("2025-12-31".to_string()));
+
+// Flush threshold: yield a batch every ~10 MB of buffered log data
+let flush_threshold_bytes: usize = 10 * 1024 * 1024;
+
+let mut stream = reporting.get_audit_logs_stream(request, flush_threshold_bytes);
+
+while let Some(batch_result) = stream.next().await {
+    let batch = batch_result?;
+    // Each batch is already sorted oldest-first by timestamp_utc
+    println!("Writing batch of {} log entries", batch.len());
+    // write batch to file, database, etc.
+    append_to_archive(&batch).await?;
+}
+```
+
+**Key properties of the streaming API:**
+- **Report generation and polling handled automatically** — the stream drives the full pipeline internally
+- **Sorted batches** — each yielded `Vec<serde_json::Value>` is sorted oldest-first by `timestamp_utc`
+- **Configurable memory pressure** — `flush_threshold_bytes` controls how much data accumulates before a batch is yielded; tune to match your write buffer
+- **Constant memory** — only one page of API results plus the current batch buffer are held in memory at any time
+- **Async stream** — implement progressive file writes or database inserts without blocking the executor
 
 ### Build API (XML)
 Build management and SAST operations:
@@ -1229,50 +1262,27 @@ cargo doc --open
 cargo doc --all-features --open
 ```
 
-## 🆕 What's New in v0.7.7
+## 🆕 What's New in v0.7.9
 
-### Security Hardening: Defensive Programming Enhancements
-- **15 New Clippy Lints**: Comprehensive security hardening with strict code quality enforcement
-  - **Integer Safety**: Arithmetic overflow, truncation, sign loss, and precision loss detection
-  - **Memory Safety**: String slice boundary checks, mem::forget blocking, enhanced assertions
-  - **Code Quality**: Required documentation for errors, panics, and unsafe code
-  - **Core Safety**: No indexing, no unwrap/panic, exhaustive enum matching
+### Streaming Audit Log Retrieval
+- **`get_audit_logs_stream()`**: Memory-efficient async stream for audit log archival
+  - Yields sorted batches progressively as pages are fetched — no full dataset in RAM
+  - Configurable `flush_threshold_bytes` controls batch size vs. memory trade-off
+  - Handles report generation, polling, and pagination automatically inside the stream
+  - Each batch is sorted oldest-first by `timestamp_utc` before yielding
 
-### Type Safety: File Upload Status Tracking
-- **FileStatus Enum**: Replaced `String` with strongly-typed `FileStatus` enum
-  - 11 comprehensive states from Veracode filelist.xsd schema
-  - Convenience methods: `is_uploaded()`, `is_error()`, `is_in_progress()`
-  - Compile-time correctness for upload state handling
-  - Human-readable descriptions via `description()` method
+### Structured HTTP Error Type
+- **`VeracodeError::HttpStatus`**: New typed error variant with `status_code: u16`, `url`, and `message`
+  - Enables precise matching on HTTP status codes without string parsing
+  - All HTTP error responses now go through this structured type
 
-### Enhanced Error Detection
-- **XML Error Parsing**: Now detects and surfaces `<error>` tags in upload responses
-  - Previous: Silent failures on API errors in XML
-  - Now: Explicit `ScanError::UploadFailed` with detailed error messages
-- **Upload Response Fix**: Corrected `upload_large_file()` to properly parse file list responses
-  - Now returns actual upload status, size, and metadata from API
+### Dependency Modernisation
+- **reqwest 0.13**: Updated TLS feature (`rustls`) and added `form` feature
+- **rand 0.10**: Jitter calculation updated to use renamed `rand::RngExt` trait
+- **quick-xml 0.39**: Minor XML parser update
 
-### Code Quality Improvements
-- **Simplified Error Messages**: Eliminated error message nesting for clarity
-  - Before: "Failed to upload file: Upload error: Failed to upload X: Upload failed: API error: ..."
-  - After: "Upload error: The file X cannot be analyzed."
-  - 75% reduction in error message redundancy
-- Removed excessive debug logging for production readiness
-- Fixed progress callback timing (0% at start, 100% at completion)
-- Added `UploadTimeout` error variant for future monitoring features
-
-## 🔒 Security in v0.7.7
-
-The v0.7.7 release focuses heavily on defensive programming and security hardening:
-
-| Category | Lints Added | Impact |
-|----------|-------------|---------|
-| Integer Safety | 5 lints | Prevents overflow, truncation, sign loss |
-| Memory Safety | 3 lints | UTF-8 boundary checks, blocks mem::forget |
-| Code Quality | 4 lints | Enhanced documentation requirements |
-| Core Safety | 4 lints | No indexing/unwrap/panic, exhaustive matching |
-
-All lints are enforced at the `Cargo.toml` level, ensuring consistent code quality across the entire codebase.
+### Formal Verification Fix
+- Corrected Kani `#[kani::unwind(11)]` bound in `verify_file_count_no_overflow` (was 10, now accounts for loop exit check)
 
 ## 🏷️ Versioning
 

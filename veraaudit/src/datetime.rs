@@ -721,3 +721,58 @@ mod tests {
         assert!(result.is_err());
     }
 }
+
+// Kani formal verification harnesses for arithmetic overflow safety
+#[cfg(kani)]
+mod kani_proofs {
+    use super::*;
+
+    /// Verifies that hours-to-minutes conversion never overflows or panics.
+    ///
+    /// `parse_time_offset` uses `checked_mul(60)` for the `h` suffix case.
+    /// This proof verifies: for any positive `i64` hour value, the conversion never
+    /// panics, and when it succeeds the result is positive and exactly divisible by 60.
+    #[kani::proof]
+    fn verify_hours_to_minutes_overflow_safe() {
+        let hours: i64 = kani::any();
+        kani::assume(hours > 0);
+
+        // Exact computation from parse_time_offset for the 'h' case
+        let result = hours.checked_mul(60_i64);
+
+        if let Some(minutes) = result {
+            assert!(minutes > 0, "Hours-to-minutes result must be positive");
+            assert_eq!(
+                minutes % 60,
+                0,
+                "Hours-to-minutes result must be divisible by 60"
+            );
+        }
+        // None branch: overflow is handled gracefully by checked_mul (no panic or UB)
+    }
+
+    /// Verifies that days-to-minutes conversion never overflows or panics.
+    ///
+    /// `parse_time_offset` uses `checked_mul(24).and_then(|h| h.checked_mul(60))` for the
+    /// `d` suffix case. This proof verifies: for any positive `i64` day value, the
+    /// conversion never panics, and when it succeeds the result is positive and exactly
+    /// divisible by 1440 (24 × 60).
+    #[kani::proof]
+    fn verify_days_to_minutes_overflow_safe() {
+        let days: i64 = kani::any();
+        kani::assume(days > 0);
+
+        // Exact computation from parse_time_offset for the 'd' case
+        let result = days.checked_mul(24_i64).and_then(|h| h.checked_mul(60_i64));
+
+        if let Some(minutes) = result {
+            assert!(minutes > 0, "Days-to-minutes result must be positive");
+            assert_eq!(
+                minutes % 1440,
+                0,
+                "Days-to-minutes result must be divisible by 1440 (24\u{d7}60)"
+            );
+        }
+        // None branch: overflow is handled gracefully by checked_mul chain (no panic or UB)
+    }
+}

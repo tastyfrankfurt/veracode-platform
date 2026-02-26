@@ -4,9 +4,11 @@
 //! audit logs and generating compliance reports.
 use crate::json_validator::{MAX_JSON_DEPTH, validate_json_depth};
 use crate::{VeracodeClient, VeracodeError, VeracodeRegion};
+use async_stream::try_stream;
 use chrono::{DateTime, NaiveDateTime, TimeZone, Utc};
 use chrono_tz::America::New_York;
 use chrono_tz::Europe::Berlin;
+use futures_core::stream::Stream;
 use serde::{Deserialize, Serialize};
 use urlencoding;
 
@@ -348,6 +350,20 @@ fn generate_log_hash(raw_json: &str) -> String {
 
     // Convert to hex string (128-bit = 32 hex chars)
     format!("{:032x}", hash)
+}
+
+/// Sort log JSON values by `timestamp_utc` field (oldest first)
+fn sort_log_values_by_timestamp(logs: &mut [serde_json::Value]) {
+    logs.sort_by(|a, b| {
+        let ts_a = a.get("timestamp_utc").and_then(|v| v.as_str());
+        let ts_b = b.get("timestamp_utc").and_then(|v| v.as_str());
+        match (ts_a, ts_b) {
+            (Some(ta), Some(tb)) => ta.cmp(tb),
+            (Some(_), None) => std::cmp::Ordering::Less,
+            (None, Some(_)) => std::cmp::Ordering::Greater,
+            (None, None) => std::cmp::Ordering::Equal,
+        }
+    });
 }
 
 /// The Reporting API interface
@@ -814,6 +830,147 @@ impl ReportingApi {
         );
 
         Ok(json_logs)
+    }
+
+    /// Stream audit logs page-by-page, yielding batches when memory threshold is reached
+    ///
+    /// This method handles report generation, polling, and pagination automatically,
+    /// yielding batches of processed log entries as they accumulate past the threshold.
+    /// Enables progressive file writes without holding the full dataset in memory.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The audit report request parameters
+    /// * `flush_threshold_bytes` - Approximate byte threshold triggering a batch yield
+    ///
+    /// # Returns
+    ///
+    /// A stream of log entry batches (each batch is a `Vec<serde_json::Value>`)
+    ///
+    /// # Errors
+    ///
+    /// Stream items may be `Err(VeracodeError)` if any page retrieval or report generation fails
+    pub fn get_audit_logs_stream(
+        &self,
+        request: AuditReportRequest,
+        flush_threshold_bytes: usize,
+    ) -> impl Stream<Item = Result<Vec<serde_json::Value>, VeracodeError>> {
+        let api = self.clone();
+
+        try_stream! {
+            // Step 1: Generate the report
+            log::info!(
+                "Generating audit report for date range: {} to {}",
+                request.start_date,
+                request.end_date.as_deref().unwrap_or("now")
+            );
+            let report_id = api.generate_audit_report(&request).await?;
+            log::info!("Report generated with ID: {}", report_id);
+
+            // Step 2: Poll for completion
+            log::info!("Polling for report completion...");
+            let completed_report = api.poll_report_status(&report_id, None, None).await?;
+            log::info!(
+                "Report completed at: {}",
+                completed_report.embedded.date_report_completed.as_deref().unwrap_or("unknown")
+            );
+
+            // Step 3: Get page metadata
+            let initial = api.get_audit_report(&report_id, None).await?;
+            let page_metadata = match initial.embedded.page_metadata {
+                Some(ref m) if m.total_elements > 0 => m.clone(),
+                Some(ref m) => {
+                    log::info!(
+                        "Report completed but contains no audit log entries ({} total pages)",
+                        m.total_pages
+                    );
+                    return;
+                }
+                None => {
+                    log::info!("Report completed but contains no audit log entries (no page metadata)");
+                    return;
+                }
+            };
+
+            log::info!(
+                "Streaming {} entries across {} pages (flush threshold: {} bytes)",
+                page_metadata.total_elements,
+                page_metadata.total_pages,
+                flush_threshold_bytes
+            );
+
+            let mut buffer: Vec<serde_json::Value> = Vec::new();
+            let mut buffer_bytes: usize = 0;
+            let mut batch_num: usize = 0;
+
+            // Step 4: Stream pages
+            for page_num in 0..page_metadata.total_pages {
+                let page = api.get_audit_report(&report_id, Some(page_num)).await?;
+                log::debug!(
+                    "Processing page {}/{}",
+                    page_num.saturating_add(1),
+                    page_metadata.total_pages
+                );
+
+                if let Some(logs) = page.embedded.audit_logs.as_array() {
+                    for log_value in logs {
+                        // Serialize to raw JSON string
+                        let raw_log = match serde_json::to_string(log_value) {
+                            Ok(s) => s,
+                            Err(e) => {
+                                log::error!("Failed to serialize log entry: {}", e);
+                                "{}".to_string()
+                            }
+                        };
+
+                        // Generate hash
+                        let log_hash = generate_log_hash(&raw_log);
+
+                        // Extract and convert timestamp
+                        let timestamp_utc = serde_json::from_value::<TimestampExtractor>(log_value.clone())
+                            .ok()
+                            .and_then(|e| e.timestamp)
+                            .and_then(|ts| convert_regional_timestamp_to_utc(&ts, &api.region));
+
+                        let entry = AuditLogEntry { raw_log, timestamp_utc, log_hash };
+                        let entry_value = serde_json::to_value(&entry)?;
+
+                        // Track approximate byte size
+                        let entry_size = entry_value.to_string().len();
+                        buffer_bytes = buffer_bytes.saturating_add(entry_size);
+                        buffer.push(entry_value);
+
+                        // Flush when threshold exceeded
+                        if buffer_bytes >= flush_threshold_bytes {
+                            batch_num = batch_num.saturating_add(1);
+                            sort_log_values_by_timestamp(&mut buffer);
+                            log::info!(
+                                "Flushing batch {} ({} entries, ~{} bytes)",
+                                batch_num,
+                                buffer.len(),
+                                buffer_bytes
+                            );
+                            let batch = std::mem::take(&mut buffer);
+                            buffer_bytes = 0;
+                            yield batch;
+                        }
+                    }
+                }
+            }
+
+            // Yield remaining buffer
+            if !buffer.is_empty() {
+                batch_num = batch_num.saturating_add(1);
+                sort_log_values_by_timestamp(&mut buffer);
+                log::info!(
+                    "Flushing final batch {} ({} entries, ~{} bytes)",
+                    batch_num,
+                    buffer.len(),
+                    buffer_bytes
+                );
+                yield buffer;
+            }
+        }
     }
 }
 

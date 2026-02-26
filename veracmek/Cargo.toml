@@ -1,6 +1,6 @@
 [package]
 name = "veracmek"
-version = "0.5.12"
+version = "0.5.13"
 edition = "2024"
 description = "CLI tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles"
 authors = ["Veracode API Team"]
@@ -9,6 +9,9 @@ license = "MIT OR Apache-2.0"
 [[bin]]
 name = "veracmek"
 path = "src/main.rs"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(kani)'] }
 
 [lints.clippy]
 # Defensive programming essentials
@@ -48,7 +51,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Local dependency
-veracode-platform = { path = "../veracode-api", version = "0.7.5" }
+veracode-platform = { path = "../veracode-api", version = "0.7.9" }
 
 # Additional dependencies for CLI functionality
 env_logger = "0.11"
