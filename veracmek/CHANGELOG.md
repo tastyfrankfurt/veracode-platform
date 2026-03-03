@@ -5,6 +5,18 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.14] - 2026-03-03
+
+### Fixed
+- **Vault Client System CA Trust**: Vault TLS connections now correctly trust certificates signed by CAs in the system CA bundle
+  - `create_vault_client()` now explicitly calls `.ca_certs()` on `VaultClientSettingsBuilder` with `/etc/ssl/certs/ca-certificates.crt` as a fallback when `VAULT_CACERT` is not set in the environment
+  - `VAULT_CACERT` environment variable is still respected and takes precedence over the system bundle
+  - **Modified Files**: `src/vault_client.rs`
+
+### Dependencies
+- Explicitly enabled `rustls` feature on `vaultrs` to make the TLS backend declaration visible in `Cargo.toml`
+  - **Modified Files**: `Cargo.toml`
+
 ## [0.5.13] - 2026-02-19
 
 ### Added

@@ -78,7 +78,7 @@ A comprehensive Rust client library for the Veracode security platform APIs.
 
 ### [Verascan CLI](verascan/) (`verascan`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.6.4-blue.svg)](verascan/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](verascan/Cargo.toml)
 
 A powerful command-line application for security scanning and Veracode integration.
 
@@ -95,7 +95,7 @@ A powerful command-line application for security scanning and Veracode integrati
 
 ### [Veraaudit CLI](veraaudit/) (`veraaudit`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.2.3-blue.svg)](veraaudit/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.5.14-blue.svg)](veraaudit/Cargo.toml)
 
 A production-ready tool for retrieving and archiving Veracode audit logs for compliance and monitoring.
 
@@ -112,7 +112,7 @@ A production-ready tool for retrieving and archiving Veracode audit logs for com
 
 ### [Veracmek CLI](veracmek/) (`veracmek`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.2.3-blue.svg)](veracmek/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.5.14-blue.svg)](veracmek/Cargo.toml)
 
 A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles.
 

@@ -391,8 +391,15 @@ fn create_vault_client(config: &VaultConfig) -> Result<VaultClient, CredentialEr
         .map(|v| v != "true")
         .unwrap_or(true);
 
+    let ca_certs = std::env::var("VAULT_CACERT")
+        .map(|p| vec![p])
+        .unwrap_or_else(|_| vec!["/etc/ssl/certs/ca-certificates.crt".to_string()]);
+
     let mut settings_builder = VaultClientSettingsBuilder::default();
-    settings_builder.address(&config.addr).verify(verify_certs);
+    settings_builder
+        .address(&config.addr)
+        .verify(verify_certs)
+        .ca_certs(ca_certs);
 
     if let Some(ref namespace) = config.namespace {
         settings_builder.namespace(Some(namespace.clone()));
