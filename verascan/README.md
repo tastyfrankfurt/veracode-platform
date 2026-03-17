@@ -428,6 +428,15 @@ Verascan supports secure credential management via HashiCorp Vault (inherited fr
 - Fast failure on authentication errors
 - Automatic recovery from transient errors
 
+#### Mid-Scan Credential Refresh
+
+If credentials are rotated while a scan is already running, Verascan automatically detects the 401/403 error and refreshes from Vault — no manual intervention required:
+
+- **Pipeline scans**: the scan continues running on Veracode's servers; only fresh HMAC credentials are needed to resume polling with the same scan IDs
+- **Assessment scans**: the prescan/scan continues on Veracode's servers; monitoring resumes with the same build ID and sandbox ID after a credential refresh
+- Up to **3 retry attempts** per phase before exiting with an error
+- Vault-only refresh path is used (no environment variable fallback) to ensure credentials are genuinely rotated
+
 ## Debugging and Troubleshooting
 
 ### Enable Debug Mode

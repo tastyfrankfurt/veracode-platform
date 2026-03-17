@@ -65,7 +65,7 @@ pub use policy::execute_policy_download;
 pub use scan::{execute_assessment_scan, execute_pipeline_scan};
 pub use vault_client::{
     VaultCredentialClient, load_credentials_and_proxy_from_vault, load_vault_config_from_env,
-    load_veracode_credentials_with_vault,
+    load_veracode_credentials_with_vault, refresh_credentials_from_vault,
 };
 
 use log::error;

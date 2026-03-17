@@ -94,7 +94,7 @@ vaultrs = { version = "0.7", features = ["rustls"] }
 backon = "1.3"
 
 [dev-dependencies]
-jsonschema = "0.44"
+jsonschema = "0.45"
 wiremock = "0.6"
 tokio-test = "0.4"
 proptest = "1.5"

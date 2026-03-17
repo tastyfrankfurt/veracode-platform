@@ -282,13 +282,19 @@ pub fn execute_pipeline_scan(
         let region = parse_region(&args.region)?;
         let pipeline_config = create_pipeline_config(args, region);
 
-        let submitter =
-            PipelineSubmitter::new(veracode_config.clone(), pipeline_config).map_err(|e| {
+        let submitter = PipelineSubmitter::new(veracode_config.clone(), pipeline_config.clone())
+            .map_err(|e| {
                 error!("❌ Failed to create pipeline submitter: {e}");
                 1
             })?;
 
-        execute_scan_with_runtime(submitter, matched_files, args, veracode_config)
+        execute_scan_with_runtime(
+            submitter,
+            matched_files,
+            args,
+            veracode_config,
+            pipeline_config,
+        )
     } else {
         error!("❌ execute_pipeline_scan called with non-pipeline command");
         Err(1)
@@ -562,6 +568,7 @@ fn execute_scan_with_runtime(
     matched_files: &[PathBuf],
     args: &Args,
     veracode_config: &VeracodeConfig,
+    pipeline_config: PipelineScanConfig,
 ) -> Result<(), i32> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| {
         error!("❌ Failed to create async runtime: {e}");
@@ -583,94 +590,262 @@ fn execute_scan_with_runtime(
             }
         }
 
-        if matched_files.len() == 1 {
-            execute_single_scan(&submitter, matched_files, args, veracode_config).await
-        } else {
-            execute_concurrent_scans(&submitter, matched_files, args, veracode_config).await
-        }
+        run_pipeline_scan_with_auth_retry(
+            submitter,
+            matched_files,
+            args,
+            veracode_config.clone(),
+            &pipeline_config,
+        )
+        .await
     })
 }
 
-async fn execute_single_scan(
-    submitter: &PipelineSubmitter,
-    matched_files: &[PathBuf],
-    args: &Args,
-    veracode_config: &VeracodeConfig,
-) -> Result<(), i32> {
-    match submitter.submit_and_wait(matched_files).await {
-        Ok(results) => {
-            submitter.display_results_summary(&results);
-
-            let results_vec = vec![results];
-
-            // Handle findings aggregation and export
-            handle_findings_export(&results_vec, matched_files, args, veracode_config).await;
-
-            // Handle GitLab issues creation if requested (independent of export)
-            if let Commands::Pipeline {
-                create_gitlab_issues,
-                ..
-            } = &args.command
-                && *create_gitlab_issues
-            {
-                handle_gitlab_issues_creation_from_results_async(
-                    &results_vec,
-                    matched_files,
-                    args,
-                    veracode_config,
-                )
-                .await;
+/// Refresh credentials from Vault and rebuild the `PipelineSubmitter`.
+/// Returns `None` and logs errors on failure.
+async fn try_refresh_submitter(
+    region: &str,
+    pipeline_config: &PipelineScanConfig,
+) -> Option<(PipelineSubmitter, VeracodeConfig)> {
+    match crate::vault_client::refresh_credentials_from_vault().await {
+        Ok((creds, proxy_url, proxy_user, proxy_pass)) => {
+            match crate::create_veracode_config_with_proxy(
+                creds, region, proxy_url, proxy_user, proxy_pass,
+            ) {
+                Ok(new_config) => {
+                    match PipelineSubmitter::new(new_config.clone(), pipeline_config.clone()) {
+                        Ok(new_submitter) => Some((new_submitter, new_config)),
+                        Err(e) => {
+                            error!("❌ Failed to create submitter with refreshed credentials: {e}");
+                            None
+                        }
+                    }
+                }
+                Err(_) => {
+                    error!("❌ Failed to create Veracode config with refreshed credentials");
+                    None
+                }
             }
-
-            Ok(())
         }
         Err(e) => {
-            error!("❌ Pipeline scan failed: {e}");
-            Err(1)
+            warn!("Failed to refresh credentials from Vault: {e}");
+            error!("❌ Cannot retry: Vault credential refresh failed");
+            None
         }
     }
 }
 
-async fn execute_concurrent_scans(
-    submitter: &PipelineSubmitter,
+/// Run a pipeline scan with automatic credential refresh on 401/403 errors.
+///
+/// The operation is split into two independent retry phases:
+///
+/// - **Submission** (`submit_files` / `submit_files_concurrent`): on auth error a new scan
+///   is created with fresh credentials (up to `MAX_ATTEMPTS` total attempts).
+/// - **Polling** (`poll_for_scan_results`): on auth error the credentials are refreshed
+///   and polling resumes with the **same scan IDs** — the scan keeps running on Veracode's
+///   servers and only fresh HMAC credentials are needed to query it (up to `MAX_ATTEMPTS`
+///   total attempts).
+async fn run_pipeline_scan_with_auth_retry(
+    initial_submitter: PipelineSubmitter,
     matched_files: &[PathBuf],
     args: &Args,
-    veracode_config: &VeracodeConfig,
+    initial_config: VeracodeConfig,
+    pipeline_config: &PipelineScanConfig,
 ) -> Result<(), i32> {
-    match submitter
-        .submit_files_concurrent_and_wait(matched_files)
-        .await
+    const MAX_ATTEMPTS: u32 = 3;
+    let mut current_submitter = initial_submitter;
+    let mut current_config = initial_config;
+
+    // ── Phase 1: Submit ──────────────────────────────────────────────────────
+    // Submit the file(s) and obtain scan IDs. On 401/403 the submission is
+    // retried from scratch with refreshed credentials (a new scan is created).
+    let scan_ids: Vec<String> = {
+        let mut attempt = 0u32;
+        loop {
+            attempt = attempt.saturating_add(1);
+            let result = if matched_files.len() == 1 {
+                current_submitter
+                    .submit_files(matched_files)
+                    .await
+                    .map(|id| vec![id])
+            } else {
+                current_submitter
+                    .submit_files_concurrent(matched_files)
+                    .await
+            };
+            match result {
+                Ok(ids) => break ids,
+                Err(ref e) if crate::pipeline::is_auth_error(e) && attempt < MAX_ATTEMPTS => {
+                    warn!(
+                        "⚠️  Authentication error during scan submission \
+                         (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials from Vault..."
+                    );
+                    match try_refresh_submitter(&args.region, pipeline_config).await {
+                        Some((new_submitter, new_config)) => {
+                            info!(
+                                "✅ Credentials refreshed, retrying submission \
+                                 (attempt {}/{MAX_ATTEMPTS})...",
+                                attempt.saturating_add(1)
+                            );
+                            current_submitter = new_submitter;
+                            current_config = new_config;
+                        }
+                        None => return Err(1),
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Pipeline scan submission failed: {e}");
+                    return Err(1);
+                }
+            }
+        }
+    };
+
+    // ── Phase 2: Poll ────────────────────────────────────────────────────────
+    // Poll for results using the scan IDs already obtained. On 401/403 the
+    // credentials are refreshed and polling resumes with the same scan IDs —
+    // the scan is still running on Veracode's servers.
+    let results_vec: Vec<veracode_platform::pipeline::ScanResults> = {
+        let mut attempt = 0u32;
+        loop {
+            attempt = attempt.saturating_add(1);
+            match current_submitter.poll_for_scan_results(&scan_ids).await {
+                Ok(results) => break results,
+                Err(ref e) if crate::pipeline::is_auth_error(e) && attempt < MAX_ATTEMPTS => {
+                    warn!(
+                        "⚠️  Authentication error during scan polling \
+                         (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials from Vault..."
+                    );
+                    match try_refresh_submitter(&args.region, pipeline_config).await {
+                        Some((new_submitter, new_config)) => {
+                            info!(
+                                "✅ Credentials refreshed, resuming poll with same scan IDs \
+                                 (attempt {}/{MAX_ATTEMPTS})...",
+                                attempt.saturating_add(1)
+                            );
+                            current_submitter = new_submitter;
+                            current_config = new_config;
+                        }
+                        None => return Err(1),
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Pipeline scan polling failed: {e}");
+                    return Err(1);
+                }
+            }
+        }
+    };
+
+    // ── Post-processing ──────────────────────────────────────────────────────
+    if matched_files.len() == 1 {
+        if let Some(result) = results_vec.first() {
+            current_submitter.display_results_summary(result);
+        }
+    } else {
+        display_concurrent_results(&results_vec, &current_submitter);
+    }
+
+    handle_findings_export(&results_vec, matched_files, args, &current_config).await;
+
+    if let Commands::Pipeline {
+        create_gitlab_issues,
+        ..
+    } = &args.command
+        && *create_gitlab_issues
     {
-        Ok(results_vec) => {
-            display_concurrent_results(&results_vec, submitter);
-
-            // Handle findings aggregation and export
-            handle_findings_export(&results_vec, matched_files, args, veracode_config).await;
-
-            // Handle GitLab issues creation if requested (independent of export)
-            if let Commands::Pipeline {
-                create_gitlab_issues,
-                ..
-            } = &args.command
-                && *create_gitlab_issues
-            {
-                handle_gitlab_issues_creation_from_results_async(
-                    &results_vec,
-                    matched_files,
-                    args,
-                    veracode_config,
-                )
-                .await;
-            }
-
-            Ok(())
-        }
-        Err(e) => {
-            error!("❌ Concurrent pipeline scans failed: {e}");
-            Err(1)
-        }
+        handle_gitlab_issues_creation_from_results_async(
+            &results_vec,
+            matched_files,
+            args,
+            &current_config,
+        )
+        .await;
     }
+
+    Ok(())
 }
+
+//async fn execute_single_scan(
+//    submitter: &PipelineSubmitter,
+//    matched_files: &[PathBuf],
+//    args: &Args,
+//    veracode_config: &VeracodeConfig,
+//) -> Result<(), i32> {
+//    match submitter.submit_and_wait(matched_files).await {
+//        Ok(results) => {
+//            submitter.display_results_summary(&results);
+//
+//            let results_vec = vec![results];
+//
+//            // Handle findings aggregation and export
+//            handle_findings_export(&results_vec, matched_files, args, veracode_config).await;
+//
+//            // Handle GitLab issues creation if requested (independent of export)
+//            if let Commands::Pipeline {
+//                create_gitlab_issues,
+//                ..
+//            } = &args.command
+//                && *create_gitlab_issues
+//            {
+//                handle_gitlab_issues_creation_from_results_async(
+//                    &results_vec,
+//                    matched_files,
+//                    args,
+//                    veracode_config,
+//                )
+//                .await;
+//            }
+//
+//            Ok(())
+//        }
+//        Err(e) => {
+//            error!("❌ Pipeline scan failed: {e}");
+//            Err(1)
+//        }
+//    }
+//}
+//
+//async fn execute_concurrent_scans(
+//    submitter: &PipelineSubmitter,
+//    matched_files: &[PathBuf],
+//    args: &Args,
+//    veracode_config: &VeracodeConfig,
+//) -> Result<(), i32> {
+//    match submitter
+//        .submit_files_concurrent_and_wait(matched_files)
+//        .await
+//    {
+//        Ok(results_vec) => {
+//            display_concurrent_results(&results_vec, submitter);
+//
+//            // Handle findings aggregation and export
+//            handle_findings_export(&results_vec, matched_files, args, veracode_config).await;
+//
+//            // Handle GitLab issues creation if requested (independent of export)
+//            if let Commands::Pipeline {
+//                create_gitlab_issues,
+//                ..
+//            } = &args.command
+//                && *create_gitlab_issues
+//            {
+//                handle_gitlab_issues_creation_from_results_async(
+//                    &results_vec,
+//                    matched_files,
+//                    args,
+//                    veracode_config,
+//                )
+//                .await;
+//            }
+//
+//            Ok(())
+//        }
+//        Err(e) => {
+//            error!("❌ Concurrent pipeline scans failed: {e}");
+//            Err(1)
+//        }
+//    }
+//}
 
 fn display_concurrent_results(
     results_vec: &[veracode_platform::pipeline::ScanResults],
@@ -1710,6 +1885,42 @@ fn execute_assessment_scan_with_runtime(
     )
 }
 
+/// Refresh credentials from Vault and rebuild the `AssessmentSubmitter`.
+/// Returns `None` and logs errors on failure.
+async fn try_refresh_assessment_submitter(
+    region: &str,
+    assessment_config: &AssessmentScanConfig,
+) -> Option<(AssessmentSubmitter, VeracodeConfig)> {
+    match crate::vault_client::refresh_credentials_from_vault().await {
+        Ok((creds, proxy_url, proxy_user, proxy_pass)) => {
+            match crate::create_veracode_config_with_proxy(
+                creds, region, proxy_url, proxy_user, proxy_pass,
+            ) {
+                Ok(new_config) => {
+                    match AssessmentSubmitter::new(new_config.clone(), assessment_config.clone()) {
+                        Ok(new_submitter) => Some((new_submitter, new_config)),
+                        Err(e) => {
+                            error!(
+                                "❌ Failed to create assessment submitter with refreshed credentials: {e}"
+                            );
+                            None
+                        }
+                    }
+                }
+                Err(_) => {
+                    error!("❌ Failed to create Veracode config with refreshed credentials");
+                    None
+                }
+            }
+        }
+        Err(e) => {
+            warn!("Failed to refresh credentials from Vault: {e}");
+            error!("❌ Cannot retry: Vault credential refresh failed");
+            None
+        }
+    }
+}
+
 /// Async execution of assessment scan
 async fn execute_assessment_scan_async(
     submitter: AssessmentSubmitter,
@@ -1754,71 +1965,173 @@ async fn execute_assessment_scan_async(
             debug!("   Repository URL: Not provided and auto-detection failed");
         }
 
-        let app_id = match submitter
-            .client
-            .create_application_if_not_exists(
-                app_profile_name,
-                crate::cli::parse_business_criticality(bus_cri),
-                Some("Application created for assessment scanning".to_string()),
-                team_names,
-                resolved_repo_url,
-                cmek.clone(),
-            )
-            .await
-        {
-            Ok(app) => {
-                debug!(
-                    "✅ Application ready: {} (ID: {}, GUID: {})",
-                    app.profile
-                        .as_ref()
-                        .map(|p| p.name.as_str())
-                        .unwrap_or("Unknown"),
-                    app.id,
-                    app.guid
-                );
-                if let Some(profile) = &app.profile
-                    && let Some(teams) = &profile.teams
-                    && !teams.is_empty()
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut current_submitter = submitter;
+
+        // ── Phase 1: Setup + upload + start prescan ──────────────────────────
+        // On 401/403, refresh credentials and retry from scratch (up to MAX_ATTEMPTS).
+        let (app_id, build_id, sandbox_id) = {
+            let mut attempt = 0u32;
+            loop {
+                attempt = attempt.saturating_add(1);
+
+                let app = match current_submitter
+                    .client
+                    .create_application_if_not_exists(
+                        app_profile_name,
+                        crate::cli::parse_business_criticality(bus_cri),
+                        Some("Application created for assessment scanning".to_string()),
+                        team_names.clone(),
+                        resolved_repo_url.clone(),
+                        cmek.clone(),
+                    )
+                    .await
                 {
-                    let team_names: Vec<String> = teams
-                        .iter()
-                        .filter_map(|t| t.team_name.as_ref())
-                        .cloned()
-                        .collect();
-                    debug!("   Associated teams: {}", team_names.join(", "));
+                    Ok(app) => {
+                        debug!(
+                            "✅ Application ready: {} (ID: {}, GUID: {})",
+                            app.profile
+                                .as_ref()
+                                .map(|p| p.name.as_str())
+                                .unwrap_or("Unknown"),
+                            app.id,
+                            app.guid
+                        );
+                        if let Some(profile) = &app.profile
+                            && let Some(teams) = &profile.teams
+                            && !teams.is_empty()
+                        {
+                            let team_names: Vec<String> = teams
+                                .iter()
+                                .filter_map(|t| t.team_name.as_ref())
+                                .cloned()
+                                .collect();
+                            debug!("   Associated teams: {}", team_names.join(", "));
+                        }
+                        info!("✅ Application ready: {app_profile_name}");
+                        app
+                    }
+                    Err(ref e)
+                        if matches!(
+                            e,
+                            veracode_platform::VeracodeError::Authentication(_)
+                                | veracode_platform::VeracodeError::HttpStatus {
+                                    status_code: 401 | 403,
+                                    ..
+                                }
+                        ) && attempt < MAX_ATTEMPTS =>
+                    {
+                        warn!(
+                            "⚠️  Authentication error during app lookup \
+                             (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials..."
+                        );
+                        match try_refresh_assessment_submitter(
+                            &args.region,
+                            &current_submitter.config,
+                        )
+                        .await
+                        {
+                            Some((new_sub, _)) => {
+                                current_submitter = new_sub;
+                                continue;
+                            }
+                            None => return Err(1),
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            "❌ Failed to lookup or create application '{app_profile_name}': {e}"
+                        );
+                        return Err(1);
+                    }
+                };
+
+                let app_id = crate::assessment::ApplicationId::new(app.guid, app.id.to_string());
+
+                match current_submitter
+                    .setup_and_start_prescan(matched_files, &app_id)
+                    .await
+                {
+                    Ok((build_id, sandbox_id)) => break (app_id, build_id, sandbox_id),
+                    Err(ref e) if crate::assessment::is_auth_error(e) && attempt < MAX_ATTEMPTS => {
+                        warn!(
+                            "⚠️  Authentication error during scan setup \
+                             (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials..."
+                        );
+                        match try_refresh_assessment_submitter(
+                            &args.region,
+                            &current_submitter.config,
+                        )
+                        .await
+                        {
+                            Some((new_sub, _)) => current_submitter = new_sub,
+                            None => return Err(1),
+                        }
+                    }
+                    Err(e) => {
+                        error!("❌ Assessment scan setup failed: {e}");
+                        return Err(1);
+                    }
                 }
-                info!("✅ Application ready: {app_profile_name}");
-                crate::assessment::ApplicationId::new(app.guid, app.id.to_string())
-            }
-            Err(e) => {
-                error!("❌ Failed to lookup or create application '{app_profile_name}': {e}");
-                return Err(1);
             }
         };
 
-        // Upload files and start scan
-        match submitter.upload_and_scan(matched_files, &app_id).await {
-            Ok(build_id) => {
-                info!("✅ Assessment scan workflow completed");
-                info!("   Build ID: {build_id}");
-                info!("   App Profile: {app_profile_name}");
-                match &submitter.config.scan_type {
-                    ScanType::Sandbox => {
-                        if let Some(sandbox_name) = &submitter.config.sandbox_name {
-                            info!("   Sandbox: {sandbox_name}");
+        // ── Phase 2: Monitor + export ────────────────────────────────────────
+        // On 401/403, refresh credentials and resume monitoring with the same
+        // build_id and sandbox_id — the scan keeps running on Veracode's servers.
+        {
+            let mut attempt = 0u32;
+            loop {
+                attempt = attempt.saturating_add(1);
+                match current_submitter
+                    .run_monitoring_and_export(&app_id, &build_id, sandbox_id.as_ref())
+                    .await
+                {
+                    Ok(()) => break,
+                    Err(ref e) if crate::assessment::is_auth_error(e) && attempt < MAX_ATTEMPTS => {
+                        warn!(
+                            "⚠️  Authentication error during scan monitoring \
+                             (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials from Vault..."
+                        );
+                        match try_refresh_assessment_submitter(
+                            &args.region,
+                            &current_submitter.config,
+                        )
+                        .await
+                        {
+                            Some((new_sub, _)) => {
+                                info!(
+                                    "✅ Credentials refreshed, resuming monitoring with same \
+                                     build ID (attempt {}/{MAX_ATTEMPTS})...",
+                                    attempt.saturating_add(1)
+                                );
+                                current_submitter = new_sub;
+                            }
+                            None => return Err(1),
                         }
                     }
-                    ScanType::Policy => {
-                        info!("   Scan Type: Policy");
+                    Err(e) => {
+                        error!("❌ Assessment scan failed: {e}");
+                        return Err(1);
                     }
                 }
-                Ok(())
-            }
-            Err(e) => {
-                error!("❌ Assessment scan failed: {e}");
-                Err(1)
             }
         }
+
+        info!("✅ Assessment scan workflow completed");
+        info!("   Build ID: {build_id}");
+        info!("   App Profile: {app_profile_name}");
+        match &current_submitter.config.scan_type {
+            ScanType::Sandbox => {
+                if let Some(sandbox_name) = &current_submitter.config.sandbox_name {
+                    info!("   Sandbox: {sandbox_name}");
+                }
+            }
+            ScanType::Policy => {
+                info!("   Scan Type: Policy");
+            }
+        }
+        Ok(())
     } else {
         error!("❌ execute_assessment_scan_async called with non-assessment command");
         Err(1)

@@ -371,6 +371,46 @@ pub async fn load_credentials_and_proxy_from_vault() -> Result<
     Ok((credentials, None, None, None))
 }
 
+/// Refresh `VeracodeCredentials` and proxy configuration from Vault (no env fallback).
+///
+/// This is used when credentials may have expired mid-operation (e.g., 401/403 during
+/// a scan submission). Unlike `load_credentials_and_proxy_from_vault`, this function
+/// requires Vault to be configured and does not fall back to environment variables.
+///
+/// # Errors
+/// Returns an error if Vault is not configured or credential retrieval fails.
+pub async fn refresh_credentials_from_vault() -> Result<
+    (
+        veracode_platform::VeracodeCredentials,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ),
+    CredentialError,
+> {
+    info!("Attempting to refresh credentials from Vault due to authentication error");
+
+    let vault_config = load_vault_config_from_env()?;
+    let vault_client = VaultCredentialClient::new(&vault_config).await?;
+
+    let credentials = vault_client
+        .get_veracode_credentials(&vault_config.secret_path)
+        .await?;
+
+    let (proxy_url, proxy_username, proxy_password) = vault_client
+        .get_proxy_credentials(&vault_config.secret_path)
+        .await?;
+
+    if let Err(e) = vault_client.revoke_token().await {
+        warn!("Token revocation failed during credential refresh: {e}");
+    } else {
+        debug!("Vault token revoked successfully after credential refresh");
+    }
+
+    info!("Successfully refreshed credentials from Vault");
+    Ok((credentials, proxy_url, proxy_username, proxy_password))
+}
+
 /// Validate vault configuration with comprehensive input sanitization
 fn validate_vault_config(
     addr: &str,

@@ -51,6 +51,35 @@ impl From<ValidationError> for PipelineError {
     }
 }
 
+/// Check if a `PipelineError` is an authentication/authorization error (401/403)
+///
+/// Returns `true` if the error indicates expired or invalid credentials, which
+/// can be resolved by refreshing credentials from Vault.
+#[must_use]
+pub fn is_auth_error(error: &PipelineError) -> bool {
+    use veracode_platform::pipeline::PipelineError as PlatformPipelineError;
+    match error {
+        PipelineError::VeracodeError(veracode_platform::VeracodeError::Authentication(_)) => true,
+        PipelineError::VeracodeError(veracode_platform::VeracodeError::HttpStatus {
+            status_code,
+            ..
+        }) => matches!(status_code, 401 | 403),
+        PipelineError::PlatformPipelineError(PlatformPipelineError::PermissionDenied(_)) => true,
+        PipelineError::PlatformPipelineError(PlatformPipelineError::ApiError(
+            veracode_platform::VeracodeError::Authentication(_),
+        )) => true,
+        PipelineError::PlatformPipelineError(PlatformPipelineError::ApiError(
+            veracode_platform::VeracodeError::HttpStatus { status_code, .. },
+        )) => matches!(status_code, 401 | 403),
+        PipelineError::VeracodeError(_)
+        | PipelineError::PlatformPipelineError(_)
+        | PipelineError::NoValidFiles
+        | PipelineError::ConfigError(_)
+        | PipelineError::ScanError(_)
+        | PipelineError::ValidationError(_) => false,
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct PipelineScanConfig {
     pub project_name: String,
@@ -626,6 +655,98 @@ impl PipelineSubmitter {
         Ok(sorted_results)
     }
 
+    /// Poll for results of one or more scans by their scan IDs.
+    ///
+    /// Polls all scans concurrently (bounded by `config.threads`). Auth errors
+    /// (401/403) are surfaced immediately so the caller can refresh credentials
+    /// and retry with the same scan IDs. Other transient errors are retried
+    /// within `wait_for_scan_completion`.
+    ///
+    /// # Errors
+    /// Returns an auth error if credentials have expired, or a scan error if a
+    /// scan failed or timed out.
+    pub async fn poll_for_scan_results(
+        &self,
+        scan_ids: &[String],
+    ) -> Result<Vec<veracode_platform::pipeline::ScanResults>, PipelineError> {
+        if scan_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let timeout_minutes = self.config.timeout.unwrap_or(60);
+        debug!(
+            "⏳ Polling {} scan(s) for results (timeout: {} minutes each)...",
+            scan_ids.len(),
+            timeout_minutes
+        );
+
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.threads));
+        let mut join_set: JoinSet<
+            Result<(usize, veracode_platform::pipeline::ScanResults), (usize, PipelineError)>,
+        > = JoinSet::new();
+        let submitter_arc = Arc::new(self.clone());
+
+        for (index, scan_id) in scan_ids.iter().enumerate() {
+            let scan_id_ref = scan_id.clone();
+            let semaphore_ref = Arc::clone(&semaphore);
+            let submitter_ref = Arc::clone(&submitter_arc);
+
+            join_set.spawn(async move {
+                let _permit = match semaphore_ref.acquire().await {
+                    Ok(p) => p,
+                    Err(_) => {
+                        return Err((
+                            index,
+                            PipelineError::ScanError(
+                                "Failed to acquire semaphore permit".to_string(),
+                            ),
+                        ));
+                    }
+                };
+                submitter_ref
+                    .wait_for_scan_completion(&scan_id_ref)
+                    .await
+                    .map(|r| (index, r))
+                    .map_err(|e| (index, e))
+            });
+        }
+
+        let mut scan_results: Vec<(usize, veracode_platform::pipeline::ScanResults)> = Vec::new();
+        let mut first_auth_error: Option<PipelineError> = None;
+        let mut first_other_error: Option<PipelineError> = None;
+
+        while let Some(result) = join_set.join_next().await {
+            match result {
+                Ok(Ok((index, results))) => scan_results.push((index, results)),
+                Ok(Err((_, e))) => {
+                    if is_auth_error(&e) {
+                        if first_auth_error.is_none() {
+                            first_auth_error = Some(e);
+                        }
+                        join_set.abort_all();
+                    } else if first_other_error.is_none() {
+                        first_other_error = Some(e);
+                    }
+                }
+                Err(join_error) => {
+                    // Task was aborted (due to auth error detected on another task) or panicked
+                    debug!("Poll task ended: {join_error}");
+                }
+            }
+        }
+
+        // Auth errors take priority — caller can refresh credentials and retry all scan IDs
+        if let Some(e) = first_auth_error {
+            return Err(e);
+        }
+        if let Some(e) = first_other_error {
+            return Err(e);
+        }
+
+        scan_results.sort_by_key(|(idx, _)| *idx);
+        Ok(scan_results.into_iter().map(|(_, r)| r).collect())
+    }
+
     /// Wait for a specific scan to complete
     async fn wait_for_scan_completion(
         &self,
@@ -670,7 +791,11 @@ impl PipelineSubmitter {
                     }
                 }
                 Err(e) => {
-                    debug!("⚠️  Error getting scan status for {scan_id}: {e}, retrying...");
+                    let wrapped = PipelineError::PlatformPipelineError(e);
+                    if is_auth_error(&wrapped) {
+                        return Err(wrapped);
+                    }
+                    debug!("⚠️  Error getting scan status for {scan_id}: {wrapped}, retrying...");
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
                 }

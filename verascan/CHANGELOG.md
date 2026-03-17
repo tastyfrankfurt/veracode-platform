@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.7.2] - 2026-03-03
 
+### Added
+- **Automatic Credential Refresh on Auth Failure**: Verascan now detects 401/403 authentication errors mid-scan and automatically refreshes credentials from HashiCorp Vault, allowing long-running scans to continue without manual intervention
+  - **Pipeline Scans** — two independent retry phases (up to 3 attempts each):
+    - *Submission phase*: on auth error a new scan is created with fresh credentials
+    - *Polling phase*: on auth error credentials are refreshed and polling resumes with the **same scan IDs** — the scan continues running on Veracode's servers, only fresh HMAC credentials are needed to query it
+  - **Assessment Scans** (sandbox & policy) — two independent retry phases (up to 3 attempts each):
+    - *Setup + upload phase*: on auth error a new scan is started with fresh credentials
+    - *Monitoring + export phase*: on auth error credentials are refreshed and monitoring resumes with the **same build ID and sandbox ID** — the scan keeps running on Veracode's servers
+  - Auth error detection covers REST API errors (`VeracodeError::Authentication`, HTTP 401/403) and XML API errors (`ScanError::Unauthorized`, `ScanError::PermissionDenied`, `PolicyError::Unauthorized`, `PolicyError::PermissionDenied`)
+  - Vault-only refresh path (`refresh_credentials_from_vault`) used for mid-scan retries — no env-var fallback, ensuring credentials are genuinely rotated
+  - **Modified Files**: `src/assessment.rs`, `src/pipeline.rs`, `src/scan.rs`, `src/vault_client.rs`, `src/lib.rs`
+
 ### Fixed
 - **Vault Client System CA Trust**: Restored system CA certificate trust for Vault TLS connections
   - The reqwest 0.12 → 0.13 upgrade in v0.7.1 split the reqwest dependency graph: vaultrs retained its own reqwest 0.12.28 instance and lost the `rustls-tls-native-roots` feature it previously inherited via Cargo feature unification
