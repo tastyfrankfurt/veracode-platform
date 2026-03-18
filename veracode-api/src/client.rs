@@ -120,6 +120,21 @@ impl VeracodeClient {
         Ok(Self { config, client })
     }
 
+    /// Create an XML API variant of this client, reusing the same underlying HTTP connection pool.
+    ///
+    /// Rather than building a new `reqwest::Client` (which reloads system CA certificates and
+    /// discards pooled connections), this clones the existing client — `reqwest::Client` is
+    /// internally `Arc`-backed, so the clone is cheap and shares the connection pool.
+    #[must_use]
+    pub fn new_xml_variant(&self) -> Self {
+        let mut xml_config = self.config.clone();
+        xml_config.base_url = xml_config.xml_base_url.clone();
+        Self {
+            config: xml_config,
+            client: self.client.clone(),
+        }
+    }
+
     /// Get the base URL for API requests.
     #[must_use]
     pub fn base_url(&self) -> &str {

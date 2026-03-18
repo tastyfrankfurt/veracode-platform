@@ -5,6 +5,24 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.10] - 2026-03-18
+
+### Added
+- **`VeracodeClient::new_xml_variant()`**: New public method that creates an XML API variant of an existing client by cloning the underlying `reqwest::Client` rather than constructing a new one
+  - `reqwest::Client` is `Arc`-backed, so the clone is cheap and shares the connection pool
+  - Preserves system CA certificates loaded at initial client construction — avoids the bug where a freshly-built client inside `new_xml_client()` would re-run CA discovery with a different TLS feature set
+  - **Modified Files**: `src/client.rs`
+
+### Changed
+- **XML Client Construction in `scan_api()` and `build_api()`**: Replaced the private `new_xml_client()` constructor (which called `Self::new()` and re-built a fresh `reqwest::Client`) with `new_xml_variant()`
+  - Eliminates the hidden footgun where XML API calls silently lost system CA trust if the reqwest TLS feature graph differed between the REST and XML client instantiation paths
+  - Both methods remain infallible from the caller's perspective; the `Result` wrapper is retained for API compatibility
+  - **Modified Files**: `src/lib.rs`
+
+### Removed
+- **`new_xml_client()` private method**: Replaced by `new_xml_variant()`; the old method built a complete new `reqwest::Client` for each XML API handle, discarding pooled connections and re-loading CA certificates
+  - **Modified Files**: `src/lib.rs`
+
 ## [0.7.9] - 2026-02-26
 
 ### Added

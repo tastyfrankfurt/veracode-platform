@@ -5,6 +5,11 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Dependencies
+
+
 ## [0.7.2] - 2026-03-03
 
 ### Added
@@ -29,6 +34,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Dependencies
 - Explicitly enabled `rustls` feature on `vaultrs` to make the TLS backend declaration visible in `Cargo.toml`
   - **Modified Files**: `Cargo.toml`
+- **`veracode-platform` → `0.7.10`**: Upstream fix for system CA trust in XML API client construction
+  - `VeracodeClient::new_xml_variant()` replaces the old `new_xml_client()` — XML handles for `scan_api()` and `build_api()` now clone the existing `reqwest::Client` instead of building a fresh one, preserving system CA certificates loaded at startup
+  - This completes the CA-trust fix started in v0.7.2: vault TLS connections were fixed then; XML scan/build API connections are fixed in this upstream release
+  - No verascan code changes required
 
 ## [0.7.1] - 2026-02-19
 
