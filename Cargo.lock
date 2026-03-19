@@ -2294,9 +2294,9 @@ dependencies = [
 
 [[package]]
 name = "rustify_derive"
-version = "0.5.4"
+version = "0.5.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f07d43b2dbdbd99aaed648192098f0f413b762f0f352667153934ef3955f1793"
+checksum = "78ea7fda74240f7410d0198b603a8a2f662acc7d76b6667a49f9b162cd8d9b4f"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -3155,7 +3155,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.7.2"
+version = "0.7.3"
 dependencies = [
  "backon",
  "chrono",

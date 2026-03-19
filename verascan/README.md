@@ -437,6 +437,14 @@ If credentials are rotated while a scan is already running, Verascan automatical
 - Up to **3 retry attempts** per phase before exiting with an error
 - Vault-only refresh path is used (no environment variable fallback) to ensure credentials are genuinely rotated
 
+## Scan Monitoring Behaviour
+
+### Cancelled Builds
+
+If a build is cancelled through the Veracode web interface while Verascan is polling, it exits immediately with an error rather than continuing to poll until timeout.
+
+Veracode returns `"Unknown"` as the prescan or scan status when a build is externally cancelled. Verascan treats this as a terminal failure alongside `"Cancelled"` and `"Failed"` statuses.
+
 ## Debugging and Troubleshooting
 
 ### Enable Debug Mode

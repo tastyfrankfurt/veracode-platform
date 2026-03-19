@@ -7,8 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Dependencies
-
+### Fixed
+- **Cancelled Build Detection**: Verascan now exits immediately when a build is cancelled through the Veracode web interface instead of polling until timeout
+  - Veracode returns `"Unknown"` as the prescan/scan status when a build is cancelled externally; all four polling loops (`monitor_prescan_phase`, `wait_for_prescan`, `monitor_build_phase`, `wait_for_scan_completion`) previously treated this as an in-progress state and continued polling
+  - `"Unknown"` is now treated as a terminal failure status alongside `"Cancelled"` and `"Failed"`, causing an immediate error exit with the status in the message
+  - **Modified Files**: `src/assessment.rs`
 
 ## [0.7.2] - 2026-03-03
 

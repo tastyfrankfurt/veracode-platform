@@ -1160,6 +1160,7 @@ impl AssessmentSubmitter {
                         return Ok(());
                     } else if prescan_results.status.contains("Failed")
                         || prescan_results.status.contains("Cancelled")
+                        || prescan_results.status.contains("Unknown")
                     {
                         return Err(AssessmentError::ScanError(format!(
                             "Prescan failed with status: {}",
@@ -1252,7 +1253,8 @@ impl AssessmentSubmitter {
                         status
                             if status.contains("Failed")
                                 || status.contains("Error")
-                                || status.contains("Cancelled") =>
+                                || status.contains("Cancelled")
+                                || status.contains("Unknown") =>
                         {
                             return Err(AssessmentError::ScanError(format!(
                                 "Scan failed with status: {status}"
@@ -1370,7 +1372,7 @@ impl AssessmentSubmitter {
                             return Ok(());
                         }
                         "Pre-Scan Failed" | "Pre-Scan Cancelled" | "Prescan Failed"
-                        | "Prescan Cancelled" => {
+                        | "Prescan Cancelled" | "Unknown" => {
                             return Err(AssessmentError::ScanError(format!(
                                 "Prescan failed with status: {}",
                                 prescan_results.status
@@ -1465,7 +1467,8 @@ impl AssessmentSubmitter {
                         status
                             if status.contains("Failed")
                                 || status.contains("Error")
-                                || status.contains("Cancelled") =>
+                                || status.contains("Cancelled")
+                                || status.contains("Unknown") =>
                         {
                             return Err(AssessmentError::ScanError(format!(
                                 "Scan failed with status: {status}"
