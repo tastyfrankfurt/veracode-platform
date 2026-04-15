@@ -1849,6 +1849,7 @@ pub fn execute_assessment_scan(
             force_buildinfo_api: *force_buildinfo_api, // CLI flag for forcing buildinfo API
             strict_sandbox: *strict_sandbox, // CLI flag for treating Conditional Pass as failure for sandbox scans
             build_version: build_version.clone(), // Custom build version (None = auto-generated)
+            soft_timeout: false,             // assessment command uses hard timeout (exit 1)
         };
 
         let submitter = AssessmentSubmitter::new(veracode_config.clone(), assessment_config)
@@ -1933,6 +1934,8 @@ async fn execute_assessment_scan_async(
         bus_cri,
         repo_url,
         cmek,
+        no_wait,
+        build_id_file,
         ..
     } = &args.command
     {
@@ -2079,12 +2082,23 @@ async fn execute_assessment_scan_async(
         // ── Phase 2: Monitor + export ────────────────────────────────────────
         // On 401/403, refresh credentials and resume monitoring with the same
         // build_id and sandbox_id — the scan keeps running on Veracode's servers.
+        // Deadline is computed once here so credential refreshes don't reset the clock.
         {
+            let monitoring_deadline = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(
+                    u64::from(current_submitter.config.timeout).saturating_mul(60),
+                ))
+                .unwrap_or_else(std::time::Instant::now);
             let mut attempt = 0u32;
             loop {
                 attempt = attempt.saturating_add(1);
                 match current_submitter
-                    .run_monitoring_and_export(&app_id, &build_id, sandbox_id.as_ref())
+                    .run_monitoring_and_export(
+                        &app_id,
+                        &build_id,
+                        sandbox_id.as_ref(),
+                        monitoring_deadline,
+                    )
                     .await
                 {
                     Ok(()) => break,
@@ -2131,9 +2145,283 @@ async fn execute_assessment_scan_async(
                 info!("   Scan Type: Policy");
             }
         }
+
+        // Write build ID file when --no-wait is set so downstream CI jobs can consume it
+        if *no_wait {
+            let content = format!("VERASCAN_BUILD_ID=\"{build_id}\"\n");
+            match tokio::fs::write(build_id_file, &content).await {
+                Ok(_) => info!("📄 Build ID written to: {build_id_file}"),
+                Err(e) => {
+                    error!("❌ Failed to write build ID file '{build_id_file}': {e}");
+                    return Err(1);
+                }
+            }
+        }
+
         Ok(())
     } else {
         error!("❌ execute_assessment_scan_async called with non-assessment command");
+        Err(1)
+    }
+}
+
+/// Execute assessment monitor workflow — reconnect to an in-progress scan by build ID.
+///
+/// Intended for CI pipelines (e.g. GitLab) where the scan was submitted with `--no-wait`
+/// in a previous job. Exit codes:
+///   0  — scan complete, policy passed (or `--break` not set)
+///   4  — scan complete, policy Did Not Pass (with `--break`)
+///   75 — scan still in progress after `--timeout`; safe to retry the job
+///   1  — error (app not found, API failure, prescan failed, etc.)
+///
+/// # Errors
+/// Returns an error code if the application cannot be found, the sandbox lookup fails,
+/// or an unrecoverable API error occurs during monitoring.
+pub fn execute_monitor_scan(veracode_config: &VeracodeConfig, args: &Args) -> Result<(), i32> {
+    if let Commands::Monitor {
+        app_profile_name,
+        build_id,
+        sandbox_name,
+        timeout,
+        export_results,
+        break_build,
+        force_buildinfo_api,
+        strict_sandbox,
+        ..
+    } = &args.command
+    {
+        info!("🔍 Assessment Monitor requested");
+        info!("   App Profile: {app_profile_name}");
+        info!("   Build ID: {build_id}");
+        if let Some(sb) = sandbox_name {
+            info!("   Sandbox: {sb}");
+        }
+        info!("   Timeout: {timeout} minutes");
+
+        let region = parse_region(&args.region)?;
+        let scan_type = if sandbox_name.is_some() {
+            ScanType::Sandbox
+        } else {
+            ScanType::Policy
+        };
+
+        let assessment_config = AssessmentScanConfig {
+            app_profile_name: app_profile_name.clone(),
+            scan_type,
+            sandbox_name: sandbox_name.clone(),
+            selected_modules: None,
+            region,
+            timeout: *timeout,
+            threads: 4, // not used during monitoring
+            autoscan: true,
+            monitor_completion: true,
+            export_results_path: export_results.clone(),
+            deleteincompletescan: 1,
+            break_build: *break_build,
+            policy_wait_max_retries: 30,
+            policy_wait_retry_delay_seconds: 10,
+            force_buildinfo_api: *force_buildinfo_api,
+            strict_sandbox: *strict_sandbox,
+            build_version: None,
+            soft_timeout: true, // timeouts exit with code 75 rather than 1
+        };
+
+        let submitter = AssessmentSubmitter::new(veracode_config.clone(), assessment_config)
+            .map_err(|e| {
+                error!("❌ Failed to create assessment monitor: {e}");
+                1
+            })?;
+
+        execute_monitor_scan_with_runtime(submitter, build_id, args)
+    } else {
+        error!("❌ execute_monitor_scan called with non-monitor command");
+        Err(1)
+    }
+}
+
+fn execute_monitor_scan_with_runtime(
+    submitter: AssessmentSubmitter,
+    build_id_str: &str,
+    args: &Args,
+) -> Result<(), i32> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(|e| {
+            error!("❌ Failed to create async runtime: {e}");
+            1
+        })?;
+
+    let build_id_str = build_id_str.to_string();
+    runtime
+        .block_on(async move { execute_monitor_scan_async(submitter, &build_id_str, args).await })
+}
+
+async fn execute_monitor_scan_async(
+    submitter: AssessmentSubmitter,
+    build_id_str: &str,
+    args: &Args,
+) -> Result<(), i32> {
+    if let Commands::Monitor {
+        app_profile_name,
+        sandbox_name,
+        ..
+    } = &args.command
+    {
+        const MAX_ATTEMPTS: u32 = 3;
+        let mut current_submitter = submitter;
+
+        // Look up application by name (read-only — never creates)
+        let app = {
+            let mut attempt = 0u32;
+            loop {
+                attempt = attempt.saturating_add(1);
+                match current_submitter
+                    .client
+                    .get_application_by_name(app_profile_name)
+                    .await
+                {
+                    Ok(Some(app)) => {
+                        info!("✅ Application found: {app_profile_name}");
+                        break app;
+                    }
+                    Ok(None) => {
+                        error!("❌ Application not found: '{app_profile_name}'");
+                        return Err(1);
+                    }
+                    Err(ref e)
+                        if matches!(
+                            e,
+                            veracode_platform::VeracodeError::Authentication(_)
+                                | veracode_platform::VeracodeError::HttpStatus {
+                                    status_code: 401 | 403,
+                                    ..
+                                }
+                        ) && attempt < MAX_ATTEMPTS =>
+                    {
+                        warn!(
+                            "⚠️  Authentication error looking up application \
+                             (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials..."
+                        );
+                        match try_refresh_assessment_submitter(
+                            &args.region,
+                            &current_submitter.config,
+                        )
+                        .await
+                        {
+                            Some((new_sub, _)) => current_submitter = new_sub,
+                            None => return Err(1),
+                        }
+                    }
+                    Err(e) => {
+                        error!("❌ Failed to look up application '{app_profile_name}': {e}");
+                        return Err(1);
+                    }
+                }
+            }
+        };
+
+        let app_id = crate::assessment::ApplicationId::new(app.guid, app.id.to_string());
+
+        // Look up sandbox by name if this was a sandbox scan
+        let sandbox_id = if let Some(sandbox_name_str) = sandbox_name {
+            let result = {
+                let sandbox_api = current_submitter.client.sandbox_api();
+                sandbox_api
+                    .get_sandbox_by_name(app_id.for_rest_api(), sandbox_name_str)
+                    .await
+            };
+            match result {
+                Ok(Some(sandbox)) => {
+                    info!("✅ Sandbox found: {sandbox_name_str}");
+                    let legacy_id = sandbox.id.map(|id| id.to_string()).unwrap_or_default();
+                    Some(crate::assessment::SandboxId::new(
+                        sandbox.guid,
+                        legacy_id,
+                        sandbox_name_str.clone(),
+                    ))
+                }
+                Ok(None) => {
+                    error!("❌ Sandbox not found: '{sandbox_name_str}'");
+                    return Err(1);
+                }
+                Err(e) => {
+                    error!("❌ Failed to look up sandbox '{sandbox_name_str}': {e}");
+                    return Err(1);
+                }
+            }
+        } else {
+            None
+        };
+
+        let build_id = crate::assessment::BuildId::new(build_id_str.to_string());
+
+        info!("🔍 Starting monitor for build ID: {}", build_id.id());
+
+        // Monitor with Vault credential refresh on auth errors — same pattern as assessment command.
+        // Deadline is computed once here so credential refreshes don't reset the clock.
+        let monitoring_deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(
+                u64::from(current_submitter.config.timeout).saturating_mul(60),
+            ))
+            .unwrap_or_else(std::time::Instant::now);
+        let mut attempt = 0u32;
+        loop {
+            attempt = attempt.saturating_add(1);
+            match current_submitter
+                .run_monitoring_and_export(
+                    &app_id,
+                    &build_id,
+                    sandbox_id.as_ref(),
+                    monitoring_deadline,
+                )
+                .await
+            {
+                Ok(()) => break,
+                Err(crate::assessment::AssessmentError::ScanStillInProgress(_)) => {
+                    info!(
+                        "⏳ Scan still in progress after {} minutes — exiting with code 75 (safe to retry)",
+                        current_submitter.config.timeout
+                    );
+                    info!(
+                        "   Rerun: verascan monitor --app-profile-name \"{}\" --build-id {}",
+                        app_profile_name,
+                        build_id.id()
+                    );
+                    std::process::exit(75);
+                }
+                Err(ref e) if crate::assessment::is_auth_error(e) && attempt < MAX_ATTEMPTS => {
+                    warn!(
+                        "⚠️  Authentication error during monitoring \
+                         (attempt {attempt}/{MAX_ATTEMPTS}), refreshing credentials from Vault..."
+                    );
+                    match try_refresh_assessment_submitter(&args.region, &current_submitter.config)
+                        .await
+                    {
+                        Some((new_sub, _)) => {
+                            info!(
+                                "✅ Credentials refreshed, resuming monitoring with same \
+                                 build ID (attempt {}/{MAX_ATTEMPTS})...",
+                                attempt.saturating_add(1)
+                            );
+                            current_submitter = new_sub;
+                        }
+                        None => return Err(1),
+                    }
+                }
+                Err(e) => {
+                    error!("❌ Monitor failed: {e}");
+                    return Err(1);
+                }
+            }
+        }
+
+        info!("✅ Monitor completed");
+        info!("   Build ID: {}", build_id.id());
+        info!("   App Profile: {app_profile_name}");
+        Ok(())
+    } else {
+        error!("❌ execute_monitor_scan_async called with non-monitor command");
         Err(1)
     }
 }
