@@ -445,17 +445,6 @@ pub enum VeracodeError {
 }
 
 impl VeracodeClient {
-    /// Create a specialized client for XML API operations.
-    ///
-    /// This internal method creates a client configured for the XML API
-    /// (analysiscenter.veracode.*) based on the current region settings.
-    /// Used exclusively for sandbox scan operations that require the XML API.
-    fn new_xml_client(config: VeracodeConfig) -> Result<Self, VeracodeError> {
-        let mut xml_config = config;
-        xml_config.base_url = xml_config.xml_base_url.clone();
-        Self::new(xml_config)
-    }
-
     /// Get an applications API instance.
     /// Uses REST API (api.veracode.*).
     #[must_use]
@@ -512,9 +501,7 @@ impl VeracodeClient {
     ///
     /// Returns an error if the XML client cannot be created.
     pub fn scan_api(&self) -> Result<ScanApi, VeracodeError> {
-        // Create a specialized XML client for scan operations
-        let xml_client = Self::new_xml_client(self.config().clone())?;
-        Ok(ScanApi::new(xml_client))
+        Ok(ScanApi::new(self.new_xml_variant()))
     }
 
     /// Get a build API instance.
@@ -524,9 +511,7 @@ impl VeracodeClient {
     ///
     /// Returns an error if the XML client cannot be created.
     pub fn build_api(&self) -> Result<build::BuildApi, VeracodeError> {
-        // Create a specialized XML client for build operations
-        let xml_client = Self::new_xml_client(self.config().clone())?;
-        Ok(build::BuildApi::new(xml_client))
+        Ok(build::BuildApi::new(self.new_xml_variant()))
     }
 
     /// Get a workflow helper instance.

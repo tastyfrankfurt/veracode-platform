@@ -152,6 +152,8 @@ pub enum AssessmentError {
     SandboxError(String),
     PolicyError(String),
     ValidationError(ValidationError),
+    /// Authentication/authorization error (401/403) — credentials may have expired
+    AuthError(String),
 }
 
 impl std::fmt::Display for AssessmentError {
@@ -165,7 +167,32 @@ impl std::fmt::Display for AssessmentError {
             AssessmentError::SandboxError(msg) => write!(f, "Sandbox error: {msg}"),
             AssessmentError::PolicyError(msg) => write!(f, "Policy error: {msg}"),
             AssessmentError::ValidationError(e) => write!(f, "File validation error: {e}"),
+            AssessmentError::AuthError(msg) => write!(f, "Authentication error: {msg}"),
         }
+    }
+}
+
+/// Check if an `AssessmentError` is an authentication/authorization error (401/403).
+///
+/// Returns `true` when the error indicates expired or rotated credentials that
+/// can be resolved by refreshing from Vault.
+#[must_use]
+pub fn is_auth_error(error: &AssessmentError) -> bool {
+    match error {
+        AssessmentError::AuthError(_) => true,
+        AssessmentError::VeracodeError(veracode_platform::VeracodeError::Authentication(_)) => true,
+        AssessmentError::VeracodeError(veracode_platform::VeracodeError::HttpStatus {
+            status_code,
+            ..
+        }) => matches!(status_code, 401 | 403),
+        AssessmentError::VeracodeError(_)
+        | AssessmentError::NoValidFiles
+        | AssessmentError::ConfigError(_)
+        | AssessmentError::ScanError(_)
+        | AssessmentError::UploadError(_)
+        | AssessmentError::SandboxError(_)
+        | AssessmentError::PolicyError(_)
+        | AssessmentError::ValidationError(_) => false,
     }
 }
 
@@ -606,7 +633,8 @@ impl AssessmentSubmitter {
                             AssessmentError::ConfigError(msg)
                             | AssessmentError::ScanError(msg)
                             | AssessmentError::SandboxError(msg)
-                            | AssessmentError::PolicyError(msg) => msg.clone(),
+                            | AssessmentError::PolicyError(msg)
+                            | AssessmentError::AuthError(msg) => msg.clone(),
                             AssessmentError::ValidationError(err) => format!("{err}"),
                         };
                         warn!(
@@ -970,30 +998,106 @@ impl AssessmentSubmitter {
     ///
     /// # Errors
     /// Returns an error if sandbox or build creation fails, file upload fails, scan operations fail, or result export fails
-    pub async fn upload_and_scan(
+    /// Set up the scan environment and upload files, returning the scan identifiers.
+    ///
+    /// Covers steps 1–4: ensure sandbox, create/get build, upload files, start prescan.
+    /// Returns `(build_id, sandbox_id)` so the caller can resume monitoring with the
+    /// same scan even if credentials rotate before monitoring begins.
+    ///
+    /// # Errors
+    /// Returns an error if sandbox creation, build creation, upload, or prescan start fails.
+    pub async fn setup_and_start_prescan(
         &self,
         files: &[PathBuf],
         app_id: &ApplicationId,
-    ) -> Result<BuildId, AssessmentError> {
-        // Step 1: Ensure sandbox exists first (if sandbox scan) and get sandbox ID
+    ) -> Result<(BuildId, Option<SandboxId>), AssessmentError> {
         let sandbox_id = self
             .ensure_sandbox_and_get_id(app_id.for_rest_api())
             .await?;
 
-        // Step 2: Ensure build exists
         let sandbox_legacy_id = sandbox_id.as_ref().map(|s| s.for_xml_api());
         let build_id = self
             .ensure_build_exists(app_id.for_xml_api(), sandbox_legacy_id)
             .await?;
 
-        // Step 3: Upload files (now simplified)
         let _uploaded_files = self
             .upload_files(files, app_id, sandbox_id.as_ref())
             .await?;
 
-        // Step 4: Start prescan first (normal workflow)
         self.start_prescan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
             .await?;
+
+        Ok((build_id, sandbox_id))
+    }
+
+    /// Monitor scan progress and export results for a scan already in progress.
+    ///
+    /// This is the monitoring/export phase (prescan monitoring, build monitoring, policy
+    /// evaluation, and result export). It can be called independently after
+    /// `setup_and_start_prescan`, allowing credentials to be refreshed between phases
+    /// without restarting the scan — the `build_id` and `sandbox_id` from the setup
+    /// phase are reused.
+    ///
+    /// Returns immediately without monitoring if `--no-wait` was specified in config.
+    ///
+    /// # Errors
+    /// Returns `AuthError` on 401/403 so the caller can refresh credentials and retry
+    /// with the same `build_id`/`sandbox_id`. Other errors indicate real scan failures.
+    pub async fn run_monitoring_and_export(
+        &self,
+        app_id: &ApplicationId,
+        build_id: &BuildId,
+        sandbox_id: Option<&SandboxId>,
+    ) -> Result<(), AssessmentError> {
+        if !self.config.monitor_completion {
+            info!(
+                "⏳ Prescan submitted successfully - not waiting for completion (--no-wait specified)"
+            );
+            info!("   Build ID: {}", build_id);
+            return Ok(());
+        }
+
+        if !self.is_autoscan_enabled() {
+            debug!("🔄 Autoscan disabled, will manually start scan after prescan completes");
+            self.monitor_prescan_phase(app_id.for_xml_api(), build_id, sandbox_id)
+                .await?;
+            debug!("🔄 Prescan complete, manually starting scan...");
+            self.start_scan(app_id.for_xml_api(), build_id, sandbox_id)
+                .await?;
+            self.monitor_build_phase(app_id.for_xml_api(), build_id, sandbox_id)
+                .await?;
+        } else {
+            debug!("🤖 Autoscan enabled, scan will start automatically after prescan");
+            self.monitor_scan_progress(app_id.for_xml_api(), build_id, sandbox_id)
+                .await?;
+        }
+
+        let force_buildinfo = self.config.force_buildinfo_api
+            || std::env::var("VERASCAN_FORCE_BUILDINFO_API").is_ok();
+
+        if force_buildinfo {
+            info!("🔄 XML API mode detected - adding policy evaluation phase");
+            self.monitor_policy_evaluation(app_id.for_xml_api(), sandbox_id)
+                .await?;
+        } else {
+            info!("📊 Summary report mode - policy evaluation handled during export");
+        }
+
+        self.export_scan_results(app_id, build_id, sandbox_id)
+            .await?;
+
+        Ok(())
+    }
+
+    /// # Errors
+    ///
+    /// Returns `AssessmentError` if prescan setup, upload, scan monitoring, or result export fails.
+    pub async fn upload_and_scan(
+        &self,
+        files: &[PathBuf],
+        app_id: &ApplicationId,
+    ) -> Result<BuildId, AssessmentError> {
+        let (build_id, sandbox_id) = self.setup_and_start_prescan(files, app_id).await?;
 
         // Check if we should exit early (--no-wait specified)
         if !self.config.monitor_completion {
@@ -1004,54 +1108,7 @@ impl AssessmentSubmitter {
             return Ok(build_id);
         }
 
-        // Check if we need to manually start scan (only if autoscan is disabled)
-        if !self.is_autoscan_enabled() {
-            debug!("🔄 Autoscan disabled, will manually start scan after prescan completes");
-        } else {
-            debug!("🤖 Autoscan enabled, scan will start automatically after prescan");
-        }
-
-        // Use two-phase monitoring approach matching Java implementation
-        // This handles both prescan completion and scan completion automatically
-        if !self.is_autoscan_enabled() {
-            // For manual scan workflows, monitor prescan first, then start scan, then monitor build
-            self.monitor_prescan_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                .await?;
-
-            debug!("🔄 Prescan complete, manually starting scan...");
-            self.start_scan(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                .await?;
-
-            // Monitor build phase (scan completion)
-            self.monitor_build_phase(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                .await?;
-        } else {
-            // For autoscan workflows, use unified two-phase monitoring
-            self.monitor_scan_progress(app_id.for_xml_api(), &build_id, sandbox_id.as_ref())
-                .await?;
-        }
-
-        // Phase 3: Policy evaluation monitoring (XML API only)
-        // Check if we will be using the XML API for policy status
-        let force_buildinfo = self.config.force_buildinfo_api
-            || std::env::var("VERASCAN_FORCE_BUILDINFO_API").is_ok();
-
-        if force_buildinfo {
-            // We know we'll use XML API, so wait for policy evaluation to complete
-            {
-                info!("🔄 XML API mode detected - adding policy evaluation phase");
-            }
-            self.monitor_policy_evaluation(app_id.for_xml_api(), sandbox_id.as_ref())
-                .await?;
-        } else {
-            // Summary report API will be tried first with built-in retry logic
-            {
-                info!("📊 Summary report mode - policy evaluation handled during export");
-            }
-        }
-
-        // Export results to file
-        self.export_scan_results(app_id, &build_id, sandbox_id.as_ref())
+        self.run_monitoring_and_export(app_id, &build_id, sandbox_id.as_ref())
             .await?;
 
         Ok(build_id)
@@ -1103,6 +1160,7 @@ impl AssessmentSubmitter {
                         return Ok(());
                     } else if prescan_results.status.contains("Failed")
                         || prescan_results.status.contains("Cancelled")
+                        || prescan_results.status.contains("Unknown")
                     {
                         return Err(AssessmentError::ScanError(format!(
                             "Prescan failed with status: {}",
@@ -1195,7 +1253,8 @@ impl AssessmentSubmitter {
                         status
                             if status.contains("Failed")
                                 || status.contains("Error")
-                                || status.contains("Cancelled") =>
+                                || status.contains("Cancelled")
+                                || status.contains("Unknown") =>
                         {
                             return Err(AssessmentError::ScanError(format!(
                                 "Scan failed with status: {status}"
@@ -1313,7 +1372,7 @@ impl AssessmentSubmitter {
                             return Ok(());
                         }
                         "Pre-Scan Failed" | "Pre-Scan Cancelled" | "Prescan Failed"
-                        | "Prescan Cancelled" => {
+                        | "Prescan Cancelled" | "Unknown" => {
                             return Err(AssessmentError::ScanError(format!(
                                 "Prescan failed with status: {}",
                                 prescan_results.status
@@ -1330,9 +1389,16 @@ impl AssessmentSubmitter {
                     }
                 }
                 Err(e) => {
-                    {
-                        info!("⚠️  Error getting prescan status: {e}, retrying...");
+                    if matches!(
+                        e,
+                        veracode_platform::scan::ScanError::Unauthorized
+                            | veracode_platform::scan::ScanError::PermissionDenied
+                    ) {
+                        return Err(AssessmentError::AuthError(format!(
+                            "Authentication error during prescan monitoring: {e}"
+                        )));
                     }
+                    info!("⚠️  Error getting prescan status: {e}, retrying...");
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
                 }
@@ -1401,7 +1467,8 @@ impl AssessmentSubmitter {
                         status
                             if status.contains("Failed")
                                 || status.contains("Error")
-                                || status.contains("Cancelled") =>
+                                || status.contains("Cancelled")
+                                || status.contains("Unknown") =>
                         {
                             return Err(AssessmentError::ScanError(format!(
                                 "Scan failed with status: {status}"
@@ -1423,9 +1490,16 @@ impl AssessmentSubmitter {
                     }
                 }
                 Err(e) => {
-                    {
-                        info!("⚠️  Error getting build status: {e}, retrying...");
+                    if matches!(
+                        e,
+                        veracode_platform::scan::ScanError::Unauthorized
+                            | veracode_platform::scan::ScanError::PermissionDenied
+                    ) {
+                        return Err(AssessmentError::AuthError(format!(
+                            "Authentication error during build monitoring: {e}"
+                        )));
                     }
+                    info!("⚠️  Error getting build status: {e}, retrying...");
                     tokio::time::sleep(tokio::time::Duration::from_secs(poll_interval.into()))
                         .await;
                 }
@@ -1480,9 +1554,20 @@ impl AssessmentSubmitter {
                 }
                 Ok(())
             }
-            Err(e) => Err(AssessmentError::ScanError(format!(
-                "Policy evaluation phase failed: {e}"
-            ))),
+            Err(e) => {
+                if matches!(
+                    e,
+                    veracode_platform::policy::PolicyError::Unauthorized
+                        | veracode_platform::policy::PolicyError::PermissionDenied
+                ) {
+                    return Err(AssessmentError::AuthError(format!(
+                        "Authentication error during policy evaluation: {e}"
+                    )));
+                }
+                Err(AssessmentError::ScanError(format!(
+                    "Policy evaluation phase failed: {e}"
+                )))
+            }
         }
     }
 

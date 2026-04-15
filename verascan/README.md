@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.7.1-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](Cargo.toml)
 
 A comprehensive Rust CLI application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting.
 
@@ -427,6 +427,23 @@ Verascan supports secure credential management via HashiCorp Vault (inherited fr
 - Smart retry logic following Vault API best practices
 - Fast failure on authentication errors
 - Automatic recovery from transient errors
+
+#### Mid-Scan Credential Refresh
+
+If credentials are rotated while a scan is already running, Verascan automatically detects the 401/403 error and refreshes from Vault — no manual intervention required:
+
+- **Pipeline scans**: the scan continues running on Veracode's servers; only fresh HMAC credentials are needed to resume polling with the same scan IDs
+- **Assessment scans**: the prescan/scan continues on Veracode's servers; monitoring resumes with the same build ID and sandbox ID after a credential refresh
+- Up to **3 retry attempts** per phase before exiting with an error
+- Vault-only refresh path is used (no environment variable fallback) to ensure credentials are genuinely rotated
+
+## Scan Monitoring Behaviour
+
+### Cancelled Builds
+
+If a build is cancelled through the Veracode web interface while Verascan is polling, it exits immediately with an error rather than continuing to poll until timeout.
+
+Veracode returns `"Unknown"` as the prescan or scan status when a build is externally cancelled. Verascan treats this as a terminal failure alongside `"Cancelled"` and `"Failed"` statuses.
 
 ## Debugging and Troubleshooting
 
