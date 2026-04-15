@@ -21,6 +21,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - **Modified Files**: `src/cli.rs`
 
 ### Fixed
+- **Policy evaluation phase (Phase 3) exits with code 75 on timeout for `monitor` command**: `monitor_policy_evaluation` previously declared Phase 3 complete with `✅` even when policy status was still "Not Assessed" after retries exhausted, then `export_scan_results` would silently start a second independent retry loop (30 attempts × 10s) outside the deadline
+  - Phase 3 now correctly propagates `PolicyError::Timeout` from `veracode-platform` as `ScanStillInProgress` (exit 75) when `--timeout` is reached in the `monitor` subcommand, or `ScanError` (exit 1) in the `assessment` subcommand — consistent with Phases 1 and 2
+  - Because Phase 3 errors now propagate via `?`, `export_scan_results` is never reached on timeout, so the export's independent policy retry loop no longer runs outside the deadline
+  - **Modified Files**: `src/assessment.rs`
 - **Monitoring Timeout Resets on Credential Refresh**: The monitoring deadline is now anchored to a single `std::time::Instant` computed once before the auth-retry loop, so a Vault credential rotation mid-poll no longer resets the timeout clock
   - Previously, each call to `run_monitoring_and_export` after an `AuthError` restarted from `config.timeout` in full — a rotation at minute 29 of a `--timeout 30` job could extend wall-clock time to 59 minutes
   - The deadline is now passed through `run_monitoring_and_export` → `monitor_scan_progress` / `monitor_prescan_phase` / `monitor_build_phase` / `monitor_policy_evaluation`, where each phase computes `max_polls` from remaining time rather than the configured timeout value

@@ -2148,7 +2148,7 @@ async fn execute_assessment_scan_async(
 
         // Write build ID file when --no-wait is set so downstream CI jobs can consume it
         if *no_wait {
-            let content = format!("VERASCAN_BUILD_ID=\"{build_id}\"\n");
+            let content = format!("export VERASCAN_BUILD_ID=\"{build_id}\"\n");
             match tokio::fs::write(build_id_file, &content).await {
                 Ok(_) => info!("📄 Build ID written to: {build_id_file}"),
                 Err(e) => {

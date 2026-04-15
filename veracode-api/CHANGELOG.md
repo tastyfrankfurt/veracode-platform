@@ -5,6 +5,13 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.11] - 2026-04-15
+
+### Fixed
+- **Policy evaluation retry exhaustion now returns `Err` instead of `Ok("Not Assessed")`**: `evaluate_policy_compliance_via_buildinfo_with_retry` previously returned `Ok(Cow::Borrowed("Not Assessed"))` when all retries were consumed, making it impossible for callers to distinguish a genuine "Not Assessed" policy state from a timeout waiting for evaluation to complete
+  - Now returns `Err(PolicyError::Timeout)` on retry exhaustion so callers can handle the two cases separately
+  - **Modified Files**: `src/policy.rs`
+
 ## [0.7.10] - 2026-03-18
 
 ### Added

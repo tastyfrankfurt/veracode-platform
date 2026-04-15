@@ -3124,7 +3124,7 @@ dependencies = [
 
 [[package]]
 name = "veracode-platform"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "async-stream",
  "bytes",
@@ -3154,7 +3154,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "backon",
  "chrono",

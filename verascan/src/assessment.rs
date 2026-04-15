@@ -1576,6 +1576,7 @@ impl AssessmentSubmitter {
         }
 
         let policy_api = self.client.policy_api();
+        let timeout_minutes = self.config.timeout;
         let poll_interval = 30u32; // 30-second intervals for policy evaluation
         let remaining_secs = deadline
             .saturating_duration_since(std::time::Instant::now())
@@ -1616,6 +1617,16 @@ impl AssessmentSubmitter {
                     return Err(AssessmentError::AuthError(format!(
                         "Authentication error during policy evaluation: {e}"
                     )));
+                }
+                if matches!(e, veracode_platform::policy::PolicyError::Timeout) {
+                    let msg = format!(
+                        "Policy evaluation phase timed out after {timeout_minutes} minutes"
+                    );
+                    return if self.config.soft_timeout {
+                        Err(AssessmentError::ScanStillInProgress(msg))
+                    } else {
+                        Err(AssessmentError::ScanError(msg))
+                    };
                 }
                 Err(AssessmentError::ScanError(format!(
                     "Policy evaluation phase failed: {e}"
