@@ -1416,10 +1416,8 @@ impl ScanApi {
                         }
                     }
                 }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == b"error" {
-                        in_error_tag = false;
-                    }
+                Ok(Event::End(ref e)) if e.name().as_ref() == b"error" => {
+                    in_error_tag = false;
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
@@ -1538,10 +1536,8 @@ impl ScanApi {
                 b"type" => module.module_type = attr_to_string(&attr.value),
                 b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
                 b"selected" => module.selected = attr.value.as_ref() == b"true",
-                b"has_fatal_errors" => {
-                    if attr.value.as_ref() == b"true" {
-                        *has_fatal_errors = true;
-                    }
+                b"has_fatal_errors" if attr.value.as_ref() == b"true" => {
+                    *has_fatal_errors = true;
                 }
                 b"size" => {
                     if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
@@ -1608,13 +1604,12 @@ impl ScanApi {
                         _ => {}
                     }
                 }
-                Ok(Event::Empty(ref e)) => {
+                Ok(Event::Empty(ref e))
                     // Handle self-closing module tags like <module ... />
-                    if e.name().as_ref() == b"module" {
-                        let module = self
-                            .parse_module_from_attributes(e.attributes(), &mut has_fatal_errors);
-                        modules.push(module);
-                    }
+                    if e.name().as_ref() == b"module" => {
+                    let module = self
+                        .parse_module_from_attributes(e.attributes(), &mut has_fatal_errors);
+                    modules.push(module);
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
@@ -1715,22 +1710,19 @@ impl ScanApi {
                         in_error_tag = true;
                     }
                 }
-                Ok(Event::Empty(ref e)) => {
+                Ok(Event::Empty(ref e))
                     // Handle self-closing file tags like <file ... />
-                    if e.name().as_ref() == b"file" {
-                        let file = self.parse_file_from_attributes(e.attributes());
-                        files.push(file);
-                    }
+                    if e.name().as_ref() == b"file" => {
+                    let file = self.parse_file_from_attributes(e.attributes());
+                    files.push(file);
                 }
-                Ok(Event::Text(ref e)) => {
-                    if in_error_tag {
-                        current_error = Some(String::from_utf8_lossy(e).to_string());
-                    }
+                Ok(Event::Text(ref e))
+                    if in_error_tag => {
+                    current_error = Some(String::from_utf8_lossy(e).to_string());
                 }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == b"error" {
-                        in_error_tag = false;
-                    }
+                Ok(Event::End(ref e))
+                    if e.name().as_ref() == b"error" => {
+                    in_error_tag = false;
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => {
@@ -1784,11 +1776,10 @@ impl ScanApi {
                             for attr in e.attributes().flatten() {
                                 match attr.key.as_ref() {
                                     b"build_id" => scan_info.build_id = attr_to_string(&attr.value),
-                                    b"analysis_unit" => {
+                                    b"analysis_unit"
                                         // Fallback status from buildinfo (older API format)
-                                        if scan_info.status == "Unknown" {
-                                            scan_info.status = attr_to_string(&attr.value);
-                                        }
+                                        if scan_info.status == "Unknown" => {
+                                        scan_info.status = attr_to_string(&attr.value);
                                     }
                                     b"analysis_unit_id" => {
                                         scan_info.analysis_unit_id =
@@ -1834,24 +1825,22 @@ impl ScanApi {
                         _ => {}
                     }
                 }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == b"build" {
-                        inside_build = false;
-                    }
+                Ok(Event::End(ref e))
+                    if e.name().as_ref() == b"build" => {
+                    inside_build = false;
                 }
-                Ok(Event::Empty(ref e)) => {
+                Ok(Event::Empty(ref e))
                     // Handle self-closing elements like <analysis_unit ... />
-                    if e.name().as_ref() == b"analysis_unit" && inside_build {
-                        for attr in e.attributes().flatten() {
-                            match attr.key.as_ref() {
-                                b"status" => {
-                                    scan_info.status = attr_to_string(&attr.value);
-                                }
-                                b"analysis_type" => {
-                                    scan_info.scan_type = attr_to_string(&attr.value);
-                                }
-                                _ => {}
+                    if e.name().as_ref() == b"analysis_unit" && inside_build => {
+                    for attr in e.attributes().flatten() {
+                        match attr.key.as_ref() {
+                            b"status" => {
+                                scan_info.status = attr_to_string(&attr.value);
                             }
+                            b"analysis_type" => {
+                                scan_info.scan_type = attr_to_string(&attr.value);
+                            }
+                            _ => {}
                         }
                     }
                 }

@@ -944,13 +944,14 @@ impl<'a> PolicyApi<'a> {
                 return Ok(Cow::Owned(status.to_string()));
             }
 
-            // If we've reached max retries, return "Not Assessed"
+            // If we've reached max retries, return a Timeout error so callers can
+            // distinguish "timed out waiting" from "policy genuinely not assigned"
             attempts = attempts.saturating_add(1);
             if attempts >= max_retries {
                 warn!(
                     "Policy evaluation still not assessed after {max_retries} attempts. This may indicate: scan is still in progress, policy evaluation is taking longer than expected, or application may not have a policy assigned"
                 );
-                return Ok(Cow::Borrowed("Not Assessed"));
+                return Err(PolicyError::Timeout);
             }
 
             // Log retry attempt

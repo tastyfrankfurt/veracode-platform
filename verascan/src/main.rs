@@ -4,8 +4,8 @@ use verascan::cli::print_environment_variables;
 use verascan::credentials::load_veracode_credentials_from_env;
 use verascan::{
     Args, Commands, create_veracode_config_from_credentials, create_veracode_config_with_proxy,
-    execute_assessment_scan, execute_file_search, execute_findings_export, execute_pipeline_scan,
-    execute_policy_download, load_credentials_and_proxy_from_vault,
+    execute_assessment_scan, execute_file_search, execute_findings_export, execute_monitor_scan,
+    execute_pipeline_scan, execute_policy_download, load_credentials_and_proxy_from_vault,
 };
 
 fn main() {
@@ -134,6 +134,10 @@ fn main() {
                     .await
                     .unwrap_or_else(|code| std::process::exit(code));
             });
+        }
+        Commands::Monitor { .. } => {
+            execute_monitor_scan(&veracode_config, &args)
+                .unwrap_or_else(|code| std::process::exit(code));
         }
         Commands::HelpEnv => {
             // Already handled above before credential loading

@@ -269,6 +269,15 @@ pub enum Commands {
         )]
         no_wait: bool,
 
+        /// File to write `VERASCAN_BUILD_ID` when using --no-wait (for CI artifact passing)
+        #[arg(
+            long = "build-id-file",
+            help = "File to write VERASCAN_BUILD_ID=\"<id>\" when using --no-wait (default: vid.env)",
+            default_value = "vid.env",
+            value_parser = validate_build_id_file
+        )]
+        build_id_file: String,
+
         /// Delete incomplete scan policy for assessment scans
         #[arg(long = "deleteincompletescan", help = "Build deletion policy for assessment scans: 0=Never delete, 1=Delete safe builds only (default), 2=Delete any build except Results Ready", default_value = "1", value_parser = validate_delete_incomplete_scan)]
         deleteincompletescan: u8,
@@ -339,6 +348,65 @@ pub enum Commands {
         min_severity: Option<String>,
     },
 
+    /// Monitor an in-progress Veracode Assessment scan and evaluate policy on completion
+    Monitor {
+        /// Veracode application profile name
+        #[arg(short = 'n', long = "app-profile-name", help = "Veracode application profile name (required)", value_parser = validate_name_field, required = true)]
+        app_profile_name: String,
+
+        /// Build ID from a previous --no-wait assessment scan
+        #[arg(
+            long = "build-id",
+            help = "Build ID from a previous --no-wait assessment scan (required)",
+            env = "VERASCAN_BUILD_ID",
+            required = true,
+            value_parser = validate_build_id
+        )]
+        build_id: String,
+
+        /// Sandbox name (required if the original scan targeted a sandbox)
+        #[arg(long = "sandbox-name", help = "Sandbox name (required if the original scan targeted a sandbox)", value_parser = validate_sandbox_name)]
+        sandbox_name: Option<String>,
+
+        /// Maximum minutes to monitor before exiting with code 75 (scan still in progress, safe to retry)
+        #[arg(
+            short = 't',
+            long = "timeout",
+            help = "Maximum minutes to monitor before exiting with code 75 (scan still in progress — safe to retry)",
+            default_value = "55"
+        )]
+        timeout: u32,
+
+        /// Export scan results to a file when the scan completes
+        #[arg(
+            long = "export-results",
+            help = "Export assessment scan results to specified file path (JSON format)",
+            default_value = "assessment-results.json"
+        )]
+        export_results: String,
+
+        /// Break build on Veracode platform policy compliance failure
+        #[arg(
+            long = "break",
+            help = "Break build (exit code 4) based on Veracode platform policy compliance"
+        )]
+        break_build: bool,
+
+        /// Force use of getbuildinfo.do XML API for policy evaluation
+        #[arg(
+            long = "force-buildinfo-api",
+            help = "Skip summary report API and use getbuildinfo.do XML API for break build evaluation"
+        )]
+        force_buildinfo_api: bool,
+
+        /// Break build on sandbox Conditional Pass
+        #[arg(
+            long = "strict-sandbox",
+            help = "Exit with code 4 when sandbox scans return 'Conditional Pass'"
+        )]
+        strict_sandbox: bool,
+    },
+
     /// Show all supported environment variables
     HelpEnv,
 }
@@ -377,6 +445,9 @@ impl Args {
             }
             Commands::Export { .. } => {
                 // Export validation happens at the field level with required fields
+            }
+            Commands::Monitor { .. } => {
+                // Monitor validation happens at the field level with required fields
             }
             Commands::HelpEnv => {
                 // No validation needed for help-env subcommand
@@ -484,9 +555,9 @@ fn validate_threads(s: &str) -> Result<usize, String> {
 /// Validate name fields (project name, app profile name)
 fn validate_name_field(s: &str) -> Result<String, String> {
     // Check length
-    if s.len() > 70 {
+    if s.len() > 256 {
         return Err(format!(
-            "Name must be 70 characters or less, got: {} characters",
+            "Name must be 256 characters or less, got: {} characters",
             s.len()
         ));
     }
@@ -912,6 +983,107 @@ fn validate_cmek_alias(s: &str) -> Result<String, String> {
     Ok(s.to_string())
 }
 
+/// Validate build ID input for `--build-id` / `VERASCAN_BUILD_ID`.
+///
+/// Accepts either:
+/// - A positive non-zero integer (Veracode XML API build ID, e.g. `"12345678"`)
+/// - A standard UUID/GUID (e.g. `"550e8400-e29b-41d4-a716-446655440000"`)
+fn validate_build_id(s: &str) -> Result<String, String> {
+    if s.is_empty() {
+        return Err("Build ID cannot be empty".to_string());
+    }
+
+    // Reject control / non-printable characters
+    if s.chars().any(|c| c.is_control()) {
+        return Err("Build ID must not contain control or non-printable characters".to_string());
+    }
+
+    // Accept a positive non-zero integer
+    if s.chars().all(|c| c.is_ascii_digit()) {
+        return match s.parse::<u64>() {
+            Ok(0) => Err("Build ID must be a non-zero value".to_string()),
+            Ok(_) => Ok(s.to_string()),
+            Err(_) => Err(format!("Build ID numeric value is out of range: '{s}'")),
+        };
+    }
+
+    // Accept a UUID/GUID: 8-4-4-4-12 lowercase or uppercase hex digits with hyphens
+    let is_uuid = s.len() == 36
+        && s.bytes().enumerate().all(|(i, c)| {
+            if matches!(i, 8 | 13 | 18 | 23) {
+                c == b'-'
+            } else {
+                c.is_ascii_hexdigit()
+            }
+        });
+
+    if is_uuid {
+        return Ok(s.to_lowercase());
+    }
+
+    Err(format!(
+        "Build ID must be a positive integer or a UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx), got: '{s}'"
+    ))
+}
+
+/// Validate build ID output file path for `--build-id-file`.
+///
+/// Enforces:
+/// - Valid UTF-8 with no control/non-printable characters
+/// - Maximum 255 characters (common filesystem limit)
+/// - No absolute paths (must not start with `/`)
+/// - No path traversal components (`..`)
+/// - Only safe filename characters: alphanumeric, `-`, `_`, `.`, `/`
+fn validate_build_id_file(s: &str) -> Result<String, String> {
+    // Encoding: reject any non-printable or control characters (UTF-8 is guaranteed by &str)
+    if s.chars().any(|c| c.is_control()) {
+        return Err(
+            "Build ID file path must not contain control or non-printable characters".to_string(),
+        );
+    }
+
+    // Length
+    if s.is_empty() {
+        return Err("Build ID file path cannot be empty".to_string());
+    }
+    if s.len() > 255 {
+        return Err(format!(
+            "Build ID file path must be 255 characters or less, got: {} characters",
+            s.len()
+        ));
+    }
+
+    // Reject absolute paths
+    if s.starts_with('/') {
+        return Err(format!(
+            "Build ID file path must be relative to the working directory, got absolute path: '{s}'"
+        ));
+    }
+
+    // Reject path traversal: any component equal to `..`
+    if std::path::Path::new(s)
+        .components()
+        .any(|c| c == std::path::Component::ParentDir)
+    {
+        return Err(format!(
+            "Build ID file path must not contain path traversal sequences (e.g. '../'): '{s}'"
+        ));
+    }
+
+    // Safe character allowlist: alphanumeric, dash, underscore, dot, forward slash
+    let is_valid = s
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/'));
+
+    if !is_valid {
+        return Err(format!(
+            "Build ID file path can only contain alphanumeric characters, dashes (-), underscores (_), dots (.), and forward slashes (/). Got: '{s}'"
+        ));
+    }
+
+    Ok(s.to_string())
+}
+
 /// Parse business criticality string to `BusinessCriticality` enum
 #[must_use]
 pub fn parse_business_criticality(
@@ -1149,6 +1321,7 @@ mod tests {
                 sandbox_name: None,
                 modules: None,
                 no_wait: false,
+                build_id_file: "vid.env".to_string(),
                 teamname: None,
                 bus_cri: "very-high".to_string(),
                 repo_url: None,
@@ -1617,7 +1790,7 @@ mod tests {
         // --------------------------------------------------------------------
         // Security concern: Name fields are used in API calls and must be sanitized
         // Property 1: Never panics on valid character sets
-        // Property 2: Length limit (70 chars) is enforced
+        // Property 2: Length limit (256 chars) is enforced
         // Property 3: Empty/whitespace-only strings are rejected
         // Property 4: Valid characters (alphanumeric, -, _, space, /) are accepted
         #[test]
@@ -1629,8 +1802,8 @@ mod tests {
             // Property 1: Never panics (implicit - test completes)
 
             // Property 2: Check length enforcement
-            if input.len() > 70 {
-                assert!(result.is_err(), "Strings over 70 chars should be rejected");
+            if input.len() > 256 {
+                assert!(result.is_err(), "Strings over 256 chars should be rejected");
             }
             // Property 3: Check empty/whitespace rejection
             else if input.trim().is_empty() {
@@ -1823,6 +1996,215 @@ mod tests {
             // Property 4: Result should contain original input
             assert_eq!(result.unwrap(), input);
         }
+    }
+
+    // -------------------------------------------------------------------------
+    // validate_build_id
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_build_id_valid_integer() {
+        assert!(validate_build_id("12345678").is_ok());
+        assert!(validate_build_id("1").is_ok());
+        assert!(validate_build_id("99999999").is_ok());
+    }
+
+    #[test]
+    fn test_validate_build_id_valid_uuid() {
+        // Lowercase
+        assert!(validate_build_id("550e8400-e29b-41d4-a716-446655440000").is_ok());
+        // Uppercase — normalised to lowercase on return
+        let result = validate_build_id("550E8400-E29B-41D4-A716-446655440000");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "550e8400-e29b-41d4-a716-446655440000");
+        // Mixed case
+        assert!(validate_build_id("550e8400-E29B-41d4-A716-446655440000").is_ok());
+    }
+
+    #[test]
+    fn test_validate_build_id_rejects_empty() {
+        let result = validate_build_id("");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_build_id_rejects_zero() {
+        let result = validate_build_id("0");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("non-zero"));
+    }
+
+    #[test]
+    fn test_validate_build_id_rejects_control_characters() {
+        let result = validate_build_id("12345\x00678");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control"));
+
+        let result = validate_build_id("12345\n678");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("control"));
+    }
+
+    #[test]
+    fn test_validate_build_id_rejects_arbitrary_strings() {
+        // Plain text
+        let result = validate_build_id("my-build");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("positive integer or a UUID"));
+
+        // Looks numeric but has letters
+        let result = validate_build_id("1234abc");
+        assert!(result.is_err());
+
+        // UUID wrong length
+        let result = validate_build_id("550e8400-e29b-41d4-a716-44665544000");
+        assert!(result.is_err());
+
+        // UUID wrong structure (missing hyphens)
+        let result = validate_build_id("550e8400e29b41d4a716446655440000");
+        assert!(result.is_err());
+
+        // UUID with invalid hex chars
+        let result = validate_build_id("550e8400-e29b-41d4-a716-44665544000g");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_build_id_returns_integer_unchanged() {
+        let result = validate_build_id("87654321");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "87654321");
+    }
+
+    // -------------------------------------------------------------------------
+    // validate_build_id_file
+    // -------------------------------------------------------------------------
+
+    #[test]
+    fn test_validate_build_id_file_valid() {
+        // Default value
+        assert!(validate_build_id_file("vid.env").is_ok());
+
+        // Simple filenames
+        assert!(validate_build_id_file("build.env").is_ok());
+        assert!(validate_build_id_file("output.txt").is_ok());
+        assert!(validate_build_id_file("build_id").is_ok());
+        assert!(validate_build_id_file("build-id-123").is_ok());
+
+        // Relative subdirectory paths
+        assert!(validate_build_id_file("ci/artifacts/vid.env").is_ok());
+        assert!(validate_build_id_file("output/build.env").is_ok());
+
+        // Dots in filename (not traversal)
+        assert!(validate_build_id_file("my.build.env").is_ok());
+    }
+
+    #[test]
+    fn test_validate_build_id_file_rejects_empty() {
+        let result = validate_build_id_file("");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_validate_build_id_file_rejects_too_long() {
+        let long_path = "a".repeat(256);
+        let result = validate_build_id_file(&long_path);
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("255 characters or less"));
+    }
+
+    #[test]
+    fn test_validate_build_id_file_rejects_absolute_paths() {
+        let result = validate_build_id_file("/etc/passwd");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("relative"));
+
+        let result = validate_build_id_file("/tmp/vid.env");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("relative"));
+    }
+
+    #[test]
+    fn test_validate_build_id_file_rejects_path_traversal() {
+        // Simple traversal
+        let result = validate_build_id_file("../vid.env");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("path traversal"));
+
+        // Nested traversal
+        let result = validate_build_id_file("../../etc/passwd");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("path traversal"));
+
+        // Traversal in the middle of a path
+        let result = validate_build_id_file("ci/../../../etc/passwd");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("path traversal"));
+    }
+
+    #[test]
+    fn test_validate_build_id_file_rejects_control_characters() {
+        // Null byte
+        let result = validate_build_id_file("vid\0.env");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("control"));
+
+        // Newline
+        let result = validate_build_id_file("vid\n.env");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("control"));
+
+        // Tab
+        let result = validate_build_id_file("vid\t.env");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("control"));
+    }
+
+    #[test]
+    fn test_validate_build_id_file_rejects_invalid_characters() {
+        // Space
+        let result = validate_build_id_file("my file.env");
+        assert!(result.is_err());
+        let e = result.unwrap_err();
+        assert!(e.contains("can only contain"));
+
+        // Shell metacharacters
+        let result = validate_build_id_file("vid;env");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("can only contain"));
+
+        let result = validate_build_id_file("$(vid.env)");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("can only contain"));
+
+        let result = validate_build_id_file("vid&.env");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("can only contain"));
+
+        // At-sign
+        let result = validate_build_id_file("vid@.env");
+        assert!(result.is_err());
+        assert!(result.unwrap_err().contains("can only contain"));
+    }
+
+    #[test]
+    fn test_validate_build_id_file_returns_input_unchanged() {
+        let input = "ci/artifacts/vid.env";
+        let result = validate_build_id_file(input);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), input);
     }
 }
 

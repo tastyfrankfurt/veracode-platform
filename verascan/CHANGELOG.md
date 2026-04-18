@@ -5,7 +5,33 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.7.4] - 2026-04-15
+
+### Added
+- **`monitor` subcommand**: New `verascan monitor` command reconnects to an in-progress assessment scan by build ID, designed for CI pipelines (e.g. GitLab) where the scan was submitted with `--no-wait` in a prior job
+  - Accepts `--app-profile-name`, `--build-id` (or `VERASCAN_BUILD_ID` env var), optional `--sandbox-name`, `--timeout` (default 55 minutes), `--export-results`, `--break`, `--force-buildinfo-api`, `--strict-sandbox`
+  - Exit codes: `0` (complete, policy passed or `--break` not set), `4` (policy Did Not Pass with `--break`), `75` (scan still in progress after `--timeout` — safe to retry the CI job), `1` (unrecoverable error)
+  - Supports Vault credential refresh on mid-poll auth errors with the same auth-retry pattern used by the `assessment` command
+  - **Modified Files**: `src/cli.rs`, `src/scan.rs`, `src/assessment.rs`, `src/lib.rs`, `src/main.rs`, `src/search.rs`
+- **`--build-id-file` flag for `assessment`**: When using `--no-wait`, the build ID is written to a file as `VERASCAN_BUILD_ID="<id>"` for CI artifact passing between jobs (default: `vid.env`)
+  - **Modified Files**: `src/cli.rs`, `src/scan.rs`
+
+### Changed
+- **Name field length limit raised from 70 to 256 characters**: `--app-profile-name` and other name fields now accept up to 256 characters to accommodate longer Veracode application profile names
+  - **Modified Files**: `src/cli.rs`
+
+### Fixed
+- **Policy evaluation phase (Phase 3) exits with code 75 on timeout for `monitor` command**: `monitor_policy_evaluation` previously declared Phase 3 complete with `✅` even when policy status was still "Not Assessed" after retries exhausted, then `export_scan_results` would silently start a second independent retry loop (30 attempts × 10s) outside the deadline
+  - Phase 3 now correctly propagates `PolicyError::Timeout` from `veracode-platform` as `ScanStillInProgress` (exit 75) when `--timeout` is reached in the `monitor` subcommand, or `ScanError` (exit 1) in the `assessment` subcommand — consistent with Phases 1 and 2
+  - Because Phase 3 errors now propagate via `?`, `export_scan_results` is never reached on timeout, so the export's independent policy retry loop no longer runs outside the deadline
+  - **Modified Files**: `src/assessment.rs`
+- **Monitoring Timeout Resets on Credential Refresh**: The monitoring deadline is now anchored to a single `std::time::Instant` computed once before the auth-retry loop, so a Vault credential rotation mid-poll no longer resets the timeout clock
+  - Previously, each call to `run_monitoring_and_export` after an `AuthError` restarted from `config.timeout` in full — a rotation at minute 29 of a `--timeout 30` job could extend wall-clock time to 59 minutes
+  - The deadline is now passed through `run_monitoring_and_export` → `monitor_scan_progress` / `monitor_prescan_phase` / `monitor_build_phase` / `monitor_policy_evaluation`, where each phase computes `max_polls` from remaining time rather than the configured timeout value
+  - Applies to both `assessment` and `monitor` subcommands
+  - **Modified Files**: `src/assessment.rs`, `src/scan.rs`
+
+## [0.7.3] - 2026-04-15
 
 ### Fixed
 - **Cancelled Build Detection**: Verascan now exits immediately when a build is cancelled through the Veracode web interface instead of polling until timeout

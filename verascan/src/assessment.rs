@@ -154,6 +154,8 @@ pub enum AssessmentError {
     ValidationError(ValidationError),
     /// Authentication/authorization error (401/403) — credentials may have expired
     AuthError(String),
+    /// Scan is still in progress after the configured timeout — safe to retry (exit code 75)
+    ScanStillInProgress(String),
 }
 
 impl std::fmt::Display for AssessmentError {
@@ -168,6 +170,9 @@ impl std::fmt::Display for AssessmentError {
             AssessmentError::PolicyError(msg) => write!(f, "Policy error: {msg}"),
             AssessmentError::ValidationError(e) => write!(f, "File validation error: {e}"),
             AssessmentError::AuthError(msg) => write!(f, "Authentication error: {msg}"),
+            AssessmentError::ScanStillInProgress(msg) => {
+                write!(f, "Scan still in progress (timeout): {msg}")
+            }
         }
     }
 }
@@ -192,7 +197,8 @@ pub fn is_auth_error(error: &AssessmentError) -> bool {
         | AssessmentError::UploadError(_)
         | AssessmentError::SandboxError(_)
         | AssessmentError::PolicyError(_)
-        | AssessmentError::ValidationError(_) => false,
+        | AssessmentError::ValidationError(_)
+        | AssessmentError::ScanStillInProgress(_) => false,
     }
 }
 
@@ -249,6 +255,9 @@ pub struct AssessmentScanConfig {
     pub strict_sandbox: bool,
     /// Custom build version (if None, auto-generates timestamp)
     pub build_version: Option<String>,
+    /// When true, timeout returns `ScanStillInProgress` (exit 75) instead of `ScanError` (exit 1).
+    /// Used by the `monitor` subcommand so GitLab CI can retry the job on timeout.
+    pub soft_timeout: bool,
 }
 
 impl Default for AssessmentScanConfig {
@@ -271,6 +280,7 @@ impl Default for AssessmentScanConfig {
             force_buildinfo_api: false, // Default to trying summary report first
             strict_sandbox: false,   // Default to not treating Conditional Pass as failure
             build_version: None,     // Default to auto-generated timestamp
+            soft_timeout: false,     // Default to hard timeout (ScanError, exit 1)
         }
     }
 }
@@ -634,7 +644,8 @@ impl AssessmentSubmitter {
                             | AssessmentError::ScanError(msg)
                             | AssessmentError::SandboxError(msg)
                             | AssessmentError::PolicyError(msg)
-                            | AssessmentError::AuthError(msg) => msg.clone(),
+                            | AssessmentError::AuthError(msg)
+                            | AssessmentError::ScanStillInProgress(msg) => msg.clone(),
                             AssessmentError::ValidationError(err) => format!("{err}"),
                         };
                         warn!(
@@ -1048,6 +1059,7 @@ impl AssessmentSubmitter {
         app_id: &ApplicationId,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
+        deadline: std::time::Instant,
     ) -> Result<(), AssessmentError> {
         if !self.config.monitor_completion {
             info!(
@@ -1059,16 +1071,16 @@ impl AssessmentSubmitter {
 
         if !self.is_autoscan_enabled() {
             debug!("🔄 Autoscan disabled, will manually start scan after prescan completes");
-            self.monitor_prescan_phase(app_id.for_xml_api(), build_id, sandbox_id)
+            self.monitor_prescan_phase(app_id.for_xml_api(), build_id, sandbox_id, deadline)
                 .await?;
             debug!("🔄 Prescan complete, manually starting scan...");
             self.start_scan(app_id.for_xml_api(), build_id, sandbox_id)
                 .await?;
-            self.monitor_build_phase(app_id.for_xml_api(), build_id, sandbox_id)
+            self.monitor_build_phase(app_id.for_xml_api(), build_id, sandbox_id, deadline)
                 .await?;
         } else {
             debug!("🤖 Autoscan enabled, scan will start automatically after prescan");
-            self.monitor_scan_progress(app_id.for_xml_api(), build_id, sandbox_id)
+            self.monitor_scan_progress(app_id.for_xml_api(), build_id, sandbox_id, deadline)
                 .await?;
         }
 
@@ -1077,7 +1089,7 @@ impl AssessmentSubmitter {
 
         if force_buildinfo {
             info!("🔄 XML API mode detected - adding policy evaluation phase");
-            self.monitor_policy_evaluation(app_id.for_xml_api(), sandbox_id)
+            self.monitor_policy_evaluation(app_id.for_xml_api(), sandbox_id, deadline)
                 .await?;
         } else {
             info!("📊 Summary report mode - policy evaluation handled during export");
@@ -1108,7 +1120,12 @@ impl AssessmentSubmitter {
             return Ok(build_id);
         }
 
-        self.run_monitoring_and_export(app_id, &build_id, sandbox_id.as_ref())
+        let deadline = std::time::Instant::now()
+            .checked_add(std::time::Duration::from_secs(
+                u64::from(self.config.timeout).saturating_mul(60),
+            ))
+            .unwrap_or_else(std::time::Instant::now);
+        self.run_monitoring_and_export(app_id, &build_id, sandbox_id.as_ref(), deadline)
             .await?;
 
         Ok(build_id)
@@ -1304,6 +1321,7 @@ impl AssessmentSubmitter {
         app_id: &str,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
+        deadline: std::time::Instant,
     ) -> Result<(), AssessmentError> {
         {
             info!("🔍 Starting two-phase scan monitoring (Java-compatible approach)");
@@ -1314,7 +1332,7 @@ impl AssessmentSubmitter {
 
         // Phase 1: Monitor prescan status until "Pre-Scan Success" or failure
         match self
-            .monitor_prescan_phase(app_id, build_id, sandbox_id)
+            .monitor_prescan_phase(app_id, build_id, sandbox_id, deadline)
             .await
         {
             Ok(()) => {
@@ -1324,7 +1342,10 @@ impl AssessmentSubmitter {
         }
 
         // Phase 2: Monitor build status until "Results Ready" or failure
-        match self.monitor_build_phase(app_id, build_id, sandbox_id).await {
+        match self
+            .monitor_build_phase(app_id, build_id, sandbox_id, deadline)
+            .await
+        {
             Ok(()) => {
                 {
                     info!("✅ Phase 2 complete - scan finished successfully");
@@ -1341,6 +1362,7 @@ impl AssessmentSubmitter {
         app_id: &str,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
+        deadline: std::time::Instant,
     ) -> Result<(), AssessmentError> {
         {
             info!("🔄 Phase 1: Monitoring prescan status...");
@@ -1348,8 +1370,14 @@ impl AssessmentSubmitter {
 
         let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
-        let poll_interval = 30; // Java uses 30-second intervals for prescan
-        let max_polls = timeout_minutes.saturating_mul(60) / poll_interval;
+        let poll_interval = 30u32; // Java uses 30-second intervals for prescan
+        let remaining_secs = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs();
+        let max_polls = remaining_secs
+            .checked_div(u64::from(poll_interval))
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(u32::MAX);
 
         for poll_count in 1..=max_polls {
             info!("🔄 Prescan poll attempt {poll_count}/{max_polls}");
@@ -1405,9 +1433,15 @@ impl AssessmentSubmitter {
             }
         }
 
-        Err(AssessmentError::ScanError(format!(
-            "Prescan phase timed out after {timeout_minutes} minutes"
-        )))
+        if self.config.soft_timeout {
+            Err(AssessmentError::ScanStillInProgress(format!(
+                "Prescan phase timed out after {timeout_minutes} minutes"
+            )))
+        } else {
+            Err(AssessmentError::ScanError(format!(
+                "Prescan phase timed out after {timeout_minutes} minutes"
+            )))
+        }
     }
 
     /// Phase 2: Monitor build status (Java getbuildinfo.do API)
@@ -1416,6 +1450,7 @@ impl AssessmentSubmitter {
         app_id: &str,
         build_id: &BuildId,
         sandbox_id: Option<&SandboxId>,
+        deadline: std::time::Instant,
     ) -> Result<(), AssessmentError> {
         {
             info!("🔄 Phase 2: Monitoring build status...");
@@ -1423,8 +1458,14 @@ impl AssessmentSubmitter {
 
         let scan_api = self.client.scan_api()?;
         let timeout_minutes = self.config.timeout;
-        let poll_interval = 60; // Java uses 60-second intervals for build monitoring
-        let max_polls = timeout_minutes.saturating_mul(60) / poll_interval;
+        let poll_interval = 60u32; // Java uses 60-second intervals for build monitoring
+        let remaining_secs = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs();
+        let max_polls = remaining_secs
+            .checked_div(u64::from(poll_interval))
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(u32::MAX);
 
         for poll_count in 1..=max_polls {
             info!("🔄 Build status poll attempt {poll_count}/{max_polls}");
@@ -1506,9 +1547,15 @@ impl AssessmentSubmitter {
             }
         }
 
-        Err(AssessmentError::ScanError(format!(
-            "Build monitoring phase timed out after {timeout_minutes} minutes"
-        )))
+        if self.config.soft_timeout {
+            Err(AssessmentError::ScanStillInProgress(format!(
+                "Build monitoring phase timed out after {timeout_minutes} minutes"
+            )))
+        } else {
+            Err(AssessmentError::ScanError(format!(
+                "Build monitoring phase timed out after {timeout_minutes} minutes"
+            )))
+        }
     }
 
     /// Phase 3: Monitor policy evaluation until ready (XML API only)
@@ -1522,6 +1569,7 @@ impl AssessmentSubmitter {
         &self,
         app_id: &str,
         sandbox_id: Option<&SandboxId>,
+        deadline: std::time::Instant,
     ) -> Result<(), AssessmentError> {
         {
             info!("🔄 Phase 3: Monitoring policy evaluation...");
@@ -1529,8 +1577,14 @@ impl AssessmentSubmitter {
 
         let policy_api = self.client.policy_api();
         let timeout_minutes = self.config.timeout;
-        let poll_interval = 30; // 30-second intervals for policy evaluation
-        let max_retries = timeout_minutes.saturating_mul(60) / poll_interval;
+        let poll_interval = 30u32; // 30-second intervals for policy evaluation
+        let remaining_secs = deadline
+            .saturating_duration_since(std::time::Instant::now())
+            .as_secs();
+        let max_retries = remaining_secs
+            .checked_div(u64::from(poll_interval))
+            .and_then(|v| u32::try_from(v).ok())
+            .unwrap_or(u32::MAX);
 
         let sandbox_legacy_id = match self.config.scan_type {
             ScanType::Sandbox => sandbox_id.map(|s| s.for_xml_api()),
@@ -1563,6 +1617,16 @@ impl AssessmentSubmitter {
                     return Err(AssessmentError::AuthError(format!(
                         "Authentication error during policy evaluation: {e}"
                     )));
+                }
+                if matches!(e, veracode_platform::policy::PolicyError::Timeout) {
+                    let msg = format!(
+                        "Policy evaluation phase timed out after {timeout_minutes} minutes"
+                    );
+                    return if self.config.soft_timeout {
+                        Err(AssessmentError::ScanStillInProgress(msg))
+                    } else {
+                        Err(AssessmentError::ScanError(msg))
+                    };
                 }
                 Err(AssessmentError::ScanError(format!(
                     "Policy evaluation phase failed: {e}"
@@ -1887,6 +1951,7 @@ mod tests {
             force_buildinfo_api: false,         // Test default value
             strict_sandbox: false,              // Test default value
             build_version: Some("v1.2.3".to_string()), // Test custom build version
+            soft_timeout: false,                // Test default value
         };
 
         assert_eq!(config.threads, 8);

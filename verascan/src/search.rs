@@ -29,6 +29,9 @@ pub fn execute_file_search(args: &Args) -> Result<Vec<PathBuf>, i32> {
         Commands::Export { .. } => {
             return Err(1); // Export command doesn't need file search
         }
+        Commands::Monitor { .. } => {
+            return Err(1); // Monitor command doesn't need file search
+        }
         Commands::HelpEnv => {
             return Err(1); // HelpEnv command doesn't need file search
         }
@@ -87,6 +90,10 @@ fn display_search_results(
             }
             Commands::Export { .. } => {
                 // Export command doesn't use file search, this shouldn't be reached
+                return Ok(());
+            }
+            Commands::Monitor { .. } => {
+                // Monitor command doesn't use file search, this shouldn't be reached
                 return Ok(());
             }
             Commands::HelpEnv => {

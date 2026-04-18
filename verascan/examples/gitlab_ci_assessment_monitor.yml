@@ -1,0 +1,114 @@
+# GitLab CI — Veracode Assessment scan using the two-job --no-wait / monitor pattern
+#
+# How it works:
+#   1. verascan_upload  — uploads artifacts and starts the scan, then exits immediately
+#                         (--no-wait). Writes the build ID to vid.env and passes it as
+#                         a job artifact to the next stage.
+#   2. verascan_monitor — sources vid.env (sets VERASCAN_BUILD_ID in the shell
+#                         environment, which verascan monitor reads automatically) and
+#                         polls until the scan finishes or the job times out.
+#                         Exit code 75 means the scan is still running; GitLab retries
+#                         the job automatically up to 5 times (≈5 hours of wall time
+#                         with a 55-minute timeout per attempt).
+#
+# Required CI/CD variables (Settings → CI/CD → Variables):
+#   VERACODE_API_ID   — Veracode API ID
+#   VERACODE_API_KEY  — Veracode API key
+#
+# Optional CI/CD variables:
+#   VERASCAN_VERSION  — verascan binary version to download (default: latest)
+#   VERACODE_REGION   — commercial | european | federal (default: commercial)
+
+stages:
+  - upload
+  - monitor
+
+# ---------------------------------------------------------------------------
+# Shared configuration
+# ---------------------------------------------------------------------------
+
+.verascan_common:
+  image: debian:bookworm-slim
+  before_script:
+    # Download the pre-built verascan binary. Replace the URL with your
+    # internal package registry or artifact store as appropriate.
+    - apt-get update -qq && apt-get install -y -qq curl ca-certificates
+    - |
+      VERASCAN_VERSION="${VERASCAN_VERSION:-latest}"
+      echo "Downloading verascan ${VERASCAN_VERSION}..."
+      curl -fsSL \
+        "https://your-registry.example.com/verascan/${VERASCAN_VERSION}/verascan-linux-amd64" \
+        -o /usr/local/bin/verascan
+      chmod +x /usr/local/bin/verascan
+      verascan --version
+  variables:
+    VERACODE_API_ID: $VERACODE_API_ID
+    VERACODE_API_KEY: $VERACODE_API_KEY
+    VERACODE_REGION: ${VERACODE_REGION:-commercial}
+
+# ---------------------------------------------------------------------------
+# Stage 1 — Upload artifacts and start scan (exits immediately)
+# ---------------------------------------------------------------------------
+
+verascan_upload:
+  extends: .verascan_common
+  stage: upload
+  script:
+    - echo "Starting Veracode assessment scan (--no-wait)..."
+    - |
+      verascan assessment \
+        --filepath "${CI_PROJECT_DIR}/build" \
+        --app-profile-name "${CI_PROJECT_NAME}" \
+        --region "${VERACODE_REGION}" \
+        --no-wait \
+        --build-id-file vid.env \
+        --build-version "${CI_COMMIT_SHORT_SHA}-${CI_PIPELINE_ID}"
+    - echo "Scan submitted. Build ID:"
+    - cat vid.env
+  artifacts:
+    paths:
+      - vid.env       # consumed by verascan_monitor via VERASCAN_BUILD_ID
+    expire_in: 8 hours
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_IID
+
+# ---------------------------------------------------------------------------
+# Stage 2 — Monitor until complete; retry on timeout (exit 75)
+# ---------------------------------------------------------------------------
+
+verascan_monitor:
+  extends: .verascan_common
+  stage: monitor
+  # Each attempt polls for up to 55 minutes. GitLab retries the job when
+  # verascan exits with code 75 (scan still in progress). With 5 retries
+  # the total monitoring window is up to ~5 hours before the pipeline fails.
+  timeout: 60 minutes
+  retry:
+    max: 5
+    when: exit_codes
+    exit_codes:
+      - 75    # scan still in progress — safe to retry
+  script:
+    # Source vid.env to set VERASCAN_BUILD_ID in the environment.
+    # verascan monitor reads it automatically; no --build-id flag needed.
+    - source vid.env
+    - echo "Monitoring build ID ${VERASCAN_BUILD_ID}..."
+    - |
+      verascan monitor \
+        --app-profile-name "${CI_PROJECT_NAME}" \
+        --region "${VERACODE_REGION}" \
+        --timeout 55 \
+        --export-results assessment-results.json \
+        --break
+  artifacts:
+    paths:
+      - assessment-results.json
+    when: always         # preserve results even on policy failure (exit 4)
+    expire_in: 30 days
+  needs:
+    - job: verascan_upload
+      artifacts: true   # makes vid.env available in this job's workspace
+  rules:
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_MERGE_REQUEST_IID

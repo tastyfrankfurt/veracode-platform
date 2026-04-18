@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.4-blue.svg)](Cargo.toml)
 
 A comprehensive Rust CLI application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting.
 
@@ -46,6 +46,12 @@ A comprehensive Rust CLI application for the Veracode platform to support pipeli
 - **CSV**: Spreadsheet-compatible findings export
 - **GitLab SAST**: Security Dashboard integration
 - **Filtered JSON**: Policy violation reports
+
+### Assessment Monitor (Two-Job CI Pattern)
+- `monitor` subcommand reconnects to an in-progress assessment scan by build ID
+- Designed for CI pipelines where the upload job uses `--no-wait` and a follow-on job monitors to completion
+- Exit code `75` when the scan is still in progress after `--timeout` — GitLab CI can be configured to automatically retry the job
+- Supports Vault credential refresh mid-poll with the same auth-retry pattern as the `assessment` command
 
 ### Export from Completed Scans
 - Findings retrieval from completed Veracode assessment scans
@@ -165,7 +171,41 @@ verascan assessment --filepath ./target \
   --app-profile-name "MyApplication" \
   --build-version "v2.1.0-release" \
   --export-results results.json
+
+# Submit scan without waiting; write build ID to file for a follow-on monitor job
+verascan assessment --filepath ./target \
+  --app-profile-name "MyApplication" \
+  --no-wait \
+  --build-id-file vid.env
 ```
+
+### Monitoring an In-Progress Assessment Scan
+
+The `monitor` subcommand reconnects to a scan that was submitted with `--no-wait` in a prior CI job.
+
+```bash
+# Monitor by build ID (reads VERASCAN_BUILD_ID from environment or --build-id flag)
+verascan monitor \
+  --app-profile-name "MyApplication" \
+  --build-id "$VERASCAN_BUILD_ID" \
+  --timeout 55 \
+  --export-results assessment-results.json \
+  --break
+
+# Monitor a sandbox scan
+verascan monitor \
+  --app-profile-name "MyApplication" \
+  --sandbox-name "development-sandbox" \
+  --build-id "$VERASCAN_BUILD_ID" \
+  --timeout 55 \
+  --export-results sandbox-results.json
+```
+
+Exit codes from `monitor`:
+- `0` — scan complete, policy passed (or `--break` not set)
+- `4` — scan complete, policy Did Not Pass (with `--break`)
+- `75` — scan still in progress after `--timeout`; safe to retry the CI job
+- `1` — unrecoverable error (app not found, API failure, etc.)
 
 ### Export from Completed Scans
 
@@ -263,14 +303,33 @@ verascan assessment [OPTIONS] --filepath <PATH> --app-profile-name <NAME>
 
 **Key Options:**
 - `--filepath <PATH>` - Directory to scan for files (required)
-- `--app-profile-name <NAME>` - Veracode application profile name (required)
+- `--app-profile-name <NAME>` - Veracode application profile name (required, up to 256 characters)
 - `--sandbox-name <NAME>` - Sandbox name for sandbox scans
 - `--build-version <VERSION>` - Custom build version (auto-generated if not specified)
 - `--export-results <FILE>` - Export assessment results
 - `--break` - Break build on Veracode platform policy failure
-- `--no-wait` - Submit scan and exit without waiting
+- `--no-wait` - Submit scan and exit without waiting for completion
+- `--build-id-file <FILE>` - File to write `VERASCAN_BUILD_ID="<id>"` when using `--no-wait` (default: `vid.env`)
 - `--threads <COUNT>` - Concurrent threads 2-10 (default: `4`)
 - `--timeout <MINUTES>` - Scan timeout in minutes (default: `60`)
+
+### Monitor Command
+
+```bash
+verascan monitor [OPTIONS] --app-profile-name <NAME>
+```
+
+Reconnects to an in-progress assessment scan submitted via `--no-wait`. Intended for multi-job CI pipelines.
+
+**Key Options:**
+- `--app-profile-name <NAME>` - Veracode application profile name (required)
+- `--build-id <ID>` - Build ID from a previous `--no-wait` scan; can be omitted when `VERASCAN_BUILD_ID` is set in the environment (one or the other is required)
+- `--sandbox-name <NAME>` - Sandbox name (required if the original scan targeted a sandbox)
+- `--timeout <MINUTES>` - Maximum minutes to monitor before exiting with code 75 (default: `55`)
+- `--export-results <FILE>` - Export results on completion (default: `assessment-results.json`)
+- `--break` - Break build (exit code 4) on Veracode platform policy failure
+- `--force-buildinfo-api` - Force XML API for policy evaluation
+- `--strict-sandbox` - Exit code 4 on sandbox Conditional Pass
 
 ### Export Command
 
@@ -293,6 +352,7 @@ verascan export [OPTIONS] --app-profile-name <NAME> --output <FILE>
 |----------|----------|-------------|
 | `VERACODE_API_ID` | ✅ | Your Veracode API ID credential |
 | `VERACODE_API_KEY` | ✅ | Your Veracode API key credential |
+| `VERASCAN_BUILD_ID` | — | Build ID written by `--no-wait`; consumed by `verascan monitor --build-id` |
 
 ### API Configuration
 | Variable | Default | Description |
@@ -325,7 +385,7 @@ verascan export [OPTIONS] --app-profile-name <NAME> --output <FILE>
 
 ## CI/CD Integration
 
-### GitLab CI
+### GitLab CI — Pipeline Scan
 
 ```yaml
 stages:
@@ -348,6 +408,47 @@ security_scan:
   artifacts:
     reports:
       sast: gl-sast-report.json
+    when: always
+```
+
+### GitLab CI — Assessment Scan (Two-Job Pattern)
+
+For long-running assessment scans, split submission and monitoring into separate jobs so GitLab can retry the monitor job (exit 75) without re-uploading files:
+
+```yaml
+stages:
+  - upload
+  - monitor
+
+verascan_upload:
+  stage: upload
+  script:
+    - verascan assessment --filepath ./target
+        --app-profile-name "MyApplication"
+        --no-wait
+        --build-id-file vid.env
+  artifacts:
+    paths:
+      - vid.env  # passes VERASCAN_BUILD_ID to the monitor job
+    expire_in: 2 hours
+
+verascan_monitor:
+  stage: monitor
+  retry:
+    max: 5
+    when: exit_codes
+    exit_codes:
+      - 75  # scan still in progress — safe to retry
+  script:
+    - source vid.env   # exports VERASCAN_BUILD_ID — --build-id flag not needed
+    - verascan monitor
+        --app-profile-name "MyApplication"
+        --timeout 55
+        --export-results assessment-results.json
+        --break
+  artifacts:
+    paths:
+      - assessment-results.json
     when: always
 ```
 
@@ -381,10 +482,11 @@ jobs:
 
 | Code | Meaning |
 |------|---------|
-| `0` | Success - no policy violations found |
+| `0` | Success — no policy violations found |
 | `1` | Policy violations detected or scan errors |
 | `2` | Configuration or authentication errors |
 | `4` | Veracode platform policy failure (when using `--break` flag) |
+| `75` | Scan still in progress after `--timeout` (`monitor` subcommand only) — safe to retry the CI job |
 
 ## Severity Levels
 

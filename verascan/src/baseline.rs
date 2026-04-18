@@ -745,7 +745,7 @@ impl BaselineManager {
         }
 
         let mut cwe_vec: Vec<(String, u32)> = cwe_counts.into_iter().collect();
-        cwe_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        cwe_vec.sort_by_key(|b| std::cmp::Reverse(b.1));
         let new_cwe_breakdown: Vec<String> = cwe_vec
             .into_iter()
             .take(5)
@@ -1160,7 +1160,7 @@ impl BaselineManager {
         }
 
         let mut cwe_vec: Vec<(String, u32)> = cwe_counts.into_iter().collect();
-        cwe_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        cwe_vec.sort_by_key(|b| std::cmp::Reverse(b.1));
         let violation_cwe_breakdown: Vec<String> = cwe_vec
             .into_iter()
             .take(5)
