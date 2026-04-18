@@ -61,7 +61,7 @@ veracode-workspace/
 
 ### [Veracode API Library](veracode-api/) (`veracode-api`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.7.5-blue.svg)](veracode-api/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.11-blue.svg)](veracode-api/Cargo.toml)
 
 A comprehensive Rust client library for the Veracode security platform APIs.
 
@@ -78,7 +78,7 @@ A comprehensive Rust client library for the Veracode security platform APIs.
 
 ### [Verascan CLI](verascan/) (`verascan`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.7.2-blue.svg)](verascan/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.4-blue.svg)](verascan/Cargo.toml)
 
 A powerful command-line application for security scanning and Veracode integration.
 

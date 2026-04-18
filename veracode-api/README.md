@@ -832,7 +832,7 @@ Enable only the APIs you need to reduce compile time and binary size:
 
 ```toml
 [dependencies]
-veracode-platform = { version = "0.1.0", features = ["pipeline", "applications"] }
+veracode-platform = { version = "0.7.11", features = ["pipeline", "applications"] }
 ```
 
 Available features:
