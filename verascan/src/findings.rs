@@ -351,7 +351,7 @@ impl FindingsAggregator {
 
         // Get top 5 CWE IDs
         let mut cwe_vec: Vec<(String, u32)> = cwe_counts.into_iter().collect();
-        cwe_vec.sort_by(|a, b| b.1.cmp(&a.1));
+        cwe_vec.sort_by_key(|b| std::cmp::Reverse(b.1));
 
         let total_findings = u32::try_from(findings.len()).unwrap_or(u32::MAX);
         let top_cwe_ids: Vec<CweStatistic> = cwe_vec

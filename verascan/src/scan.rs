@@ -1768,7 +1768,7 @@ fn calculate_cwe_breakdown(findings: &[FindingWithSource]) -> serde_json::Value 
 
     // Get top 10 CWEs by count
     let mut cwe_vec: Vec<(String, u32)> = breakdown.into_iter().collect();
-    cwe_vec.sort_by(|a, b| b.1.cmp(&a.1));
+    cwe_vec.sort_by_key(|b| std::cmp::Reverse(b.1));
     let top_cwes: std::collections::HashMap<String, u32> = cwe_vec.into_iter().take(10).collect();
 
     serde_json::to_value(top_cwes).unwrap_or(serde_json::Value::Object(serde_json::Map::new()))

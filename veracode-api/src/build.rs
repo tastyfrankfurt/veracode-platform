@@ -818,32 +818,30 @@ impl BuildApi {
                         _ => {}
                     }
                 }
-                Ok(Event::Empty(ref e)) => {
+                Ok(Event::Empty(ref e))
                     // Handle self-closing elements like <analysis_unit ... />
-                    if e.name().as_ref() == b"analysis_unit" && inside_build {
-                        for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
+                    if e.name().as_ref() == b"analysis_unit" && inside_build => {
+                    for attr in e.attributes().flatten() {
+                        let key = String::from_utf8_lossy(attr.key.as_ref());
+                        let value = String::from_utf8_lossy(&attr.value);
 
-                            match key.as_ref() {
-                                "status" => {
-                                    build
-                                        .attributes
-                                        .insert("status".to_string(), value.into_owned());
-                                }
-                                _ => {
-                                    build
-                                        .attributes
-                                        .insert(format!("analysis_{key}"), value.into_owned());
-                                }
+                        match key.as_ref() {
+                            "status" => {
+                                build
+                                    .attributes
+                                    .insert("status".to_string(), value.into_owned());
+                            }
+                            _ => {
+                                build
+                                    .attributes
+                                    .insert(format!("analysis_{key}"), value.into_owned());
                             }
                         }
                     }
                 }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == b"build" {
-                        inside_build = false;
-                    }
+                Ok(Event::End(ref e))
+                    if e.name().as_ref() == b"build" => {
+                    inside_build = false;
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(BuildError::XmlParsingError(e.to_string())),
@@ -987,18 +985,17 @@ impl BuildApi {
                     }
                     _ => {}
                 },
-                Ok(Event::Empty(ref e)) => {
+                Ok(Event::Empty(ref e))
                     // Handle self-closing build tags like <build ... />
-                    if e.name().as_ref() == b"build" {
-                        let build = self.parse_build_from_attributes(
-                            e.attributes(),
-                            &build_list.app_id,
-                            &build_list.app_name,
-                        );
+                    if e.name().as_ref() == b"build" => {
+                    let build = self.parse_build_from_attributes(
+                        e.attributes(),
+                        &build_list.app_id,
+                        &build_list.app_name,
+                    );
 
-                        if !build.build_id.is_empty() {
-                            build_list.builds.push(build);
-                        }
+                    if !build.build_id.is_empty() {
+                        build_list.builds.push(build);
                     }
                 }
                 Ok(Event::Eof) => break,
@@ -1021,12 +1018,10 @@ impl BuildApi {
 
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == b"result" {
-                        // Read the text content of the result element
-                        if let Ok(Event::Text(e)) = reader.read_event_into(&mut buf) {
-                            result = String::from_utf8_lossy(&e).into_owned();
-                        }
+                Ok(Event::Start(ref e)) if e.name().as_ref() == b"result" => {
+                    // Read the text content of the result element
+                    if let Ok(Event::Text(e)) = reader.read_event_into(&mut buf) {
+                        result = String::from_utf8_lossy(&e).into_owned();
                     }
                 }
                 Ok(Event::Eof) => break,
