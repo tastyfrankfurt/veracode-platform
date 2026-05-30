@@ -1,5 +1,12 @@
 //! Service/daemon mode implementation for continuous audit log retrieval
-use crate::{cleanup, error::Result, output};
+use crate::{
+    cleanup,
+    cursor::{CycleCursorState, StreamCursor},
+    error::Result,
+    firehose::FirehoseOutput,
+    kinesis::KinesisOutput,
+    output,
+};
 use log::{error, info, warn};
 use std::sync::Arc;
 use tokio::signal;
@@ -20,6 +27,15 @@ pub struct ServiceConfig {
     pub backend_window: String,
     pub region: String,
     pub flush_threshold_bytes: usize,
+    /// When set, audit logs are sent to this Kinesis sink instead of written to files
+    pub kinesis_output: Option<Arc<KinesisOutput>>,
+    /// Kinesis partition key (e.g. "veraaudit-commercial")
+    pub kinesis_partition_key: String,
+    /// When set, audit logs are sent to this Firehose delivery stream instead of written to files
+    pub firehose_output: Option<Arc<FirehoseOutput>>,
+    /// Path to the stream cursor file for Kinesis/Firehose progress tracking.
+    /// Defaults to `{output_dir}/stream_cursor.json` when `None`.
+    pub cursor_file: Option<String>,
 }
 
 /// Run the service in continuous mode
@@ -76,8 +92,10 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
             }
         }
 
-        // Run cleanup if configured
-        if (config.cleanup_count.is_some() || config.cleanup_hours.is_some())
+        // Run cleanup if configured (file output only — not applicable for Kinesis/Firehose)
+        if config.kinesis_output.is_none()
+            && config.firehose_output.is_none()
+            && (config.cleanup_count.is_some() || config.cleanup_hours.is_some())
             && let Err(e) = run_cleanup_cycle(&config).await
         {
             warn!("Cleanup cycle failed: {}", e);
@@ -99,6 +117,15 @@ pub async fn run_service(client: VeracodeClient, config: ServiceConfig) -> Resul
     Ok(())
 }
 
+/// Derive the cursor file path from config: explicit path or `{output_dir}/stream_cursor.json`.
+fn get_cursor_path(config: &ServiceConfig) -> std::path::PathBuf {
+    config
+        .cursor_file
+        .as_deref()
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| std::path::PathBuf::from(&config.output_dir).join("stream_cursor.json"))
+}
+
 /// Run a single audit log retrieval cycle using streaming for progressive writes
 ///
 /// Drives the chunk loop internally, using `get_audit_logs_stream` per chunk
@@ -111,10 +138,32 @@ async fn run_audit_cycle(
 ) -> Result<Option<VeracodeClient>> {
     use futures::StreamExt;
 
+    let is_stream_output = config.kinesis_output.is_some() || config.firehose_output.is_some();
+
+    // For Kinesis/Firehose: load cursor and resume from its timestamp.
+    // Falls back to start_offset when the cursor file is absent or corrupt.
+    let stream_cursor: Option<StreamCursor> = if is_stream_output {
+        StreamCursor::load(&get_cursor_path(config))
+    } else {
+        None
+    };
+
     // Determine start datetime with the following priority:
-    // 1. If --no-file-timestamp is not set, check for last log file timestamp (if within 72 hours)
-    // 2. If not found, too old, or flag is set, use start_offset
-    let start_datetime = if !config.no_file_timestamp {
+    // 1. Kinesis/Firehose + cursor present  → cursor.query_start()
+    // 2. Kinesis/Firehose + no cursor       → start_offset
+    // 3. File output, --no-file-timestamp not set → last log file timestamp
+    // 4. File output fallback               → start_offset
+    let start_datetime = if is_stream_output {
+        if let Some(ref cursor) = stream_cursor {
+            info!(
+                "Resuming from stream cursor: start={}",
+                cursor.query_start()
+            );
+            cursor.query_start().to_string()
+        } else {
+            crate::datetime::format_utc_minus_offset(&config.start_offset)?
+        }
+    } else if !config.no_file_timestamp {
         if let Some(last_timestamp) = output::get_last_log_timestamp(&config.output_dir) {
             info!(
                 "Using timestamp from last log file as start: {}",
@@ -127,6 +176,9 @@ async fn run_audit_cycle(
     } else {
         crate::datetime::format_utc_minus_offset(&config.start_offset)?
     };
+
+    // Accumulates the high-water mark across all batches this cycle.
+    let mut cycle_state = CycleCursorState::new();
 
     // Calculate end datetime: now - backend_window
     let now_utc = crate::datetime::format_now_utc();
@@ -207,20 +259,48 @@ async fn run_audit_cycle(
                 }
                 Ok(batch) => {
                     chunk_had_data = true;
-                    let batch_json = serde_json::Value::Array(batch);
 
-                    match output::write_audit_log_file(
-                        &config.output_dir,
-                        batch_json,
-                        config.no_dedup,
-                        None,
-                    )? {
-                        Some(filepath) => {
-                            files_written = files_written.saturating_add(1);
-                            info!("Batch written to: {}", filepath.display());
+                    if let Some(ref kinesis) = config.kinesis_output {
+                        // Update cursor state with unfiltered batch (true high-water mark)
+                        cycle_state.update(&batch);
+                        let filtered = apply_cursor_filter(&batch, stream_cursor.as_ref());
+                        let dup_count = batch.len().saturating_sub(filtered.len());
+                        if dup_count > 0 {
+                            info!("Filtered {} cursor-boundary duplicate(s)", dup_count);
                         }
-                        None => {
-                            info!("Batch had no new logs after deduplication");
+                        if !filtered.is_empty() {
+                            kinesis
+                                .send_records(&filtered, &config.kinesis_partition_key)
+                                .await?;
+                            info!("Batch of {} records sent to Kinesis", filtered.len());
+                        }
+                    } else if let Some(ref firehose) = config.firehose_output {
+                        cycle_state.update(&batch);
+                        let filtered = apply_cursor_filter(&batch, stream_cursor.as_ref());
+                        let dup_count = batch.len().saturating_sub(filtered.len());
+                        if dup_count > 0 {
+                            info!("Filtered {} cursor-boundary duplicate(s)", dup_count);
+                        }
+                        if !filtered.is_empty() {
+                            firehose.send_records(&filtered).await?;
+                            info!("Batch of {} records sent to Firehose", filtered.len());
+                        }
+                    } else {
+                        // File output: write to timestamped JSON file
+                        let batch_json = serde_json::Value::Array(batch);
+                        match output::write_audit_log_file(
+                            &config.output_dir,
+                            batch_json,
+                            config.no_dedup,
+                            None,
+                        )? {
+                            Some(filepath) => {
+                                files_written = files_written.saturating_add(1);
+                                info!("Batch written to: {}", filepath.display());
+                            }
+                            None => {
+                                info!("Batch had no new logs after deduplication");
+                            }
                         }
                     }
                 }
@@ -276,15 +356,42 @@ async fn run_audit_cycle(
                             Ok(batch) if batch.is_empty() => {}
                             Ok(batch) => {
                                 chunk_had_data = true;
-                                let batch_json = serde_json::Value::Array(batch);
-                                if let Some(filepath) = output::write_audit_log_file(
-                                    &config.output_dir,
-                                    batch_json,
-                                    config.no_dedup,
-                                    None,
-                                )? {
-                                    files_written = files_written.saturating_add(1);
-                                    info!("Batch written to: {}", filepath.display());
+
+                                if let Some(ref kinesis) = config.kinesis_output {
+                                    cycle_state.update(&batch);
+                                    let filtered =
+                                        apply_cursor_filter(&batch, stream_cursor.as_ref());
+                                    if !filtered.is_empty() {
+                                        kinesis
+                                            .send_records(&filtered, &config.kinesis_partition_key)
+                                            .await?;
+                                        info!(
+                                            "Batch of {} records sent to Kinesis (after credential refresh)",
+                                            filtered.len()
+                                        );
+                                    }
+                                } else if let Some(ref firehose) = config.firehose_output {
+                                    cycle_state.update(&batch);
+                                    let filtered =
+                                        apply_cursor_filter(&batch, stream_cursor.as_ref());
+                                    if !filtered.is_empty() {
+                                        firehose.send_records(&filtered).await?;
+                                        info!(
+                                            "Batch of {} records sent to Firehose (after credential refresh)",
+                                            filtered.len()
+                                        );
+                                    }
+                                } else {
+                                    let batch_json = serde_json::Value::Array(batch);
+                                    if let Some(filepath) = output::write_audit_log_file(
+                                        &config.output_dir,
+                                        batch_json,
+                                        config.no_dedup,
+                                        None,
+                                    )? {
+                                        files_written = files_written.saturating_add(1);
+                                        info!("Batch written to: {}", filepath.display());
+                                    }
                                 }
                             }
                             Err(retry_err) => {
@@ -329,7 +436,36 @@ async fn run_audit_cycle(
         chunk_count, files_written
     );
 
+    // Persist the updated cursor for Kinesis/Firehose output.
+    // If no records were seen this cycle the cursor is unchanged (None → skip).
+    if is_stream_output && let Some(new_cursor) = cycle_state.into_cursor() {
+        let cursor_path = get_cursor_path(config);
+        match new_cursor.save(&cursor_path) {
+            Ok(()) => info!("Stream cursor updated: timestamp={}", new_cursor.timestamp),
+            Err(e) => warn!("Failed to save stream cursor: {}", e),
+        }
+    }
+
     Ok(refreshed_client)
+}
+
+/// Filter `batch` by removing records already delivered in the previous cycle.
+///
+/// Only records whose `timestamp_utc` matches the cursor second AND whose hash
+/// is in `cursor.last_second_hashes` are removed.  All other records pass through
+/// unchanged, so this is a no-op when `cursor` is `None`.
+fn apply_cursor_filter(
+    batch: &[serde_json::Value],
+    cursor: Option<&StreamCursor>,
+) -> Vec<serde_json::Value> {
+    match cursor {
+        None => batch.to_vec(),
+        Some(c) => batch
+            .iter()
+            .filter(|r| !c.is_duplicate(r))
+            .cloned()
+            .collect(),
+    }
 }
 
 /// Run a single cleanup cycle

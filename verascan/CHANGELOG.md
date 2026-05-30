@@ -5,6 +5,14 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.5] - 2026-05-30
+
+### Dependencies
+- **`vaultrs` 0.7 → 0.8**: Routine patch uplift
+- **`jsonschema` 0.45 → 0.46** (dev dependency): Routine patch uplift
+- **`veracode-platform` 0.7.11 → 0.7.12**: Pulls in `hmac`/`sha2` dependency updates
+- **Modified Files**: `Cargo.toml`
+
 ## [0.7.4] - 2026-04-15
 
 ### Added

@@ -1,6 +1,6 @@
 [package]
 name = "veracmek"
-version = "0.5.14"
+version = "0.5.15"
 edition = "2024"
 description = "CLI tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles"
 authors = ["Veracode API Team"]
@@ -51,7 +51,7 @@ serde_json = { workspace = true }
 thiserror = { workspace = true }
 
 # Local dependency
-veracode-platform = { path = "../veracode-api", version = "0.7.11" }
+veracode-platform = { path = "../veracode-api", version = "0.7.12" }
 
 # Additional dependencies for CLI functionality
 env_logger = "0.11"
@@ -60,6 +60,6 @@ secrecy = { version = "0.10", features = ["serde"] }
 anyhow = "1.0"
 
 # Vault client for secure credential management
-vaultrs = { version = "0.7", features = ["rustls"] }
+vaultrs = { version = "0.8", features = ["rustls"] }
 backon = "1.3"
 url = "2.5"

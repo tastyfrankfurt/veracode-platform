@@ -61,7 +61,7 @@ veracode-workspace/
 
 ### [Veracode API Library](veracode-api/) (`veracode-api`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.7.11-blue.svg)](veracode-api/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.12-blue.svg)](veracode-api/Cargo.toml)
 
 A comprehensive Rust client library for the Veracode security platform APIs.
 
@@ -78,7 +78,7 @@ A comprehensive Rust client library for the Veracode security platform APIs.
 
 ### [Verascan CLI](verascan/) (`verascan`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.7.4-blue.svg)](verascan/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.5-blue.svg)](verascan/Cargo.toml)
 
 A powerful command-line application for security scanning and Veracode integration.
 
@@ -95,7 +95,7 @@ A powerful command-line application for security scanning and Veracode integrati
 
 ### [Veraaudit CLI](veraaudit/) (`veraaudit`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.5.14-blue.svg)](veraaudit/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](veraaudit/Cargo.toml)
 
 A production-ready tool for retrieving and archiving Veracode audit logs for compliance and monitoring.
 
@@ -103,6 +103,8 @@ A production-ready tool for retrieving and archiving Veracode audit logs for com
 - Audit log retrieval with automated collection
 - Service mode with continuous monitoring
 - Timestamped archival with UTC-based file naming
+- AWS Kinesis Data Streams and Firehose output (replaces file output)
+- Persistent stream cursor for exactly-once Kinesis/Firehose delivery
 - Vault integration for secure credential management
 - Automatic cleanup with configurable retention policies
 - Multi-regional support with timezone handling
@@ -112,7 +114,7 @@ A production-ready tool for retrieving and archiving Veracode audit logs for com
 
 ### [Veracmek CLI](veracmek/) (`veracmek`)
 
-[![Crate Version](https://img.shields.io/badge/version-0.5.14-blue.svg)](veracmek/Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.5.15-blue.svg)](veracmek/Cargo.toml)
 
 A specialized command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles.
 

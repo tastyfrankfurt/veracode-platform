@@ -43,6 +43,14 @@ pub enum AuditError {
     /// File cleanup error
     #[error("File cleanup error: {0}")]
     Cleanup(String),
+
+    /// Kinesis output error
+    #[error("Kinesis error: {0}")]
+    Kinesis(String),
+
+    /// Firehose output error
+    #[error("Firehose error: {0}")]
+    Firehose(String),
 }
 
 /// Result type alias for veraaudit operations
@@ -103,6 +111,8 @@ pub fn is_auth_error(error: &AuditError) -> bool {
         | AuditError::DateRangeInvalid(_)
         | AuditError::InvalidConfig(_)
         | AuditError::ServiceMode(_)
-        | AuditError::Cleanup(_) => false,
+        | AuditError::Cleanup(_)
+        | AuditError::Kinesis(_)
+        | AuditError::Firehose(_) => false,
     }
 }
