@@ -5,6 +5,13 @@ All notable changes to veracmek will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.15] - 2026-05-30
+
+### Dependencies
+- **`vaultrs` 0.7 → 0.8**: Routine patch uplift
+- **`veracode-platform` 0.7.11 → 0.7.12**: Pulls in `hmac`/`sha2` dependency updates
+- **Modified Files**: `Cargo.toml`
+
 ## [0.5.14] - 2026-03-03
 
 ### Fixed

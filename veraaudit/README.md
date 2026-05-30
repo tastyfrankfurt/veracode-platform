@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.5.14-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](Cargo.toml)
 
 CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API.
 
@@ -22,6 +22,9 @@ CLI tool for retrieving and archiving Veracode audit logs using the Reporting RE
 - 🔁 **Chunked Retrieval** - Automatic chunking to handle backend refresh cycles (respects 2-hour data refresh window)
 - 🎯 **Smart File Management** - Skips writing empty files after deduplication
 - 🌊 **Streaming Progressive Writes** - Service mode writes batches to disk as they stream from the API, bounding peak memory to ~50MB regardless of total log volume
+- 🚀 **AWS Kinesis Data Streams output** - Route audit logs directly to a Kinesis stream (`--kinesis-stream`) instead of files; batches up to 500 records per `PutRecords` call
+- 🔥 **AWS Kinesis Firehose output** - Route audit logs to a Firehose delivery stream (`--firehose-stream`) targeting Splunk, S3, OpenSearch, or Redshift — no consumer app required
+- 📍 **Persistent stream cursor** - Exactly-once resumption for Kinesis/Firehose service mode; tracks high-water timestamp and boundary hashes in `stream_cursor.json`
 
 ## Installation
 

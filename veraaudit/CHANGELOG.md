@@ -5,6 +5,41 @@ All notable changes to the veraaudit project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-05-30
+
+### Added
+- **AWS Kinesis Data Streams output**: New `--kinesis-stream <NAME>` flag routes audit logs to a Kinesis stream instead of writing to files
+  - Batches up to 500 records per `PutRecords` call (Kinesis hard limit)
+  - Fixed partition key per Veracode region (`veraaudit-{region}`) for strict ordering within a single shard
+  - Exponential backoff retry with configurable attempt count via `VERAAUDIT_KINESIS_RETRIES` (default 3)
+  - Uses AWS default credential provider chain: IRSA, ECS task role, Lambda execution role, env vars, profile
+  - Optional `--kinesis-region` flag to override the AWS region
+  - **New files**: `src/kinesis.rs`
+
+- **AWS Kinesis Firehose output**: New `--firehose-stream <NAME>` flag routes audit logs to a Firehose delivery stream
+  - Batches up to 500 records with a 4 MiB total-batch limit per `PutRecordBatch` call
+  - Supports all Firehose destinations: Splunk (HEC), S3, OpenSearch, Redshift — managed by AWS, no consumer app required
+  - Same exponential backoff retry logic as Kinesis; configurable via `VERAAUDIT_FIREHOSE_RETRIES`
+  - Optional `--firehose-region` flag; mutually exclusive with `--kinesis-stream`
+  - **New files**: `src/firehose.rs`
+
+- **Persistent stream cursor**: Exactly-once resumption for Kinesis/Firehose service mode
+  - `stream_cursor.json` tracks the high-water timestamp and xxh3-64 hashes of every record at the boundary second
+  - On restart, the service re-queries from the cursor second and filters already-delivered boundary records — no duplicates, no gaps
+  - Override the cursor path with `--cursor-file` (service subcommand only); defaults to `{output-dir}/stream_cursor.json`
+  - Falls back to `--start-offset` when the cursor file is absent or corrupt
+  - **New files**: `src/cursor.rs`
+
+### Security
+- **Fixed 3 `rustls-webpki` CVEs** (RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104) introduced transitively by the AWS SDK
+  - Root cause: `aws-sdk-kinesis`/`aws-sdk-firehose` default features activated `aws-smithy-http-client/legacy-rustls-ring` (`rustls 0.21.x` / `rustls-webpki 0.101.7`)
+  - Fix: `default-features = false, features = ["default-https-client", "rt-tokio"]` routes through `rustls-aws-lc` (`rustls 0.23.x` / `rustls-webpki 0.103.13`)
+  - Dependency count reduced by 15 crates
+  - **Modified Files**: `Cargo.toml`
+
+### Dependencies
+- Updated `veracode-platform` dependency to `0.7.12`
+
 ## [0.5.14] - 2026-02-19
 
 ### Added
