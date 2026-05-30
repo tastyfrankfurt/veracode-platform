@@ -3622,7 +3622,7 @@ dependencies = [
 
 [[package]]
 name = "veraaudit"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "anyhow",
  "aws-config",
@@ -3637,6 +3637,8 @@ dependencies = [
  "futures",
  "log",
  "regex",
+ "reqwest",
+ "rustify",
  "secrecy",
  "serde",
  "serde_json",
@@ -3651,13 +3653,15 @@ dependencies = [
 
 [[package]]
 name = "veracmek"
-version = "0.5.15"
+version = "0.5.16"
 dependencies = [
  "anyhow",
  "backon",
  "clap",
  "env_logger",
  "log",
+ "reqwest",
+ "rustify",
  "secrecy",
  "serde",
  "serde_json",
@@ -3700,7 +3704,7 @@ dependencies = [
 
 [[package]]
 name = "verascan"
-version = "0.7.5"
+version = "0.7.6"
 dependencies = [
  "backon",
  "chrono",
@@ -3713,6 +3717,7 @@ dependencies = [
  "proptest",
  "regex",
  "reqwest",
+ "rustify",
  "secrecy",
  "serde",
  "serde_json",

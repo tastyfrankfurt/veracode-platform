@@ -1,6 +1,6 @@
 [package]
 name = "verascan"
-version = "0.7.5"
+version = "0.7.6"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
@@ -91,6 +91,7 @@ secrecy = { version = "0.10", features = ["serde"] }
 
 # Vault client for secure credential management
 vaultrs = { version = "0.8", features = ["rustls"] }
+rustify = "0.7"
 backon = "1.3"
 
 [dev-dependencies]

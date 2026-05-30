@@ -1,6 +1,7 @@
 use crate::credentials::{CredentialError, VaultConfig, validate_api_credential};
 use backon::{ExponentialBuilder, Retryable};
 use log::{debug, error, info, warn};
+use rustify::clients::reqwest::Client as HTTPClient;
 use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Deserializer};
 use std::collections::HashMap;
@@ -8,11 +9,14 @@ use std::error::Error;
 use std::time::Duration;
 use url::Url;
 use vaultrs::{
+    api::EndpointMiddleware,
     auth::oidc,
-    client::{Client, VaultClient, VaultClientSettingsBuilder},
+    client::{Client, VaultClient, VaultClientSettings, VaultClientSettingsBuilder},
     error::ClientError,
     kv2, token,
 };
+
+const USER_AGENT: &str = concat!("veracmek/", env!("CARGO_PKG_VERSION"));
 
 // Character sets for validation
 const SPECIAL_CHARS: &[char] = &[
@@ -411,12 +415,51 @@ fn create_vault_client(config: &VaultConfig) -> Result<VaultClient, CredentialEr
             message: format!("Failed to build vault client settings: {e}"),
         })?;
 
-    let client = VaultClient::new(settings).map_err(|e| CredentialError::VaultAuthError {
-        context: format!("Failed to create vault client: {e}"),
-    })?;
+    let client = build_vault_client(settings)?;
 
     debug!("Vault client created successfully");
     Ok(client)
+}
+
+fn build_vault_client(settings: VaultClientSettings) -> Result<VaultClient, CredentialError> {
+    let mut http_builder = reqwest::ClientBuilder::new()
+        .tls_backend_rustls()
+        .user_agent(USER_AGENT);
+
+    http_builder = http_builder.tls_danger_accept_invalid_certs(!settings.verify);
+
+    for path in &settings.ca_certs {
+        let content = std::fs::read(path).map_err(|e| CredentialError::VaultConfigError {
+            message: format!("Failed to read CA cert {path}: {e}"),
+        })?;
+        let certs = reqwest::Certificate::from_pem_bundle(&content).map_err(|e| {
+            CredentialError::VaultConfigError {
+                message: format!("Failed to parse CA cert {path}: {e}"),
+            }
+        })?;
+        http_builder = http_builder.tls_certs_merge(certs);
+    }
+
+    let version_str = format!("v{}", settings.version);
+    let middle = EndpointMiddleware {
+        token: settings.token.clone(),
+        version: version_str,
+        wrap: None,
+        namespace: settings.namespace.clone(),
+    };
+
+    let reqwest_client = http_builder
+        .build()
+        .map_err(|e| CredentialError::VaultConfigError {
+            message: format!("Failed to build HTTP client: {e}"),
+        })?;
+
+    let http = HTTPClient::new(settings.address.as_str(), reqwest_client);
+    Ok(VaultClient {
+        http,
+        middle,
+        settings,
+    })
 }
 
 /// Authenticate with vault using exponential backoff and proper token management

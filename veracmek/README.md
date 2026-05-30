@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.5.15-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.5.16-blue.svg)](Cargo.toml)
 
 A command-line tool for managing Customer Managed Encryption Keys (CMEK) on Veracode application profiles. This tool enables users to encrypt application data using their own AWS KMS keys, providing enhanced security and compliance for Veracode applications.
 
@@ -57,7 +57,7 @@ veracmek --api-id your_api_id --api-key your_api_key [command]
 ```
 
 #### 3. HashiCorp Vault Integration
-Set the following environment variables to use Vault:
+Set the following environment variables to use Vault. All requests to Vault identify as `veracmek/<version>` via the `User-Agent` header, making Vault audit logs immediately attributable to veracmek.
 
 ```bash
 export VAULT_CLI_ADDR="https://vault.example.com"
