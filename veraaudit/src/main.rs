@@ -3,8 +3,10 @@
 //! CLI/Service tool for retrieving and archiving Veracode audit logs
 use clap::Parser;
 use log::info;
+use std::sync::Arc;
 use veraaudit::{
-    Result, ServiceConfig, audit, cli, credentials, datetime, output, service, vault_client,
+    Result, ServiceConfig, audit, cli, credentials, datetime, firehose, kinesis, output, service,
+    vault_client,
 };
 
 #[tokio::main]
@@ -50,6 +52,10 @@ async fn main() -> Result<()> {
             no_file_timestamp,
             no_dedup,
             backend_window,
+            kinesis_stream,
+            kinesis_region,
+            firehose_stream,
+            firehose_region,
         } => {
             // Determine start datetime with the following priority:
             // 1. If --no-file-timestamp is not set, check for last log file timestamp (if within 72 hours)
@@ -131,6 +137,11 @@ async fn main() -> Result<()> {
             let action_type_strings: Vec<String> =
                 action_type.iter().map(|t| t.as_str().to_string()).collect();
 
+            // Build Kinesis / Firehose output sink if the respective flag was provided
+            let kinesis_output = build_kinesis_output(kinesis_stream, kinesis_region).await?;
+            let kinesis_partition_key = format!("veraaudit-{}", args.region.as_str());
+            let firehose_output = build_firehose_output(firehose_stream, firehose_region).await?;
+
             run_cli_mode(
                 &client,
                 args.region.as_str(), // Pass region for credential refresh
@@ -142,6 +153,9 @@ async fn main() -> Result<()> {
                 audit_action_strings,
                 action_type_strings,
                 no_dedup,
+                kinesis_output.as_ref(),
+                &kinesis_partition_key,
+                firehose_output.as_ref(),
             )
             .await?;
         }
@@ -157,6 +171,11 @@ async fn main() -> Result<()> {
             no_file_timestamp,
             no_dedup,
             backend_window,
+            kinesis_stream,
+            kinesis_region,
+            firehose_stream,
+            firehose_region,
+            cursor_file,
         } => {
             // Convert validated enum types to API strings
             let audit_action_strings: Vec<String> = audit_action
@@ -165,6 +184,15 @@ async fn main() -> Result<()> {
                 .collect();
             let action_type_strings: Vec<String> =
                 action_type.iter().map(|t| t.as_str().to_string()).collect();
+
+            // Build Kinesis / Firehose output sink if the respective flag was provided
+            let kinesis_partition_key = format!("veraaudit-{}", args.region.as_str());
+            let kinesis_output = build_kinesis_output(kinesis_stream, kinesis_region)
+                .await?
+                .map(Arc::new);
+            let firehose_output = build_firehose_output(firehose_stream, firehose_region)
+                .await?
+                .map(Arc::new);
 
             let config = ServiceConfig {
                 start_offset,
@@ -187,6 +215,10 @@ async fn main() -> Result<()> {
                 backend_window,
                 region: args.region.as_str().to_string(),
                 flush_threshold_bytes: 52_428_800, // 50MB default
+                kinesis_output,
+                kinesis_partition_key,
+                firehose_output,
+                cursor_file,
             };
 
             run_service_mode(client, config).await?;
@@ -213,11 +245,23 @@ async fn run_cli_mode(
     audit_actions: Vec<String>,
     action_types: Vec<String>,
     no_dedup: bool,
+    kinesis_output: Option<&kinesis::KinesisOutput>,
+    kinesis_partition_key: &str,
+    firehose_output: Option<&firehose::FirehoseOutput>,
 ) -> Result<()> {
     info!("Running in CLI mode");
     info!("  Start datetime: {}", start_datetime);
     info!("  End datetime: {}", end_datetime);
-    info!("  Output directory: {}", output_dir);
+    if kinesis_output.is_some() {
+        info!(
+            "  Output: Kinesis (partition key: {})",
+            kinesis_partition_key
+        );
+    } else if firehose_output.is_some() {
+        info!("  Output: Kinesis Firehose (delivery stream)");
+    } else {
+        info!("  Output directory: {}", output_dir);
+    }
     if let Some(ref interval_val) = interval {
         info!("  Interval: {} (chunked retrieval)", interval_val);
     }
@@ -266,13 +310,25 @@ async fn run_cli_mode(
         .await?
     };
 
-    // Write to timestamped file (pass start_datetime for deduplication)
-    match output::write_audit_log_file(output_dir, audit_data, no_dedup, Some(start_datetime))? {
-        Some(filepath) => {
-            info!("Success! Audit log saved to: {}", filepath.display());
-        }
-        None => {
-            info!("No new logs found after deduplication, no file created");
+    // Route output: Kinesis, Firehose, or file
+    if let Some(kinesis) = kinesis_output {
+        let logs = audit_data.as_array().map(Vec::as_slice).unwrap_or(&[]);
+        kinesis.send_records(logs, kinesis_partition_key).await?;
+        info!("Success! {} audit log entries sent to Kinesis", logs.len());
+    } else if let Some(fh) = firehose_output {
+        let logs = audit_data.as_array().map(Vec::as_slice).unwrap_or(&[]);
+        fh.send_records(logs).await?;
+        info!("Success! {} audit log entries sent to Firehose", logs.len());
+    } else {
+        // Write to timestamped file (pass start_datetime for deduplication)
+        match output::write_audit_log_file(output_dir, audit_data, no_dedup, Some(start_datetime))?
+        {
+            Some(filepath) => {
+                info!("Success! Audit log saved to: {}", filepath.display());
+            }
+            None => {
+                info!("No new logs found after deduplication, no file created");
+            }
         }
     }
 
@@ -286,4 +342,38 @@ async fn run_service_mode(
 ) -> Result<()> {
     service::run_service(client, config).await?;
     Ok(())
+}
+
+/// Build a `KinesisOutput` when `--kinesis-stream` is provided.
+///
+/// Returns `None` if `stream_name` is `None` (file output mode).
+async fn build_kinesis_output(
+    stream_name: Option<String>,
+    region: Option<String>,
+) -> Result<Option<kinesis::KinesisOutput>> {
+    match stream_name {
+        None => Ok(None),
+        Some(name) => {
+            let cfg = kinesis::KinesisConfig::new(name, region);
+            let output = kinesis::KinesisOutput::new(cfg).await?;
+            Ok(Some(output))
+        }
+    }
+}
+
+/// Build a `FirehoseOutput` when `--firehose-stream` is provided.
+///
+/// Returns `None` if `delivery_stream_name` is `None` (file or Kinesis output mode).
+async fn build_firehose_output(
+    delivery_stream_name: Option<String>,
+    region: Option<String>,
+) -> Result<Option<firehose::FirehoseOutput>> {
+    match delivery_stream_name {
+        None => Ok(None),
+        Some(name) => {
+            let cfg = firehose::FirehoseConfig::new(name, region);
+            let output = firehose::FirehoseOutput::new(cfg).await?;
+            Ok(Some(output))
+        }
+    }
 }

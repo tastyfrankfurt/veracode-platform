@@ -90,11 +90,11 @@ env_logger = "0.11"
 secrecy = { version = "0.10", features = ["serde"] }
 
 # Vault client for secure credential management
-vaultrs = { version = "0.7", features = ["rustls"] }
+vaultrs = { version = "0.8", features = ["rustls"] }
 backon = "1.3"
 
 [dev-dependencies]
-jsonschema = "0.45"
+jsonschema = "0.46"
 wiremock = "0.6"
 tokio-test = "0.4"
 proptest = "1.5"

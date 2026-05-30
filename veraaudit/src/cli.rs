@@ -101,6 +101,30 @@ pub enum Commands {
         /// Range: 30 minutes - 4 hours
         #[arg(long, default_value = "2h", value_parser = validate_backend_window)]
         backend_window: String,
+
+        /// AWS Kinesis stream name to send audit logs to (replaces file output)
+        /// When set, logs are delivered to Kinesis instead of written to --output-dir
+        #[arg(long)]
+        kinesis_stream: Option<String>,
+
+        /// AWS region for the Kinesis stream (e.g. us-east-1)
+        /// Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` environment variables,
+        /// then to the configured AWS profile or instance metadata
+        #[arg(long)]
+        kinesis_region: Option<String>,
+
+        /// AWS Kinesis Firehose delivery stream name to send audit logs to (replaces file output)
+        /// When set, logs are delivered to Firehose instead of written to --output-dir.
+        /// Firehose can route directly to Splunk, S3, `OpenSearch`, and other destinations.
+        /// Cannot be combined with --kinesis-stream.
+        #[arg(long, conflicts_with = "kinesis_stream")]
+        firehose_stream: Option<String>,
+
+        /// AWS region for the Firehose delivery stream (e.g. us-east-1)
+        /// Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` environment variables,
+        /// then to the configured AWS profile or instance metadata
+        #[arg(long)]
+        firehose_region: Option<String>,
     },
 
     /// Run continuous audit log retrieval (service mode)
@@ -158,6 +182,38 @@ pub enum Commands {
         /// Range: 30 minutes - 4 hours
         #[arg(long, default_value = "2h", value_parser = validate_backend_window)]
         backend_window: String,
+
+        /// AWS Kinesis stream name to send audit logs to (replaces file output)
+        /// When set, logs are delivered to Kinesis instead of written to --output-dir
+        #[arg(long)]
+        kinesis_stream: Option<String>,
+
+        /// AWS region for the Kinesis stream (e.g. us-east-1)
+        /// Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` environment variables,
+        /// then to the configured AWS profile or instance metadata
+        #[arg(long)]
+        kinesis_region: Option<String>,
+
+        /// AWS Kinesis Firehose delivery stream name to send audit logs to (replaces file output)
+        /// When set, logs are delivered to Firehose instead of written to --output-dir.
+        /// Firehose can route directly to Splunk, S3, `OpenSearch`, and other destinations.
+        /// Cannot be combined with --kinesis-stream.
+        #[arg(long, conflicts_with = "kinesis_stream")]
+        firehose_stream: Option<String>,
+
+        /// AWS region for the Firehose delivery stream (e.g. us-east-1)
+        /// Falls back to `AWS_REGION` / `AWS_DEFAULT_REGION` environment variables,
+        /// then to the configured AWS profile or instance metadata
+        #[arg(long)]
+        firehose_region: Option<String>,
+
+        /// Path to the stream cursor file used for Kinesis/Firehose progress tracking.
+        /// Stores the last-delivered timestamp and boundary hashes so the service
+        /// resumes exactly where it left off after a restart or outage.
+        /// Defaults to `{output-dir}/stream_cursor.json` when not set.
+        /// Only used when --kinesis-stream or --firehose-stream is active.
+        #[arg(long)]
+        cursor_file: Option<String>,
     },
 
     /// Display help for environment variables

@@ -5,7 +5,7 @@
 
 use bytes::Bytes;
 use hex;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use log::{info, warn};
 use reqwest::{Body, Client, multipart};
 use secrecy::ExposeSecret;

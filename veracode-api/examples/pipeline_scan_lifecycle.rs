@@ -588,7 +588,7 @@ fn calculate_sha256_hash(data: &[u8]) -> String {
     use sha2::{Digest, Sha256};
     let mut hasher = Sha256::new();
     hasher.update(data);
-    format!("{:x}", hasher.finalize())
+    hex::encode(hasher.finalize())
 }
 
 /// Save findings to CSV file for easy analysis
