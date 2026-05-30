@@ -5,6 +5,12 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6] - 2026-05-30
+
+### Changed
+- **Vault `User-Agent` header**: all HTTP requests to HashiCorp Vault now identify as `verascan/<version>` (e.g. `verascan/0.7.6`), covering authentication, secret retrieval, and token revocation. This makes Vault audit logs and server-side access logs immediately attributable to Verascan without requiring additional configuration
+  - **Modified Files**: `Cargo.toml`, `src/vault_client.rs`
+
 ## [0.7.5] - 2026-05-30
 
 ### Dependencies

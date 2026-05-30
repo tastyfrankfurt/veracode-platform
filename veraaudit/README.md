@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.6.0-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.6.1-blue.svg)](Cargo.toml)
 
 CLI tool for retrieving and archiving Veracode audit logs using the Reporting REST API.
 
@@ -223,7 +223,7 @@ veraaudit supports two credential methods with automatic fallback:
 
 ### 1. Vault (Priority)
 
-When Vault environment variables are set, credentials are retrieved from Vault:
+When Vault environment variables are set, credentials are retrieved from Vault. All requests to Vault identify as `veraaudit/<version>` via the `User-Agent` header, making Vault audit logs immediately attributable to veraaudit.
 
 ```bash
 export VAULT_CLI_ADDR="https://vault.company.com"

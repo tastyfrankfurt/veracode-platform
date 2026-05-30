@@ -2,7 +2,7 @@
 
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-brightgreen.svg)](https://www.rust-lang.org)
 [![License](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
-[![Crate Version](https://img.shields.io/badge/version-0.7.5-blue.svg)](Cargo.toml)
+[![Crate Version](https://img.shields.io/badge/version-0.7.6-blue.svg)](Cargo.toml)
 
 A comprehensive Rust CLI application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting.
 
@@ -529,6 +529,7 @@ Verascan supports secure credential management via HashiCorp Vault (inherited fr
 - Smart retry logic following Vault API best practices
 - Fast failure on authentication errors
 - Automatic recovery from transient errors
+- **`User-Agent` header**: all requests to Vault identify as `verascan/<version>`, making Vault audit logs and server-side access logs immediately attributable to Verascan
 
 #### Mid-Scan Credential Refresh
 
