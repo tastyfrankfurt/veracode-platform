@@ -32,6 +32,23 @@ const INVALID_API_KEY_MSG: &str = "Invalid API key format - must be hex string";
 const INVALID_NONCE_MSG: &str = "Invalid nonce format";
 const HMAC_CREATION_FAILED_MSG: &str = "Failed to create HMAC";
 
+/// Renders an error together with its full `source()` chain.
+///
+/// `reqwest::Error`'s `Display` impl only prints a generic phrase like
+/// "builder error" for proxy/URL parsing failures, hiding the underlying
+/// `url::ParseError` (e.g. "empty host", "invalid port number") that
+/// explains what's actually wrong with the configured value.
+fn describe_error_chain(err: &dyn std::error::Error) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(inner) = source {
+        message.push_str(": ");
+        message.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    message
+}
+
 /// Core Veracode API client.
 ///
 /// This struct provides the foundational HTTP client with HMAC authentication
@@ -103,8 +120,12 @@ impl VeracodeClient {
 
         // Configure proxy if specified
         if let Some(proxy_url) = &config.proxy_url {
-            let mut proxy = reqwest::Proxy::all(proxy_url)
-                .map_err(|e| VeracodeError::InvalidConfig(format!("Invalid proxy URL: {e}")))?;
+            let mut proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
+                VeracodeError::InvalidConfig(format!(
+                    "Invalid proxy URL: {}",
+                    describe_error_chain(&e)
+                ))
+            })?;
 
             // Add basic authentication if credentials are provided
             if let (Some(username), Some(password)) =

@@ -161,7 +161,7 @@ impl PipelineSubmitter {
         let file_data = tokio::fs::read(file).await.map_err(|e| {
             PipelineError::ConfigError(format!("Failed to read file {}: {}", file.display(), e))
         })?;
-        let binary_hash = format!("{:x}", Sha256::digest(&file_data));
+        let binary_hash = hex::encode(Sha256::digest(&file_data));
         let binary_name = file
             .file_name()
             .and_then(|name| name.to_str())

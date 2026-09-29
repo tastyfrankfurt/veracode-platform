@@ -13,7 +13,7 @@ const SANDBOX_ID_REQUIRED_ERROR: &str = "Sandbox legacy ID required for sandbox 
 const TOOL_NAME: &str = "verascan";
 use veracode_platform::scan::{UploadFileRequest, UploadLargeFileRequest};
 use veracode_platform::workflow::VeracodeWorkflow;
-use veracode_platform::{VeracodeClient, VeracodeConfig, VeracodeRegion};
+use veracode_platform::{SandboxError, VeracodeClient, VeracodeConfig, VeracodeRegion};
 
 /// Application identifier that contains both GUID (for REST API) and numeric ID (for XML API)
 #[derive(Debug, Clone)]
@@ -327,7 +327,7 @@ impl AssessmentSubmitter {
                             debug!("✅ Sandbox already exists: {sandbox_name}");
                             sandbox
                         }
-                        Ok(None) | Err(_) => {
+                        Ok(None) => {
                             // Sandbox doesn't exist, create it
                             debug!("📦 Creating new sandbox: {sandbox_name}");
 
@@ -339,6 +339,41 @@ impl AssessmentSubmitter {
                                     info!("✅ Sandbox created: {sandbox_name}");
                                     created_sandbox
                                 }
+                                Err(SandboxError::AlreadyExists(_)) => {
+                                    // Lost a race with another process/scan that created the
+                                    // sandbox in between our lookup and this create call.
+                                    // Re-fetch instead of failing.
+                                    debug!(
+                                        "⚠️ Sandbox {sandbox_name} already exists (race), re-fetching"
+                                    );
+                                    match sandbox_api
+                                        .get_sandbox_by_name(app_id, sandbox_name)
+                                        .await
+                                    {
+                                        Ok(Some(sandbox)) => {
+                                            info!(
+                                                "✅ Sandbox found after create race: {sandbox_name}"
+                                            );
+                                            sandbox
+                                        }
+                                        Ok(None) => {
+                                            error!(
+                                                "❌ Sandbox {sandbox_name} reported as already existing but cannot be found"
+                                            );
+                                            return Err(AssessmentError::SandboxError(format!(
+                                                "Sandbox {sandbox_name} already exists but could not be retrieved"
+                                            )));
+                                        }
+                                        Err(e) => {
+                                            error!(
+                                                "❌ Failed to re-fetch sandbox after already-exists error: {e}"
+                                            );
+                                            return Err(AssessmentError::SandboxError(format!(
+                                                "Failed to re-fetch sandbox {sandbox_name} after already-exists error: {e}"
+                                            )));
+                                        }
+                                    }
+                                }
                                 Err(e) => {
                                     error!("❌ Failed to create sandbox: {e}");
                                     return Err(AssessmentError::SandboxError(format!(
@@ -346,6 +381,12 @@ impl AssessmentSubmitter {
                                     )));
                                 }
                             }
+                        }
+                        Err(e) => {
+                            error!("❌ Failed to check if sandbox exists: {e}");
+                            return Err(AssessmentError::SandboxError(format!(
+                                "Failed to check sandbox {sandbox_name}: {e}"
+                            )));
                         }
                     };
 
@@ -1898,7 +1939,7 @@ impl AssessmentSubmitter {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -1986,6 +2027,225 @@ mod tests {
 
         // The actual upload method selection is tested in integration tests
         // since it requires async setup and API mocking
+    }
+
+    // ========================================================================
+    // ensure_sandbox_and_get_id: sandbox-lookup-error and already-exists-race tests
+    // ========================================================================
+
+    use veracode_platform::{RetryConfig, VeracodeCredentials};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Request, Respond, ResponseTemplate};
+
+    fn test_veracode_config(base_url: String) -> VeracodeConfig {
+        VeracodeConfig {
+            credentials: VeracodeCredentials::new(
+                "test_api_id".to_string(),
+                "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef".to_string(),
+            ),
+            base_url: base_url.clone(),
+            rest_base_url: base_url.clone(),
+            xml_base_url: base_url,
+            region: VeracodeRegion::Commercial,
+            validate_certificates: true,
+            connect_timeout: 30,
+            request_timeout: 300,
+            proxy_url: None,
+            proxy_username: None,
+            proxy_password: None,
+            // Disable retries so mocked 4xx/5xx responses are returned immediately
+            // instead of being retried, keeping these tests fast and deterministic.
+            retry_config: RetryConfig {
+                max_attempts: 0,
+                ..Default::default()
+            },
+        }
+    }
+
+    fn test_sandbox_scan_config() -> AssessmentScanConfig {
+        AssessmentScanConfig {
+            scan_type: ScanType::Sandbox,
+            sandbox_name: Some("test-sandbox".to_string()),
+            ..Default::default()
+        }
+    }
+
+    fn sandbox_json(name: &str) -> serde_json::Value {
+        serde_json::json!({
+            "id": 42,
+            "guid": "sandbox-guid-123",
+            "name": name,
+            "description": null,
+            "created": "2024-01-01T00:00:00Z",
+            "modified": "2024-01-01T00:00:00Z",
+            "auto_recreate": false,
+            "custom_fields": null,
+            "owner": null,
+            "owner_username": null,
+            "organization_id": null,
+            "application_guid": null,
+            "team_identifiers": null,
+            "scan_url": null,
+            "last_scan_date": null,
+            "status": null,
+            "_links": null
+        })
+    }
+
+    fn already_exists_error_body() -> serde_json::Value {
+        serde_json::json!({
+            "_embedded": {
+                "api_errors": [{
+                    "id": "1",
+                    "code": "sandbox_exists",
+                    "title": "Sandbox already exists",
+                    "status": "400",
+                    "source": null
+                }]
+            },
+            "fallback_type": null,
+            "full_type": null
+        })
+    }
+
+    /// Responds with each `ResponseTemplate` in order, one per call, repeating
+    /// the last one once exhausted. Used to simulate "not found, then found"
+    /// sequences without depending on wiremock's mock-priority ordering.
+    struct SequencedResponder {
+        responses: Vec<ResponseTemplate>,
+        call: std::sync::atomic::AtomicUsize,
+    }
+
+    impl Respond for SequencedResponder {
+        fn respond(&self, _request: &Request) -> ResponseTemplate {
+            let idx = self.call.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.responses
+                .get(idx)
+                .or_else(|| self.responses.last())
+                .cloned()
+                .unwrap_or_else(|| ResponseTemplate::new(500))
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ensure_sandbox_lookup_error_propagates_without_create() {
+        let mock_server = MockServer::start().await;
+
+        // GET (list/lookup) fails -> must propagate as an error, and create
+        // must never be attempted.
+        Mock::given(method("GET"))
+            .and(path("/appsec/v1/applications/app-guid/sandboxes"))
+            .respond_with(ResponseTemplate::new(500))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/appsec/v1/applications/app-guid/sandboxes"))
+            .respond_with(ResponseTemplate::new(201))
+            .expect(0)
+            .mount(&mock_server)
+            .await;
+
+        let submitter = AssessmentSubmitter::new(
+            test_veracode_config(mock_server.uri()),
+            test_sandbox_scan_config(),
+        )
+        .expect("client should construct");
+
+        let result = submitter.ensure_sandbox_and_get_id("app-guid").await;
+
+        assert!(
+            result.is_err(),
+            "a failed sandbox lookup must not be treated as 'sandbox not found'"
+        );
+
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_ensure_sandbox_recovers_from_already_exists_race() {
+        let mock_server = MockServer::start().await;
+
+        // First lookup: sandbox not found -> code attempts to create it.
+        // Second lookup (after the AlreadyExists recovery): sandbox is found.
+        let get_responder = SequencedResponder {
+            responses: vec![
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "_embedded": { "sandboxes": [] }
+                })),
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "_embedded": { "sandboxes": [sandbox_json("test-sandbox")] }
+                })),
+            ],
+            call: std::sync::atomic::AtomicUsize::new(0),
+        };
+        Mock::given(method("GET"))
+            .and(path("/appsec/v1/applications/app-guid/sandboxes"))
+            .respond_with(get_responder)
+            .expect(2)
+            .mount(&mock_server)
+            .await;
+
+        // Create races with another process and fails as already-existing.
+        Mock::given(method("POST"))
+            .and(path("/appsec/v1/applications/app-guid/sandboxes"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(already_exists_error_body()))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let submitter = AssessmentSubmitter::new(
+            test_veracode_config(mock_server.uri()),
+            test_sandbox_scan_config(),
+        )
+        .expect("client should construct");
+
+        let result = submitter
+            .ensure_sandbox_and_get_id("app-guid")
+            .await
+            .expect("should recover by re-fetching the sandbox");
+
+        let sandbox_id = result.expect("sandbox scan must return a SandboxId");
+        assert_eq!(sandbox_id.for_rest_api(), "sandbox-guid-123");
+
+        mock_server.verify().await;
+    }
+
+    #[tokio::test]
+    async fn test_ensure_sandbox_creates_when_missing() {
+        let mock_server = MockServer::start().await;
+
+        Mock::given(method("GET"))
+            .and(path("/appsec/v1/applications/app-guid/sandboxes"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "_embedded": { "sandboxes": [] }
+            })))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        Mock::given(method("POST"))
+            .and(path("/appsec/v1/applications/app-guid/sandboxes"))
+            .respond_with(ResponseTemplate::new(201).set_body_json(sandbox_json("test-sandbox")))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let submitter = AssessmentSubmitter::new(
+            test_veracode_config(mock_server.uri()),
+            test_sandbox_scan_config(),
+        )
+        .expect("client should construct");
+
+        let result = submitter
+            .ensure_sandbox_and_get_id("app-guid")
+            .await
+            .expect("happy-path create must succeed");
+
+        let sandbox_id = result.expect("sandbox scan must return a SandboxId");
+        assert_eq!(sandbox_id.for_rest_api(), "sandbox-guid-123");
+
+        mock_server.verify().await;
     }
 }
 

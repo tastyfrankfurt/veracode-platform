@@ -737,7 +737,7 @@ impl GitLabIssuesClient {
             .unwrap_or("");
         hasher.update(function_name.as_bytes());
 
-        let payload_hash = format!("{:x}", hasher.finalize());
+        let payload_hash = hex::encode(hasher.finalize());
         let short_hash = payload_hash.get(..8).unwrap_or(&payload_hash); // Use first 8 characters
 
         // Create final title with hash
@@ -1295,14 +1295,14 @@ mod tests {
         let payload1_json = serde_json::to_string(&payload1).expect("should serialize payload1");
         let mut hasher1 = Sha256::new();
         hasher1.update(payload1_json.as_bytes());
-        let hash1_full = format!("{:x}", hasher1.finalize());
+        let hash1_full = hex::encode(hasher1.finalize());
         let hash1 = hash1_full.get(..8).unwrap_or(&hash1_full).to_string();
 
         // Hash payload 2
         let payload2_json = serde_json::to_string(&payload2).expect("should serialize payload2");
         let mut hasher2 = Sha256::new();
         hasher2.update(payload2_json.as_bytes());
-        let hash2_full = format!("{:x}", hasher2.finalize());
+        let hash2_full = hex::encode(hasher2.finalize());
         let hash2 = hash2_full.get(..8).unwrap_or(&hash2_full).to_string();
 
         // Test that hash is 8 characters
