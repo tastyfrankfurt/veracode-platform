@@ -302,7 +302,7 @@ mod tests {
         let entry = json!({"event": "login", "user": "alice"});
         let result = build_record_entry(&entry, "test-partition-key");
         let record = result.expect("expected Some for a valid entry");
-        assert_eq!(record.partition_key(), "test-partition-key");
+        assert_eq!(record.partition_key(), Some("test-partition-key"));
         let bytes = record.data().as_ref();
         let parsed: serde_json::Value =
             serde_json::from_slice(bytes).expect("data should be valid JSON");

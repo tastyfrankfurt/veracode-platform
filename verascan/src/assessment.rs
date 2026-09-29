@@ -1157,7 +1157,7 @@ impl AssessmentSubmitter {
             info!(
                 "⏳ Prescan submitted successfully - not waiting for completion (--no-wait specified)"
             );
-            info!("   Build ID: {}", &build_id);
+            info!("   Build ID: {}", build_id);
             return Ok(build_id);
         }
 
