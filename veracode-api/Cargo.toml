@@ -1,6 +1,6 @@
 [package]
 name = "veracode-platform"
-version = "0.7.12"
+version = "0.7.13"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client library for the Veracode platform (Applications, Identity, Pipeline Scan, Sandbox)"
@@ -82,7 +82,7 @@ log = "0.4"
 secrecy = { version = "0.10", features = ["serde"] }
 
 # XML parsing for legacy API responses
-quick-xml = "0.39"
+quick-xml = "0.42.0"
 
 # Async runtime
 tokio = { version = "1.0", features = ["full"] }

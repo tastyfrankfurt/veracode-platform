@@ -5,6 +5,13 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.13] - 2026-09-29
+
+### Fixed
+- **`SandboxApi::get_sandbox_by_name` could miss an existing sandbox past the server's default page size**: the lookup requested a single page of results with no explicit `size`, so on applications with enough sandboxes the target sandbox could sit past page 1 and the lookup would incorrectly report it as not found
+  - Now explicitly requests `size=MAX_PAGE_SIZE` (500) alongside the existing server-side `name` filter, making a page-1 miss effectively impossible for realistic sandbox counts
+  - **Modified Files**: `src/sandbox.rs`
+
 ## [0.7.12] - 2026-05-30
 
 ### Dependencies

@@ -416,7 +416,7 @@ impl GitLabClient {
             .unwrap_or("");
         hasher.update(function_name.as_bytes());
 
-        let payload_hash = format!("{:x}", hasher.finalize());
+        let payload_hash = hex::encode(hasher.finalize());
         let short_hash = payload_hash.get(..8).unwrap_or(&payload_hash);
 
         // Create final title with hash

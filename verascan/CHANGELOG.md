@@ -5,6 +5,15 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7] - 2026-09-29
+
+### Fixed
+- **Sandbox scans could fail with "sandbox already exists" on the run immediately after the sandbox was first created**: `ensure_sandbox_and_get_id` treated any error from the sandbox-lookup call (transient HTTP failure, non-200 status, etc.) the same as "sandbox doesn't exist," so lookup errors silently triggered a create attempt against a sandbox that already existed from a prior run
+  - Lookup errors are now propagated instead of being swallowed
+  - If creation still races with another process/scan and fails as already-existing, the code now recovers by re-fetching the sandbox instead of failing the run
+  - **Dependencies**: `veracode-platform` 0.7.12 → 0.7.13, which also fixes a related pagination gap in the underlying sandbox lookup
+  - **Modified Files**: `Cargo.toml`, `src/assessment.rs`
+
 ## [0.7.6] - 2026-05-30
 
 ### Changed

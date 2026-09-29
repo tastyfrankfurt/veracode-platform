@@ -253,6 +253,23 @@ pub struct RobustHttpClient {
     config: HttpClientConfig,
 }
 
+/// Renders an error together with its full `source()` chain.
+///
+/// `reqwest::Error`'s `Display` impl only prints a generic phrase like
+/// "builder error" for proxy/URL parsing failures, hiding the underlying
+/// `url::ParseError` (e.g. "empty host", "invalid port number") that
+/// explains what's actually wrong with the configured value.
+fn describe_error_chain(err: &dyn std::error::Error) -> String {
+    let mut message = err.to_string();
+    let mut source = err.source();
+    while let Some(inner) = source {
+        message.push_str(": ");
+        message.push_str(&inner.to_string());
+        source = inner.source();
+    }
+    message
+}
+
 impl RobustHttpClient {
     /// Create a new robust HTTP client
     ///
@@ -275,7 +292,10 @@ impl RobustHttpClient {
         // Configure proxy if specified
         if let Some(proxy_url) = &config.proxy_url {
             let mut proxy = reqwest::Proxy::all(proxy_url).map_err(|e| {
-                HttpClientError::ConfigurationError(format!("Invalid proxy URL: {e}"))
+                HttpClientError::ConfigurationError(format!(
+                    "Invalid proxy URL: {}",
+                    describe_error_chain(&e)
+                ))
             })?;
 
             // Add basic authentication if credentials are provided

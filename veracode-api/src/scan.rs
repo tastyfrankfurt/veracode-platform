@@ -17,8 +17,8 @@ use crate::{VeracodeClient, VeracodeError};
 
 /// Helper function to efficiently convert XML attribute bytes to string
 /// Avoids unnecessary allocation when possible
-fn attr_to_string(value: &[u8]) -> String {
-    String::from_utf8_lossy(value).into_owned()
+fn attr_to_string(value: &str) -> String {
+    value.to_string()
 }
 
 /// File upload status as defined in the Veracode filelist.xsd schema
@@ -1388,12 +1388,12 @@ impl ScanApi {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == b"file" {
+                    if e.name().as_ref() == "file" {
                         // Extract file_id and file_status from attributes
                         for attr in e.attributes().flatten() {
                             match attr.key.as_ref() {
-                                b"file_id" => file_id = Some(attr_to_string(&attr.value)),
-                                b"file_status" => {
+                                "file_id" => file_id = Some(attr_to_string(&attr.value)),
+                                "file_status" => {
                                     let status_str = attr_to_string(&attr.value);
                                     file_status =
                                         status_str.parse().unwrap_or(FileStatus::PendingUpload);
@@ -1401,22 +1401,22 @@ impl ScanApi {
                                 _ => {}
                             }
                         }
-                    } else if e.name().as_ref() == b"error" {
+                    } else if e.name().as_ref() == "error" {
                         in_error_tag = true;
                     }
                 }
                 Ok(Event::Text(e)) => {
                     if in_error_tag {
-                        current_error = Some(String::from_utf8_lossy(&e).to_string());
+                        current_error = Some(e.to_string());
                     } else {
-                        let text = std::str::from_utf8(&e).unwrap_or_default();
+                        let text: &str = &e;
                         // Check for success/error messages in text content
                         if text.contains("successfully uploaded") {
                             file_status = FileStatus::Uploaded;
                         }
                     }
                 }
-                Ok(Event::End(ref e)) if e.name().as_ref() == b"error" => {
+                Ok(Event::End(ref e)) if e.name().as_ref() == "error" => {
                     in_error_tag = false;
                 }
                 Ok(Event::Eof) => break,
@@ -1472,13 +1472,13 @@ impl ScanApi {
 
             loop {
                 match reader.read_event_into(&mut buf) {
-                    Ok(Event::Start(ref e)) if e.name().as_ref() == b"error" => {
+                    Ok(Event::Start(ref e)) if e.name().as_ref() == "error" => {
                         in_error = true;
                     }
                     Ok(Event::Text(ref e)) if in_error => {
-                        error_message.push_str(&String::from_utf8_lossy(e));
+                        error_message.push_str(e);
                     }
-                    Ok(Event::End(ref e)) if e.name().as_ref() == b"error" => {
+                    Ok(Event::End(ref e)) if e.name().as_ref() == "error" => {
                         break;
                     }
                     Ok(Event::Eof) => break,
@@ -1531,20 +1531,19 @@ impl ScanApi {
 
         for attr in attributes.flatten() {
             match attr.key.as_ref() {
-                b"id" => module.id = attr_to_string(&attr.value),
-                b"name" => module.name = attr_to_string(&attr.value),
-                b"type" => module.module_type = attr_to_string(&attr.value),
-                b"isfatal" => module.is_fatal = attr.value.as_ref() == b"true",
-                b"selected" => module.selected = attr.value.as_ref() == b"true",
-                b"has_fatal_errors" if attr.value.as_ref() == b"true" => {
+                "id" => module.id = attr_to_string(&attr.value),
+                "name" => module.name = attr_to_string(&attr.value),
+                "type" => module.module_type = attr_to_string(&attr.value),
+                "isfatal" => module.is_fatal = attr.value.as_ref() == "true",
+                "selected" => module.selected = attr.value.as_ref() == "true",
+                "has_fatal_errors" if attr.value.as_ref() == "true" => {
                     *has_fatal_errors = true;
                 }
-                b"size" => {
-                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
-                        module.size = size_str.parse().ok();
-                    }
+                "size" => {
+                    let size_str = attr.value.to_string();
+                    module.size = size_str.parse().ok();
                 }
-                b"platform" => module.platform = Some(attr_to_string(&attr.value)),
+                "platform" => module.platform = Some(attr_to_string(&attr.value)),
                 _ => {}
             }
         }
@@ -1585,16 +1584,16 @@ impl ScanApi {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
-                        b"prescanresults" => {
+                        "prescanresults" => {
                             has_prescan_results = true;
                             // Extract build_id from prescanresults attributes if present
                             for attr in e.attributes().flatten() {
-                                if attr.key.as_ref() == b"build_id" {
+                                if attr.key.as_ref() == "build_id" {
                                     build_id = Some(attr_to_string(&attr.value));
                                 }
                             }
                         }
-                        b"module" => {
+                        "module" => {
                             let module = self.parse_module_from_attributes(
                                 e.attributes(),
                                 &mut has_fatal_errors,
@@ -1606,7 +1605,7 @@ impl ScanApi {
                 }
                 Ok(Event::Empty(ref e))
                     // Handle self-closing module tags like <module ... />
-                    if e.name().as_ref() == b"module" => {
+                    if e.name().as_ref() == "module" => {
                     let module = self
                         .parse_module_from_attributes(e.attributes(), &mut has_fatal_errors);
                     modules.push(module);
@@ -1666,14 +1665,13 @@ impl ScanApi {
 
         for attr in attributes.flatten() {
             match attr.key.as_ref() {
-                b"file_id" => file.file_id = attr_to_string(&attr.value),
-                b"file_name" => file.file_name = attr_to_string(&attr.value),
-                b"file_size" => {
-                    if let Ok(size_str) = String::from_utf8(attr.value.to_vec()) {
-                        file.file_size = size_str.parse().unwrap_or(0);
-                    }
+                "file_id" => file.file_id = attr_to_string(&attr.value),
+                "file_name" => file.file_name = attr_to_string(&attr.value),
+                "file_size" => {
+                    let size_str = attr.value.to_string();
+                    file.file_size = size_str.parse().unwrap_or(0);
                 }
-                b"file_status" => {
+                "file_status" => {
                     let status_str = attr_to_string(&attr.value);
                     // Parse status, fallback to PendingUpload if unknown
                     file.file_status = status_str.parse().unwrap_or_else(|e| {
@@ -1681,9 +1679,7 @@ impl ScanApi {
                         FileStatus::PendingUpload
                     });
                 }
-                b"md5" | b"file_md5" => {
-                    file.md5 = Some(String::from_utf8_lossy(&attr.value).to_string())
-                }
+                "md5" | "file_md5" => file.md5 = Some(attr.value.to_string()),
                 _ => {}
             }
         }
@@ -1703,25 +1699,25 @@ impl ScanApi {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    if e.name().as_ref() == b"file" {
+                    if e.name().as_ref() == "file" {
                         let file = self.parse_file_from_attributes(e.attributes());
                         files.push(file);
-                    } else if e.name().as_ref() == b"error" {
+                    } else if e.name().as_ref() == "error" {
                         in_error_tag = true;
                     }
                 }
                 Ok(Event::Empty(ref e))
                     // Handle self-closing file tags like <file ... />
-                    if e.name().as_ref() == b"file" => {
+                    if e.name().as_ref() == "file" => {
                     let file = self.parse_file_from_attributes(e.attributes());
                     files.push(file);
                 }
                 Ok(Event::Text(ref e))
                     if in_error_tag => {
-                    current_error = Some(String::from_utf8_lossy(e).to_string());
+                    current_error = Some(e.to_string());
                 }
                 Ok(Event::End(ref e))
-                    if e.name().as_ref() == b"error" => {
+                    if e.name().as_ref() == "error" => {
                     in_error_tag = false;
                 }
                 Ok(Event::Eof) => break,
@@ -1771,51 +1767,45 @@ impl ScanApi {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
-                        b"buildinfo" => {
+                        "buildinfo" => {
                             // Parse buildinfo attributes
                             for attr in e.attributes().flatten() {
                                 match attr.key.as_ref() {
-                                    b"build_id" => scan_info.build_id = attr_to_string(&attr.value),
-                                    b"analysis_unit"
+                                    "build_id" => scan_info.build_id = attr_to_string(&attr.value),
+                                    "analysis_unit"
                                         // Fallback status from buildinfo (older API format)
                                         if scan_info.status == "Unknown" => {
                                         scan_info.status = attr_to_string(&attr.value);
                                     }
-                                    b"analysis_unit_id" => {
+                                    "analysis_unit_id" => {
                                         scan_info.analysis_unit_id =
                                             Some(attr_to_string(&attr.value))
                                     }
-                                    b"scan_progress_percentage" => {
-                                        if let Ok(progress_str) =
-                                            String::from_utf8(attr.value.to_vec())
-                                        {
-                                            scan_info.scan_progress_percentage =
-                                                progress_str.parse().ok();
-                                        }
+                                    "scan_progress_percentage" => {
+                                        let progress_str = attr.value.to_string();
+                                        scan_info.scan_progress_percentage =
+                                            progress_str.parse().ok();
                                     }
-                                    b"total_lines_of_code" => {
-                                        if let Ok(lines_str) =
-                                            String::from_utf8(attr.value.to_vec())
-                                        {
-                                            scan_info.total_lines_of_code = lines_str.parse().ok();
-                                        }
+                                    "total_lines_of_code" => {
+                                        let lines_str = attr.value.to_string();
+                                        scan_info.total_lines_of_code = lines_str.parse().ok();
                                     }
                                     _ => {}
                                 }
                             }
                         }
-                        b"build" => {
+                        "build" => {
                             inside_build = true;
                         }
-                        b"analysis_unit" => {
+                        "analysis_unit" => {
                             // Parse analysis_unit attributes (primary status source)
                             for attr in e.attributes().flatten() {
                                 match attr.key.as_ref() {
-                                    b"status" => {
+                                    "status" => {
                                         // Primary status source from analysis_unit
                                         scan_info.status = attr_to_string(&attr.value);
                                     }
-                                    b"analysis_type" => {
+                                    "analysis_type" => {
                                         scan_info.scan_type = attr_to_string(&attr.value);
                                     }
                                     _ => {}
@@ -1826,18 +1816,18 @@ impl ScanApi {
                     }
                 }
                 Ok(Event::End(ref e))
-                    if e.name().as_ref() == b"build" => {
+                    if e.name().as_ref() == "build" => {
                     inside_build = false;
                 }
                 Ok(Event::Empty(ref e))
                     // Handle self-closing elements like <analysis_unit ... />
-                    if e.name().as_ref() == b"analysis_unit" && inside_build => {
+                    if e.name().as_ref() == "analysis_unit" && inside_build => {
                     for attr in e.attributes().flatten() {
                         match attr.key.as_ref() {
-                            b"status" => {
+                            "status" => {
                                 scan_info.status = attr_to_string(&attr.value);
                             }
-                            b"analysis_type" => {
+                            "analysis_type" => {
                                 scan_info.scan_type = attr_to_string(&attr.value);
                             }
                             _ => {}
@@ -2551,18 +2541,19 @@ mod tests {
             /// Property: attr_to_string handles all valid UTF-8
             #[test]
             fn prop_attr_to_string_valid_utf8(s in ".*") {
-                let bytes = s.as_bytes();
-                let result = attr_to_string(bytes);
+                let result = attr_to_string(&s);
                 prop_assert_eq!(&result, &s, "attr_to_string should preserve valid UTF-8");
             }
 
             /// Property: attr_to_string handles invalid UTF-8 gracefully
             #[test]
             fn prop_attr_to_string_invalid_utf8(bytes in prop::collection::vec(any::<u8>(), 0..100)) {
-                // Should not panic on invalid UTF-8
-                let _result = attr_to_string(&bytes);
+                // quick-xml now performs the lossy UTF-8 decoding itself before attr_to_string
+                // ever sees the value, so simulate that step here.
+                let s = String::from_utf8_lossy(&bytes).into_owned();
+                // Should not panic on the lossily-decoded string
+                let _result = attr_to_string(&s);
                 // Result should always be a valid Rust string (String type guarantees valid UTF-8)
-                // The function may use replacement characters for invalid sequences
                 // Just verify the function doesn't panic - the String type itself guarantees validity
                 prop_assert!(true, "Function should not panic on invalid UTF-8");
             }
@@ -2751,27 +2742,29 @@ mod tests {
 
         #[test]
         fn test_attr_to_string_empty() {
-            let result = attr_to_string(b"");
+            let result = attr_to_string("");
             assert_eq!(result, "");
         }
 
         #[test]
         fn test_attr_to_string_ascii() {
-            let result = attr_to_string(b"test123");
+            let result = attr_to_string("test123");
             assert_eq!(result, "test123");
         }
 
         #[test]
         fn test_attr_to_string_utf8() {
-            let result = attr_to_string("hello 世界".as_bytes());
+            let result = attr_to_string("hello 世界");
             assert_eq!(result, "hello 世界");
         }
 
         #[test]
         fn test_attr_to_string_invalid_utf8() {
-            // Invalid UTF-8 sequence
-            let invalid = &[0xFF, 0xFE, 0xFD];
-            let result = attr_to_string(invalid);
+            // Invalid UTF-8 sequence; lossy-decode it first the way quick-xml does
+            // internally before attr_to_string ever sees the value.
+            let invalid: &[u8] = &[0xFF, 0xFE, 0xFD];
+            let lossy = String::from_utf8_lossy(invalid).into_owned();
+            let result = attr_to_string(&lossy);
             // Should contain replacement characters, not panic
             assert!(result.contains('\u{FFFD}'));
         }

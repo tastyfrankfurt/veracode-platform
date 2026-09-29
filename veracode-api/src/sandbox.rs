@@ -721,6 +721,7 @@ impl<'a> SandboxApi<'a> {
     ) -> Result<Option<Sandbox>, SandboxError> {
         let params = SandboxListParams {
             name: Some(name.to_string()),
+            size: Some(MAX_PAGE_SIZE),
             ..Default::default()
         };
 
@@ -1189,6 +1190,23 @@ mod tests {
         assert!(query_params.contains(&("name".to_string(), "test".to_string())));
         assert!(query_params.contains(&("page".to_string(), "1".to_string())));
         assert!(query_params.contains(&("size".to_string(), "10".to_string())));
+    }
+
+    #[test]
+    fn test_get_sandbox_by_name_requests_max_page_size() {
+        // Mirrors the SandboxListParams construction used internally by
+        // get_sandbox_by_name: it must request MAX_PAGE_SIZE so that a
+        // sandbox lookup can't silently miss a match sitting past the
+        // server's default page size.
+        let params = SandboxListParams {
+            name: Some("test-sandbox".to_string()),
+            size: Some(MAX_PAGE_SIZE),
+            ..Default::default()
+        };
+
+        let query_params: Vec<_> = params.into();
+        assert!(query_params.contains(&("name".to_string(), "test-sandbox".to_string())));
+        assert!(query_params.contains(&("size".to_string(), MAX_PAGE_SIZE.to_string())));
     }
 
     #[test]

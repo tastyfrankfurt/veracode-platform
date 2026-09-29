@@ -1,6 +1,6 @@
 [package]
 name = "verascan"
-version = "0.7.6"
+version = "0.7.7"
 edition = "2024"
 authors = ["Fred Nollows <frednollows@gmail.com>"]
 description = "A comprehensive Rust client application for the Veracode platform to support pipeline, sandbox and policy scan submission and reporting."
@@ -44,7 +44,7 @@ doc_markdown = "warn"                  # Enforces markdown in docs
 
 [dependencies]
 # Veracode Platform client library
-veracode-platform = { path = "../veracode-api", version = "0.7.12" }
+veracode-platform = { path = "../veracode-api", version = "0.7.13" }
 
 # CLI and utilities
 clap = { workspace = true, features = ["derive"] }
@@ -56,10 +56,11 @@ serde_json = { workspace = true }
 glob = "0.3"
 
 # File type detection
-infer = "0.19"
+infer = "0.22.0"
 
 # Cryptographic hashing
-sha2 = "0.10"
+sha2 = "0.11.0"
+hex = "0.4"
 
 # Regular expressions for HTML parsing
 regex = "1.10"
@@ -95,7 +96,7 @@ rustify = "0.7"
 backon = "1.3"
 
 [dev-dependencies]
-jsonschema = "0.46"
+jsonschema = "0.58.2"
 wiremock = "0.6"
 tokio-test = "0.4"
 proptest = "1.5"

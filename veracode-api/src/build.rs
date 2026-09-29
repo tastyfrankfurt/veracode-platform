@@ -8,6 +8,7 @@ use chrono::{DateTime, NaiveDate, Utc};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use serde::{Deserialize, Serialize};
+use std::borrow::Cow;
 use std::collections::HashMap;
 
 use crate::{VeracodeClient, VeracodeError};
@@ -679,9 +680,9 @@ impl BuildApi {
 
             loop {
                 match reader.read_event_into(&mut buf) {
-                    Ok(Event::Start(ref e)) if e.name().as_ref() == b"error" => {
+                    Ok(Event::Start(ref e)) if e.name().as_ref() == "error" => {
                         if let Ok(Event::Text(text)) = reader.read_event_into(&mut buf) {
-                            let error_msg = String::from_utf8_lossy(&text);
+                            let error_msg = text.to_string();
                             if error_msg.contains("Could not find a build") {
                                 return Err(BuildError::BuildNotFound);
                             }
@@ -731,11 +732,11 @@ impl BuildApi {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     match e.name().as_ref() {
-                        b"build" => {
+                        "build" => {
                             inside_build = true;
                             for attr in e.attributes().flatten() {
-                                let key = String::from_utf8_lossy(attr.key.as_ref());
-                                let value = String::from_utf8_lossy(&attr.value);
+                                let key = Cow::Borrowed(attr.key.as_ref());
+                                let value = attr.value;
 
                                 match key.as_ref() {
                                     "build_id" => build.build_id = value.into_owned(),
@@ -792,11 +793,11 @@ impl BuildApi {
                                 }
                             }
                         }
-                        b"analysis_unit" if inside_build => {
+                        "analysis_unit" if inside_build => {
                             // Parse analysis_unit element nested inside build (primary source for build status)
                             for attr in e.attributes().flatten() {
-                                let key = String::from_utf8_lossy(attr.key.as_ref());
-                                let value = String::from_utf8_lossy(&attr.value);
+                                let key = Cow::Borrowed(attr.key.as_ref());
+                                let value = attr.value;
 
                                 // Store all analysis_unit attributes, especially status
                                 match key.as_ref() {
@@ -820,10 +821,10 @@ impl BuildApi {
                 }
                 Ok(Event::Empty(ref e))
                     // Handle self-closing elements like <analysis_unit ... />
-                    if e.name().as_ref() == b"analysis_unit" && inside_build => {
+                    if e.name().as_ref() == "analysis_unit" && inside_build => {
                     for attr in e.attributes().flatten() {
-                        let key = String::from_utf8_lossy(attr.key.as_ref());
-                        let value = String::from_utf8_lossy(&attr.value);
+                        let key = Cow::Borrowed(attr.key.as_ref());
+                        let value = attr.value;
 
                         match key.as_ref() {
                             "status" => {
@@ -840,7 +841,7 @@ impl BuildApi {
                     }
                 }
                 Ok(Event::End(ref e))
-                    if e.name().as_ref() == b"build" => {
+                    if e.name().as_ref() == "build" => {
                     inside_build = false;
                 }
                 Ok(Event::Eof) => break,
@@ -895,8 +896,8 @@ impl BuildApi {
         };
 
         for attr in attributes.flatten() {
-            let key = String::from_utf8_lossy(attr.key.as_ref());
-            let value = String::from_utf8_lossy(&attr.value);
+            let key = Cow::Borrowed(attr.key.as_ref());
+            let value = attr.value;
 
             match key.as_ref() {
                 "build_id" => build.build_id = value.into_owned(),
@@ -959,10 +960,10 @@ impl BuildApi {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => match e.name().as_ref() {
-                    b"buildlist" => {
+                    "buildlist" => {
                         for attr in e.attributes().flatten() {
-                            let key = String::from_utf8_lossy(attr.key.as_ref());
-                            let value = String::from_utf8_lossy(&attr.value);
+                            let key = Cow::Borrowed(attr.key.as_ref());
+                            let value = attr.value;
 
                             match key.as_ref() {
                                 "account_id" => build_list.account_id = Some(value.into_owned()),
@@ -972,7 +973,7 @@ impl BuildApi {
                             }
                         }
                     }
-                    b"build" => {
+                    "build" => {
                         let build = self.parse_build_from_attributes(
                             e.attributes(),
                             &build_list.app_id,
@@ -987,7 +988,7 @@ impl BuildApi {
                 },
                 Ok(Event::Empty(ref e))
                     // Handle self-closing build tags like <build ... />
-                    if e.name().as_ref() == b"build" => {
+                    if e.name().as_ref() == "build" => {
                     let build = self.parse_build_from_attributes(
                         e.attributes(),
                         &build_list.app_id,
@@ -1018,10 +1019,10 @@ impl BuildApi {
 
         loop {
             match reader.read_event_into(&mut buf) {
-                Ok(Event::Start(ref e)) if e.name().as_ref() == b"result" => {
+                Ok(Event::Start(ref e)) if e.name().as_ref() == "result" => {
                     // Read the text content of the result element
                     if let Ok(Event::Text(e)) = reader.read_event_into(&mut buf) {
-                        result = String::from_utf8_lossy(&e).into_owned();
+                        result = e.to_string();
                     }
                 }
                 Ok(Event::Eof) => break,
