@@ -1679,9 +1679,7 @@ impl ScanApi {
                         FileStatus::PendingUpload
                     });
                 }
-                "md5" | "file_md5" => {
-                    file.md5 = Some(attr.value.to_string())
-                }
+                "md5" | "file_md5" => file.md5 = Some(attr.value.to_string()),
                 _ => {}
             }
         }
