@@ -1159,7 +1159,7 @@ impl VeracodeClient {
                     profile: UpdateApplicationProfile {
                         name: Some(profile.name.clone()),
                         description: if update_description {
-                            description.map(Description::new).transpose()?
+                            description.clone().map(Description::new).transpose()?
                         } else {
                             profile.description.clone()
                         },
@@ -1179,7 +1179,7 @@ impl VeracodeClient {
                         // },
                         custom_kms_alias: profile.custom_kms_alias.clone(), // Always preserve existing (or None)
                         repo_url: if update_repo_url {
-                            repo_url
+                            repo_url.clone()
                         } else {
                             profile.repo_url.clone()
                         },
@@ -1187,7 +1187,18 @@ impl VeracodeClient {
                 };
 
                 let guid = AppGuid::new(&existing_app.guid)?;
-                return self.update_application(&guid, &update_request).await;
+                // Updating an existing application is best-effort: the API user may
+                // lack edit rights (HTTP 403). Continue with the existing application.
+                return match self.update_application(&guid, &update_request).await {
+                    Ok(updated) => Ok(updated),
+                    Err(e) => {
+                        log::warn!(
+                            "Could not update repo_url/description on existing application '{name}' (insufficient permissions?); continuing without update"
+                        );
+                        log::debug!("Update of existing application '{name}' failed: {e}");
+                        Ok(existing_app)
+                    }
+                };
             }
 
             return Ok(existing_app);

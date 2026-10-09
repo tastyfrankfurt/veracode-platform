@@ -5,6 +5,13 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.8] - 2026-10-09
+
+### Fixed
+- **Scan failed when the API user lacked rights to update an existing application's repo URL/description**: now continues with a warning (via `veracode-platform` 0.7.14)
+- HTTP error responses during application lookup no longer print the response body unless debug logging is enabled
+  - **Modified Files**: `Cargo.toml`, `src/scan.rs`
+
 ## [0.7.7] - 2026-09-29
 
 ### Fixed

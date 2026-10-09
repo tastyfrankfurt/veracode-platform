@@ -5,6 +5,12 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.14] - 2026-10-09
+
+### Fixed
+- **`create_application_if_not_exists` failed hard when the API user could not edit an existing application**: updating `repo_url`/`description` on an existing application is now best-effort. On any update error (e.g. HTTP 403) a short warning is logged (without the response body), the full error is logged at debug level, and the existing application is returned
+  - **Modified Files**: `src/app.rs`
+
 ## [0.7.13] - 2026-09-29
 
 ### Fixed

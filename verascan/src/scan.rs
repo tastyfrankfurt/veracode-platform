@@ -2042,9 +2042,22 @@ async fn execute_assessment_scan_async(
                         }
                     }
                     Err(e) => {
-                        error!(
-                            "❌ Failed to lookup or create application '{app_profile_name}': {e}"
-                        );
+                        // Keep response bodies out of non-debug output
+                        if let veracode_platform::VeracodeError::HttpStatus {
+                            status_code,
+                            url,
+                            ..
+                        } = &e
+                        {
+                            error!(
+                                "❌ Failed to lookup or create application '{app_profile_name}': HTTP {status_code} error at {url} (run with debug logging for details)"
+                            );
+                            debug!("Full error: {e}");
+                        } else {
+                            error!(
+                                "❌ Failed to lookup or create application '{app_profile_name}': {e}"
+                            );
+                        }
                         return Err(1);
                     }
                 };
