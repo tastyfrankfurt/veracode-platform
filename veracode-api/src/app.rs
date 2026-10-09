@@ -83,7 +83,8 @@ pub struct Profile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_kms_alias: Option<String>,
     /// Repository URL for the application (e.g., Git repository URL)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // The Veracode REST API uses `git_repo_url` as the JSON key for both reads and writes.
+    #[serde(rename = "git_repo_url", skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
 }
 
@@ -299,7 +300,8 @@ pub struct CreateApplicationProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_kms_alias: Option<String>,
     /// Repository URL for the application (e.g., Git repository URL)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // The Veracode REST API uses `git_repo_url` as the JSON key for both reads and writes.
+    #[serde(rename = "git_repo_url", skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
 }
 
@@ -417,7 +419,8 @@ pub struct UpdateApplicationProfile {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub custom_kms_alias: Option<String>,
     /// Repository URL for the application (e.g., Git repository URL)
-    #[serde(skip_serializing_if = "Option::is_none")]
+    // The Veracode REST API uses `git_repo_url` as the JSON key for both reads and writes.
+    #[serde(rename = "git_repo_url", skip_serializing_if = "Option::is_none")]
     pub repo_url: Option<String>,
 }
 
@@ -1159,7 +1162,7 @@ impl VeracodeClient {
                     profile: UpdateApplicationProfile {
                         name: Some(profile.name.clone()),
                         description: if update_description {
-                            description.map(Description::new).transpose()?
+                            description.clone().map(Description::new).transpose()?
                         } else {
                             profile.description.clone()
                         },
@@ -1179,7 +1182,7 @@ impl VeracodeClient {
                         // },
                         custom_kms_alias: profile.custom_kms_alias.clone(), // Always preserve existing (or None)
                         repo_url: if update_repo_url {
-                            repo_url
+                            repo_url.clone()
                         } else {
                             profile.repo_url.clone()
                         },
@@ -1187,7 +1190,18 @@ impl VeracodeClient {
                 };
 
                 let guid = AppGuid::new(&existing_app.guid)?;
-                return self.update_application(&guid, &update_request).await;
+                // Updating an existing application is best-effort: the API user may
+                // lack edit rights (HTTP 403). Continue with the existing application.
+                return match self.update_application(&guid, &update_request).await {
+                    Ok(updated) => Ok(updated),
+                    Err(e) => {
+                        log::warn!(
+                            "Could not update repo_url/description on existing application '{name}' (insufficient permissions?); continuing without update"
+                        );
+                        log::debug!("Update of existing application '{name}' failed: {e}");
+                        Ok(existing_app)
+                    }
+                };
             }
 
             return Ok(existing_app);
@@ -2175,7 +2189,7 @@ mod tests {
             "business_criticality",
             "description",
             "custom_kms_alias",
-            "repo_url",
+            "git_repo_url",
         ];
 
         for key in expected_keys {
@@ -2246,7 +2260,8 @@ mod tests {
         // Verify other expected fields are present
         assert!(json.contains("\"name\": \"MyApplication\""));
         assert!(json.contains("\"business_criticality\": \"HIGH\""));
-        assert!(json.contains("\"repo_url\""));
+        assert!(json.contains("\"git_repo_url\""));
+        assert!(!json.contains("\"repo_url\""));
 
         // Parse and verify structure
         let parsed: serde_json::Value =
@@ -2731,5 +2746,83 @@ mod miri_proptest {
             let _ = AppName::new(&s);
             // Miri will catch any UTF-8 boundary violations
         }
+    }
+}
+
+#[cfg(test)]
+mod profile_repo_url_tests {
+    use super::*;
+
+    fn profile_json(extra: &str) -> String {
+        format!(r#"{{"name":"My App","business_criticality":"HIGH"{extra}}}"#)
+    }
+
+    #[test]
+    fn profile_reads_git_repo_url() {
+        let json = profile_json(r#","git_repo_url":"https://github.com/user/repo""#);
+        let profile: Profile = serde_json::from_str(&json).expect("deserialize profile");
+        assert_eq!(
+            profile.repo_url.as_deref(),
+            Some("https://github.com/user/repo")
+        );
+    }
+
+    #[test]
+    fn profile_ignores_legacy_repo_url_key() {
+        let json = profile_json(r#","repo_url":"https://github.com/user/repo""#);
+        let profile: Profile = serde_json::from_str(&json).expect("deserialize profile");
+        assert!(profile.repo_url.is_none());
+    }
+
+    #[test]
+    fn profile_repo_url_absent_or_null_is_none() {
+        let profile: Profile =
+            serde_json::from_str(&profile_json("")).expect("deserialize profile");
+        assert!(profile.repo_url.is_none());
+        let profile: Profile = serde_json::from_str(&profile_json(r#","git_repo_url":null"#))
+            .expect("deserialize profile");
+        assert!(profile.repo_url.is_none());
+    }
+
+    #[test]
+    fn application_reads_git_repo_url_in_profile() {
+        let json = format!(
+            r#"{{"guid":"abc","id":1,"created":"2026-01-01T00:00:00.000Z","profile":{}}}"#,
+            profile_json(r#","git_repo_url":"https://github.com/user/repo""#)
+        );
+        let app: Application = serde_json::from_str(&json).expect("deserialize application");
+        assert_eq!(
+            app.profile.and_then(|p| p.repo_url).as_deref(),
+            Some("https://github.com/user/repo")
+        );
+    }
+
+    #[test]
+    fn profile_serializes_git_repo_url_only() {
+        let json = profile_json(r#","git_repo_url":"https://github.com/user/repo""#);
+        let profile: Profile = serde_json::from_str(&json).expect("deserialize profile");
+        let out = serde_json::to_string(&profile).expect("serialize profile");
+        assert!(out.contains("\"git_repo_url\""));
+        assert!(!out.contains("\"repo_url\""));
+    }
+
+    #[test]
+    fn update_request_serializes_git_repo_url_only() {
+        let profile = UpdateApplicationProfile {
+            name: Some(AppName::new("App").expect("valid name")),
+            business_criticality: BusinessCriticality::High,
+            description: None,
+            business_unit: None,
+            business_owners: None,
+            policies: None,
+            teams: None,
+            tags: None,
+            custom_fields: None,
+            custom_kms_alias: None,
+            repo_url: Some("https://github.com/user/repo".to_string()),
+        };
+        let out = serde_json::to_string(&profile).expect("serialize update profile");
+        assert!(out.contains("\"git_repo_url\""));
+        assert!(!out.contains("\"repo_url\""));
     }
 }
