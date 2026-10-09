@@ -5,6 +5,12 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.15] - 2026-10-09
+
+### Fixed
+- **`Profile.repo_url` was never populated from API responses**: the REST Applications API returns the repository URL as `git_repo_url`, so the field always deserialized as `None` and `create_application_if_not_exists` issued an update on every run. the JSON key for `Profile`, `CreateApplicationProfile` and `UpdateApplicationProfile` is now `git_repo_url` (via `serde(rename)`) for both reads and writes; the Rust field name `repo_url` is unchanged and the old `repo_url` JSON key is no longer used
+  - **Modified Files**: `src/app.rs`, `Cargo.toml`
+
 ## [0.7.14] - 2026-10-09
 
 ### Fixed

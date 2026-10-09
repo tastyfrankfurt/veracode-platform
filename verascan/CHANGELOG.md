@@ -5,6 +5,12 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.9] - 2026-10-09
+
+### Fixed
+- **Repo URL update attempted on every run**: existing application repo URL is now read correctly (via `veracode-platform` 0.7.15), and the API key is now `git_repo_url`, so the update is only made when the URL is actually missing
+  - **Modified Files**: `Cargo.toml`
+
 ## [0.7.8] - 2026-10-09
 
 ### Fixed
