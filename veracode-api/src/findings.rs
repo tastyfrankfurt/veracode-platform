@@ -1218,7 +1218,8 @@ mod proptest_security {
     #[test]
     fn test_response_without_embedded_deserializes_as_empty() {
         let json = r#"{"_links":{"self":{"href":"s","templated":true},"application":{"href":"a"}},"page":{"size":500,"total_elements":0,"total_pages":0,"number":0}}"#;
-        let resp: FindingsResponse = serde_json::from_str(json).unwrap();
+        let resp: FindingsResponse =
+            serde_json::from_str(json).expect("response without _embedded should deserialize");
         assert!(resp.findings().is_empty());
         assert_eq!(resp.page.total_elements, 0);
     }
