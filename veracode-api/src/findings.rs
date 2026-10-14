@@ -103,9 +103,10 @@ pub struct RestFinding {
 }
 
 /// Embedded findings in HAL response
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct FindingsEmbedded {
     /// Array of findings
+    #[serde(default)]
     pub findings: Vec<RestFinding>,
 }
 
@@ -156,7 +157,9 @@ pub struct PageInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct FindingsResponse {
     /// Embedded findings data
-    #[serde(rename = "_embedded")]
+    ///
+    /// Absent when the scan has no findings (`total_elements` is 0).
+    #[serde(rename = "_embedded", default)]
     pub embedded: FindingsEmbedded,
     /// HAL navigation links
     #[serde(rename = "_links")]
@@ -1210,6 +1213,14 @@ mod proptest_security {
             assert_eq!(deserialized.total_pages, total_pages);
             assert_eq!(deserialized.number, number);
         }
+    }
+
+    #[test]
+    fn test_response_without_embedded_deserializes_as_empty() {
+        let json = r#"{"_links":{"self":{"href":"s","templated":true},"application":{"href":"a"}},"page":{"size":500,"total_elements":0,"total_pages":0,"number":0}}"#;
+        let resp: FindingsResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.findings().is_empty());
+        assert_eq!(resp.page.total_elements, 0);
     }
 
     // ========================================================================

@@ -5,6 +5,12 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.16] - 2026-10-15
+
+### Fixed
+- **Findings API failed with `missing field `_embedded`` for scans with zero findings**: the API omits `_embedded` when `total_elements` is 0. `FindingsResponse.embedded` now defaults to an empty findings list
+  - **Modified Files**: `src/findings.rs`, `Cargo.toml`
+
 ## [0.7.15] - 2026-10-09
 
 ### Fixed
