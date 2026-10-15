@@ -5,6 +5,15 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.10] - 2026-10-15
+
+### Fixed
+- **GitLab export (and other findings retrieval) failed with `missing field _embedded` for scans with zero findings**: now handled correctly (picks up `veracode-platform` 0.7.16)
+  - **Modified Files**: `Cargo.toml`
+
+### Changed
+- Dependencies refreshed via `cargo update`
+
 ## [0.7.9] - 2026-10-09
 
 ### Fixed
