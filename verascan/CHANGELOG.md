@@ -5,6 +5,13 @@ All notable changes to verascan will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.11] - 2026-10-15
+
+### Fixed
+- **Throttled findings responses are retried with backoff**: `export --format gitlab` and other findings fetches now retry transient HTTP 500/429/502/503/504 responses (picks up `veracode-platform` 0.7.17)
+- **`export --format gitlab` failed with "JSON validation failed" for policy scans with no findings**: now exports an empty report and logs a warning (picks up `veracode-platform` 0.7.17)
+  - **Modified Files**: `src/export.rs`, `Cargo.toml`
+
 ## [0.7.10] - 2026-10-15
 
 ### Fixed

@@ -356,6 +356,18 @@ impl ExportWorkflow {
             ExportError::from(e)
         })?;
 
+        if rest_findings.is_empty() {
+            if resolved_sandbox_guid.is_some() {
+                log::warn!(
+                    "No sandbox scan findings returned for this application - has a sandbox scan been run?"
+                );
+            } else {
+                log::warn!(
+                    "No policy scan findings returned for this application - has a policy scan been run/promoted?"
+                );
+            }
+        }
+
         debug!(
             "✅ Retrieved {} findings from Veracode API",
             rest_findings.len()

@@ -5,6 +5,13 @@ All notable changes to the veracode-platform crate will be documented in this fi
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.17] - 2026-10-15
+
+### Fixed
+- **Findings API throttling (HTTP 500 with empty body) now retried**: `FindingsApi::get_findings` retries HTTP 429/500/502/503/504 up to 4 attempts total, waiting `Retry-After` (capped at 60s) or 20s (500/429) / 5s (502/503/504) by default, logging each retry; 401/403/404/other 4xx are not retried and exhausted retries return `RequestFailed` with the final status and attempt count
+- **Findings API returned "JSON validation failed: Invalid JSON format" for policy scans with no findings**: the API returns an empty body in this case and the HTTP status was never checked. `FindingsApi::get_findings` now inspects the status: 404 maps to `ApplicationNotFound`/`SandboxNotFound`, 401/403 map to authentication errors, other non-2xx map to `RequestFailed` including status and body, and 204/empty 2xx bodies yield an empty `FindingsResponse` (new `FindingsResponse::empty()`)
+  - **Modified Files**: `src/findings.rs`, `Cargo.toml`
+
 ## [0.7.16] - 2026-10-15
 
 ### Fixed

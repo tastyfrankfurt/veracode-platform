@@ -8,6 +8,16 @@ use crate::{VeracodeClient, VeracodeError};
 use log::{debug, error, warn};
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::time::Duration;
+
+/// Maximum total attempts (initial request plus retries) for a findings page.
+const FINDINGS_MAX_ATTEMPTS: u32 = 4;
+/// Default wait after HTTP 500/429 (the API throttles repeated calls with an empty 500).
+const FINDINGS_THROTTLE_DELAY_SECS: u64 = 20;
+/// Default wait after HTTP 502/503/504.
+const FINDINGS_GATEWAY_DELAY_SECS: u64 = 5;
+/// Upper bound for a `Retry-After` driven wait.
+const FINDINGS_MAX_RETRY_DELAY_SECS: u64 = 60;
 
 /// CWE (Common Weakness Enumeration) information
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -169,6 +179,33 @@ pub struct FindingsResponse {
 }
 
 impl FindingsResponse {
+    /// Build an empty response (zero findings, a single page, last page)
+    #[must_use]
+    pub fn empty() -> Self {
+        let link = || HalLink {
+            href: String::new(),
+            templated: None,
+        };
+        Self {
+            embedded: FindingsEmbedded::default(),
+            links: FindingsLinks {
+                first: None,
+                self_link: link(),
+                next: None,
+                last: None,
+                application: link(),
+                sca: None,
+                sandbox: None,
+            },
+            page: PageInfo {
+                size: 0,
+                total_elements: 0,
+                total_pages: 1,
+                number: 0,
+            },
+        }
+    }
+
     /// Get the findings from this response
     #[must_use]
     pub fn findings(&self) -> &[RestFinding] {
@@ -409,50 +446,72 @@ impl FindingsApi {
             .map(|(k, v)| (k.as_str(), v.as_str()))
             .collect();
 
-        let response = self
-            .client
-            .get_with_query_params(&endpoint, &params_ref)
-            .await
-            .map_err(|e| match (&e, &query.context) {
-                (VeracodeError::NotFound { .. }, Some(context)) => FindingsError::SandboxNotFound {
-                    app_guid: query.app_guid.to_string(),
-                    sandbox_guid: context.to_string(),
-                },
-                (VeracodeError::NotFound { .. }, None) => FindingsError::ApplicationNotFound {
-                    app_guid: query.app_guid.to_string(),
-                },
-                (
-                    VeracodeError::Http(_)
-                    | VeracodeError::Serialization(_)
-                    | VeracodeError::Authentication(_)
-                    | VeracodeError::InvalidResponse(_)
-                    | VeracodeError::HttpStatus { .. }
-                    | VeracodeError::InvalidConfig(_)
-                    | VeracodeError::RetryExhausted(_)
-                    | VeracodeError::RateLimited { .. }
-                    | VeracodeError::Validation(_),
-                    _,
-                ) => FindingsError::RequestFailed { source: e },
-            })?;
+        let mut attempt: u32 = 0;
+        let (status, response_text) = loop {
+            attempt = attempt.saturating_add(1);
 
-        // Get response text for debugging if parsing fails
-        let response_text = response
-            .text()
-            .await
-            .map_err(|e| FindingsError::RequestFailed {
-                source: VeracodeError::Http(e),
-            })?;
+            let response = self
+                .client
+                .get_with_query_params(&endpoint, &params_ref)
+                .await
+                .map_err(|e| FindingsError::RequestFailed { source: e })?;
+
+            // Capture status and Retry-After before consuming the body
+            let status = response.status();
+            debug!("Findings API HTTP status: {status}");
+            let retry_after = response
+                .headers()
+                .get("retry-after")
+                .and_then(|h| h.to_str().ok())
+                .and_then(|s| s.trim().parse::<u64>().ok());
+
+            // Get response text for debugging if parsing fails
+            let response_text =
+                response
+                    .text()
+                    .await
+                    .map_err(|e| FindingsError::RequestFailed {
+                        source: VeracodeError::Http(e),
+                    })?;
+
+            if let Some(delay) = Self::retry_delay(status.as_u16(), retry_after) {
+                if attempt >= FINDINGS_MAX_ATTEMPTS {
+                    return Err(FindingsError::RequestFailed {
+                        source: VeracodeError::InvalidResponse(format!(
+                            "Findings API request failed with HTTP {status} after {attempt} attempts (throttled or unavailable): {response_text}"
+                        )),
+                    });
+                }
+                warn!(
+                    "Findings API returned HTTP {status} (attempt {attempt}/{FINDINGS_MAX_ATTEMPTS}); retrying in {}s",
+                    delay.as_secs()
+                );
+                tokio::time::sleep(delay).await;
+                continue;
+            }
+
+            break (status, response_text);
+        };
 
         let char_count = response_text.chars().count();
         if char_count > 500 {
             let truncated: String = response_text.chars().take(500).collect();
             debug!(
-                "Raw API response (first 500 chars): {}... [truncated {} more characters]",
+                "Raw API response (status {}, first 500 chars): {}... [truncated {} more characters]",
+                status,
                 truncated,
                 char_count.saturating_sub(500)
             );
         } else {
-            debug!("Raw API response: {response_text}");
+            debug!("Raw API response (status {status}): {response_text}");
+        }
+
+        if let Some(empty) = Self::classify_response(status.as_u16(), &response_text, query)? {
+            warn!(
+                "Findings API returned an empty body (HTTP {status}) for app {}; treating as zero findings",
+                query.app_guid
+            );
+            return Ok(empty);
         }
 
         // Validate JSON depth before parsing to prevent DoS attacks
@@ -480,6 +539,74 @@ impl FindingsApi {
         );
 
         Ok(findings_response)
+    }
+
+    /// Whether an HTTP status from the findings endpoint is transient and worth retrying.
+    #[must_use]
+    fn is_retryable(status: u16) -> bool {
+        matches!(status, 429 | 500 | 502 | 503 | 504)
+    }
+
+    /// Delay before retrying a response with the given status, or `None` if
+    /// the status is not retryable. Honors `Retry-After` (seconds), capped.
+    #[must_use]
+    fn retry_delay(status: u16, retry_after: Option<u64>) -> Option<Duration> {
+        if !Self::is_retryable(status) {
+            return None;
+        }
+        let secs = match retry_after {
+            Some(s) => s.min(FINDINGS_MAX_RETRY_DELAY_SECS),
+            None => match status {
+                500 | 429 => FINDINGS_THROTTLE_DELAY_SECS,
+                _ => FINDINGS_GATEWAY_DELAY_SECS,
+            },
+        };
+        Some(Duration::from_secs(secs))
+    }
+
+    /// Classify an HTTP status and body from the findings endpoint.
+    ///
+    /// Returns `Ok(Some(empty_response))` for a successful response with no body
+    /// (204 or whitespace-only), `Ok(None)` when the body should be parsed as JSON,
+    /// and an error for non-2xx statuses.
+    fn classify_response(
+        status: u16,
+        body: &str,
+        query: &FindingsQuery<'_>,
+    ) -> Result<Option<FindingsResponse>, FindingsError> {
+        match status {
+            200..=299 => {
+                if status == 204 || body.trim().is_empty() {
+                    Ok(Some(FindingsResponse::empty()))
+                } else {
+                    Ok(None)
+                }
+            }
+            404 => Err(match &query.context {
+                Some(context) => FindingsError::SandboxNotFound {
+                    app_guid: query.app_guid.to_string(),
+                    sandbox_guid: context.to_string(),
+                },
+                None => FindingsError::ApplicationNotFound {
+                    app_guid: query.app_guid.to_string(),
+                },
+            }),
+            401 => Err(FindingsError::RequestFailed {
+                source: VeracodeError::Authentication(format!(
+                    "Findings API returned HTTP 401 Unauthorized: {body}"
+                )),
+            }),
+            403 => Err(FindingsError::RequestFailed {
+                source: VeracodeError::Authentication(format!(
+                    "Findings API returned HTTP 403 Forbidden (permission denied): {body}"
+                )),
+            }),
+            _ => Err(FindingsError::RequestFailed {
+                source: VeracodeError::InvalidResponse(format!(
+                    "Findings API request failed with HTTP {status}: {body}"
+                )),
+            }),
+        }
     }
 
     /// Get all findings across all pages automatically
@@ -607,6 +734,79 @@ impl FindingsApi {
 #[allow(clippy::expect_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_is_retryable() {
+        for c in [429u16, 500, 502, 503, 504] {
+            assert!(FindingsApi::is_retryable(c), "{c}");
+        }
+        for c in [200u16, 204, 400, 401, 403, 404, 422] {
+            assert!(!FindingsApi::is_retryable(c), "{c}");
+        }
+    }
+
+    #[test]
+    fn test_retry_delay() {
+        let d = |s, r| FindingsApi::retry_delay(s, r);
+        assert_eq!(d(500, None), Some(Duration::from_secs(20)));
+        assert_eq!(d(429, None), Some(Duration::from_secs(20)));
+        assert_eq!(d(503, None), Some(Duration::from_secs(5)));
+        assert_eq!(d(502, None), Some(Duration::from_secs(5)));
+        assert_eq!(d(500, Some(7)), Some(Duration::from_secs(7)));
+        assert_eq!(d(503, Some(3600)), Some(Duration::from_secs(60)));
+        assert_eq!(d(404, None), None);
+        assert_eq!(d(401, Some(5)), None);
+    }
+
+    #[test]
+    fn test_empty_body_yields_empty_response() {
+        let q = FindingsQuery::new("app-1");
+        for (status, body) in [(200, ""), (200, " \n\t"), (204, "")] {
+            let r = FindingsApi::classify_response(status, body, &q)
+                .expect("ok")
+                .expect("empty response");
+            assert!(r.findings().is_empty());
+            assert_eq!(r.total_pages(), 1);
+            assert_eq!(r.total_elements(), 0);
+            assert!(r.is_last_page());
+            assert!(!r.has_next_page());
+        }
+    }
+
+    #[test]
+    fn test_non_empty_2xx_is_parsed() {
+        let q = FindingsQuery::new("app-1");
+        assert!(
+            FindingsApi::classify_response(200, "{}", &q)
+                .expect("ok")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn test_status_mapping() {
+        let q = FindingsQuery::new("app-1");
+        assert!(matches!(
+            FindingsApi::classify_response(404, "", &q),
+            Err(FindingsError::ApplicationNotFound { .. })
+        ));
+        let qs = FindingsQuery::for_sandbox("app-1", "sb-1");
+        assert!(matches!(
+            FindingsApi::classify_response(404, "", &qs),
+            Err(FindingsError::SandboxNotFound { .. })
+        ));
+        for code in [401, 403] {
+            assert!(matches!(
+                FindingsApi::classify_response(code, "no", &q),
+                Err(FindingsError::RequestFailed {
+                    source: VeracodeError::Authentication(_)
+                })
+            ));
+        }
+        let err = FindingsApi::classify_response(500, "boom", &q).expect_err("err");
+        let msg = err.to_string();
+        assert!(msg.contains("500") && msg.contains("boom"));
+    }
 
     #[test]
     fn test_findings_query_builder() {
