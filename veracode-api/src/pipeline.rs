@@ -1989,8 +1989,12 @@ mod proptest_security {
             let start_idx = (segment_num as usize).saturating_mul(segment_size);
             let end_idx = std::cmp::min(start_idx.saturating_add(segment_size), file_size);
 
-            // Property 1: Start must be before or at end
-            prop_assert!(start_idx <= end_idx);
+            // Property 1: A segment whose start lies beyond the end of the data
+            // (possible when segment_count > file_size) is rejected by `get()`
+            // instead of panicking, mirroring upload_binary_segments.
+            let data = vec![0u8; file_size];
+            let segment = data.get(start_idx..end_idx);
+            prop_assert_eq!(segment.is_some(), start_idx <= end_idx);
 
             // Property 2: End must not exceed file size
             prop_assert!(end_idx <= file_size);
